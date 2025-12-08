@@ -1,0 +1,7 @@
+^dev$
+^Makefile$
+^\.github$
+^README\.Rmd$
+^pkgdown$
+^renv$
+^renv\.lock$
