@@ -203,7 +203,7 @@ fill_na_iter <- function(r, w = 3, max_iter = 50, mask=depth) {
 #'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min'))
 #' @export
 fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$",full.names=T), 
-                                   dir.stdriver=dir.stdriver, depth=depth, make.monthly=TRUE, make.static=TRUE){
+                                   dir.stdriver=dir.stdriver, depth=depth, make.monthly=TRUE, make.static=FALSE){
   # dir.in=dir.glorys
   # dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min')
   # depth = depth.15min
@@ -444,11 +444,11 @@ fn.pull_cefi = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_a
     file.nc.sub = gsub(".full.",".subset.",gsub(".nc",paste0("-",paste(abs(t(as.matrix(extent(depth)))),collapse="-"),".nc"), file.out))
     
     #download full netcdf if needed----
-    url = file.path(path.thredds, file.nc )
     if(file.exists(file.out)){
       message("file ",i," of ",nrow(vars.cefi)," already exists\n---- skipping download ",file.nc) 
     } else{
       message("downloading file ",i," of ",nrow(vars.cefi),"\n---- ",file.nc,"\n---- from ",path.thredds)
+      url = file.path(path.thredds, file.nc )
       httr::GET(url, httr::write_disk(file.out, overwrite=T), httr::progress())
     }
     
@@ -571,7 +571,7 @@ fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg=
 #' @export
 
 fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth.5min,
-                                 dir.stdriver=dir.stdriver, make.monthly=TRUE, make.static=TRUE){
+                                 dir.stdriver=dir.stdriver, make.monthly=TRUE, make.static=FALSE){
   #files.nc = list.files(path=dir.cefi, pattern=".nc$", full.names=T)
   #nc.files = files.nc
   if(make.monthly){
@@ -685,45 +685,81 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
   }
   }
   
-  #make static maps----
-  if(make.static){
-    message("- Making static maps...")
-    dirs.stvars = list.dirs(path=dir.stdriver,recursive=F)
-    dir.static = file.path(dir.stdriver,"static")
-    if(!dir.exists(dir.static)) dir.create(dir.static)
-    dirs.stvars = dirs.stvars[-c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))]
-    
-    for(i in 1:length(dirs.stvars)){
-      #i=1
-      stname = paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
-      print(paste0("now making ",i," of ",length(dirs.stvars),": ",stname)); flush.console()
-      
-      #read output--------------------------------------------------------------------
-      #list ecospace output ascii files
-      files.st = list.files(dirs.stvars[i],full.names = T,recursive=T)#[-c(1:6)]
-      
-      #read them into raster stack
-      st.stack = stack(files.st)
-      #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
-      yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
-      names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
-      
-      #create average map
-      st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
-      st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
-      st.mean_allyrs = mean(rast(st.stack),na.rm=T)
-      st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
-      
-      plot(st.mean_allyrs, colNA='black')
-      plot(st.mean_yr1, colNA='black')
-      
-      #save static map
-      writeRaster(raster(st.mean_allyrs),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_allyrs")),format='ascii',overwrite=T)
-      writeRaster(raster(st.mean_yr1),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_yr1")),format='ascii',overwrite=T)
-      rm(st.stack); gc()
-    }
-  }
 }
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#' @title Make static maps from monthly ST files.
+#' @description This stacks all the ascii in stdriver directory and compute long term mean and year-1 mean layers, and saves them as ascii files in the 'static' folder.
+#' @param dir.stdriver Directory for ST driver variable.  A 'static' folder will be created one level up if it doesn't exist.
+#' @return Saves an ascii file to the static folder.  
+#' @examples
+#' # example code:
+#' fn.make_static_maps(dir.stdriver=file.path(dir.stdriver,"tos_cefi"))
+#' @export
+fn.make_static_maps <- function(dir.stdriver=dir.stdriver){
+  #dir.stdriver = list.dirs(dir.stdriver,full.names=T, recursive=F)[1]
+  message("- Making static maps for ",basename(dir.stdriver))
+  dir.static = file.path(dirname(dir.stdriver),"static")
+  if(!dir.exists(dir.static)) dir.create(dir.static)
+  
+  stname = paste0(basename(dirname(dir.stdriver)),"_",basename(dir.stdriver))
+  #read output--------------------------------------------------------------------
+  #list ecospace output ascii files
+  files.st = list.files(dir.stdriver,full.names = T,recursive=T)#[-c(1:6)]
+
+  #read them into raster stack
+  st.stack = stack(files.st)
+  #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
+  yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
+  names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+  
+  #create average map
+  #st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
+  #st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
+  st.mean_allyrs = mean(rast(st.stack),na.rm=T)
+  st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
+  
+  #plot(st.mean_allyrs, colNA='black')
+  #plot(st.mean_yr1, colNA='black')
+  
+  #save static map
+  writeRaster(raster(st.mean_allyrs),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_allyrs")),format='ascii',overwrite=T)
+  writeRaster(raster(st.mean_yr1),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_yr1")),format='ascii',overwrite=T)
+  rm(st.stack); gc()
+}
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#' @title Make monthly climatology maps.
+#' @description This stacks all the ascii in stdriver directory and compute long term mean for each month.
+#' @param dir.stdriver Directory for ST driver variable.
+#' @return Saves 12 ascii files to the variable folder with suffix '9999mm', where mm is numeric month.  
+#' @examples
+#' # example code:
+#' for(i in 1:length(dirs.stvars)){
+#' fn.make_monthly_climatology_maps(dir.stdriver=dirs.stvars[i])
+#' }
+#' @export
+fn.make_monthly_climatology_maps <- function(dir.stdriver=dir.stdriver){
+  #dir.stdriver = list.dirs(dir.stdriver,full.names=T, recursive=F)[1]
+  message("- Making monthly climatology maps for ",basename(dir.stdriver))
+
+  stname = paste0(basename(dirname(dir.stdriver)),"_",basename(dir.stdriver))
+  #read output--------------------------------------------------------------------
+  #list ecospace output ascii files
+  files.st = list.files(dir.stdriver,full.names = T,recursive=T)#[-c(1:6)]
+  month.id = substr(basename(files.st),nchar(basename(files.st))-5,nchar(basename(files.st))-4)
+  #read them into raster stack
+  st.stack = stack(files.st)
+  #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
+  yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
+  names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+  
+  monthly_means <- stackApply(st.stack, indices = month.id, fun = mean, na.rm = TRUE)
+  
+  writeRaster(monthly_means,file.path(dir.stdriver,gsub("_cefi","",basename(dir.stdriver))),bylayer=T,suffix=paste0("9999",sort(unique(month.id))),format='ascii',overwrite=T)
+
+  rm(st.stack); gc()
+}
+
 
 
 
