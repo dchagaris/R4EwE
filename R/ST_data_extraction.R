@@ -7,6 +7,7 @@ library('raster')
 library('rvest')
 library('httr')
 
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Pull GLORYS
 #' @description Pull monthly 1/4 degree physical and biogeochemical hindcast products from the Copernicus marine data store.  Requires the Copernicus marine toolbox CLI application.  Check website https://data.marine.copernicus.eu/products for dataset id and variable names.
 #' @param dir.out Output directory to save netcdf files.
@@ -572,11 +573,15 @@ fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg=
 
 fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth.5min,
                                  dir.stdriver=dir.stdriver, make.monthly=TRUE, make.static=FALSE){
-  #files.nc = list.files(path=dir.cefi, pattern=".nc$", full.names=T)
-  #nc.files = files.nc
+  # nc.files = files.nc
+  # depth=depth.15min
+  # dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min')
+  # make.monthly=TRUE
+  # make.static=TRUE
+  
   if(make.monthly){
   for(i in 1:length(nc.files)){
-    #i=2
+    #i=1
     nc <- nc_open(nc.files[i])
     on.exit(nc_close(nc), add = TRUE)
     nc.vars = names(nc$var)
@@ -625,7 +630,8 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     var.stack = stack()
     for (t in 1:ntime) {
       #t=1
-      mat <- nc.sub[, dim(nc.sub)[2]:1, t]  # assumes [lat, lon] matrix, need to flip x-axis (lon)
+      mat <- nc.sub[lon_idx, lat_idx,t] #subset for lat lon
+      mat <- t(mat[, dim(mat)[2]:1])  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
       r_k <- raster(nrows = nrow_nc, ncols = ncol_nc,
                     ext = ext_nc, crs = crs(depth))
       # raster fills values column-wise; t() keeps spatial layout
