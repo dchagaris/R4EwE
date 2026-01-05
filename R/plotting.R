@@ -1,5 +1,15 @@
-#plotting----
-fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(1,1), pltC.dims=c(1,1), scaleCatch=FALSE,
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#fn.runEwE.parallel-----------------------------------------------------------------------------------------
+#' @title Plot Ecospace predicted timeseries.
+#' @description Makes a multipanel plot of 1 or more ecopace runs with observed data where available.
+#' @param 
+#' @return
+#' @examples
+#' # example code:
+#' result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
+#' @export
+fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(1,1), pltC.dims=c(1,1), 
+                                scaleCatch=FALSE,
                                 dir.plts = dir.pred, plot2pdf=TRUE){
   xtime = as.numeric(dimnames(predB)[[1]])
   if(plot2pdf) pdf(file.path(dir.plts,"biomass timeseries fits.pdf"), onefile=T)

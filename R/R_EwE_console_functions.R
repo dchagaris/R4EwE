@@ -103,6 +103,8 @@ fn.runEwE.parallel <-  function(
 #' @title Make vulnerability parameter taglines for sensitivity runs.
 #' @description Create parameter taglines for the command file to test sensitivity of vulnerability parameters.
 #' @param predprey A dataframe containing 3 numeric columns, "pred", "prey", and "basevul", containing the group numbers of predator prey pairs to evaluate and starting values for the vulnerabilities.  Missing (NA) in the prey column will set the vulnerability by predator column.
+#' @param test.type Either 'absolute' in which case maxvul, minvul, and maxvul.mult are applied, or 'percentage', where pct.change and (1+pct.change) is multiplied by the base value.
+#' @param pct.change The percent change to use when test.type='percentage'.  Applied as pct.change x base and (1+pct.change) x base. Default is 0.5.
 #' @param maxvul A high vulnerability number to test
 #' @param minvul A low vulnerability number to test.
 #' @param is.maxvul.mult Logical indicating whether the maxvul is treated as a multiplier on the basevul (TRUE) or as the absolute value (FALSE).
@@ -111,8 +113,10 @@ fn.runEwE.parallel <-  function(
 #' # example code:
 #' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
 #' @export
-fn.vul_testval_tags = function(predprey, maxvul=100, minvul=1.01, is.maxvul.mult=T){
+fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01, is.maxvul.mult=T, test.type='absolute'){
   #predprey = data.frame(pred=1:5,prey=6:10, basevul=2)
+  #predprey = predprey.vuls
+  if(test.type=='absolute'){
   predprey.low = predprey.hi = predprey
   predprey.low$vul = minvul
   if(is.maxvul.mult) predprey.hi$vul = maxvul*predprey$basevul
@@ -122,12 +126,35 @@ fn.vul_testval_tags = function(predprey, maxvul=100, minvul=1.01, is.maxvul.mult
   tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", predprey$pred, " ", ifelse(is.na(predprey$prey),"",predprey$prey),
                      "), ", sprintf("%.2f", predprey$vul), ", Indexed.Single")
   return(tags)
+  }
+  
+  if(test.type=='percentage'){
+    predprey.low = predprey.hi = predprey
+    predprey.low$vul = ifelse(pct.change*predprey$basevul<1.01,1.01,pct.change*predprey$basevul)
+    predprey.hi$vul = (1+pct.change)*predprey$basevul
+    predprey.out = rbind(predprey.low,predprey.hi)
+    predprey.out = predprey.out[order(predprey.out$pred,predprey.out$prey),]
+    tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", predprey.out$pred, " ", ifelse(is.na(predprey.out$prey),"",predprey.out$prey),
+                   "), ", sprintf("%.2f", predprey.out$vul), ", Indexed.Single")
+    return(tags)
+  }
+  
+  
 }
   
   
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 #fn.make_cmd_files----------------------------------------------------------------------------------
-fn.make_cmd_files = function(runlist,iter,nyrs=n_years_sens){
+#' @title Make command files.
+#' @description This function adds taglines to the base command file and saves them in run folders.
+#' @param runlist A dataframe where each row is a separate model run.  It must include, at a minimum, the 3 variables 'dir.out', which provides the output directory for each run; 'cmd_file' which is the full file path of the command file to be saved in the folder; and 'tag', which is the tagline to be appended to the command file. 
+#' @param nyrs A single number representing the number of years to run ecospace.
+#' @return Create command .txt files and saves them in their respecitive run folders.
+#' @examples
+#' # example code:
+#' fn.make_cmd_files(runlist)
+#' @export
+fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
   #runlist = runlist_sens; iter=1
   for(i in 1:nrow(runlist)){
     #i=1
@@ -138,7 +165,6 @@ fn.make_cmd_files = function(runlist,iter,nyrs=n_years_sens){
     n = which(substr(cmd_i[,1],1,nchar(param))==param)
     cmd_i[n,1]= paste(param, update, "System.String, Updated", sep = ", ")
 
-    
     #set run length
     param = "<N_ECOSPACE_YEARS>"
     update = nyrs
@@ -147,7 +173,6 @@ fn.make_cmd_files = function(runlist,iter,nyrs=n_years_sens){
     
     #add taglines
     cmd_i = rbind(cmd_i,runlist$tag[i])
-    
     
     #save command file to run folder
     write.table(cmd_i, runlist$cmd_file[i],  row.names = FALSE, col.names = FALSE, quote = FALSE)
