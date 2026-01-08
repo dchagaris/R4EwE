@@ -136,7 +136,7 @@ fn.parvec2cmd <- function(log_par_vec){
   #parameter tags----
   tags.vul = tags.env = tags.disp = character()
   if(length(vul.par.idx)>0){
-    vuln_vec = exp(log_par_vec[vul.par.idx])-1
+    vuln_vec = exp(log_par_vec[vul.par.idx])
     tags.vul <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", vul_pars$pred, " ", ifelse(is.na(vul_pars$prey),"",vul_pars$prey),
                        "), ", sprintf("%.5f", vuln_vec), ", Indexed.Single")
   }
@@ -281,17 +281,40 @@ fn.GA <- function(myconfig){
   mutation_rate <<- myconfig$pmutation
   elitism <<- myconfig$elitism
   
+  #store results
+  file.ga.results <- file.path(run_dir, 'ga_results.csv')
+  write.table(t(c("gen_num","min_fitness","mean_fitness",names(log_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F)
+  
+  #base run
+  message('Running the base model')
+  files.cmd <- fn.parvec2cmd(log_par_vec=log_par_vec)
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, cl.export=list('obs.ts'))  
+  
+  #pipe output
+  g=-1
+  best_fit = min(fitness)
+  mean_fit = mean(fitness)
+  best_pars = round(exp(log_par_vec),4)
+  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+  message(sprintf("Base LL score  = %.4f\n", min(fitness)))
+  
   #initial population
-  gapop.init <- fn.GApop()
-  gapop.init[1,] <- log_par_vec
-  #fn.parvec2cmd(log_par_vec=gapop.init[1,])
-  files.cmd <- apply(gapop.init,1,function(x) fn.parvec2cmd(log_par_vec=x)) 
-  #files.cmd <- list.files(path=run_dir,pattern="cmd.txt", full.names=T, recursive=T)
-  #test <- fn.runEwE(cmdfile = files.cmd[1], do.obj=1)
+  gapop <- fn.GApop()
+  gapop[1,] <- log_par_vec  #include base run in initial population
+  files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x)) 
   fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, cl.export = list("obs.ts"))
-  gapop <- gapop.init
-  message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
-  message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
+  
+  #pipe output
+  g=0
+  best_fit = min(fitness)
+  mean_fit = mean(fitness)
+  best_pars = round(exp(gapop[which.min(fitness),]),4)
+  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+  cat(sprintf("%-10s %-15s %-15s\n", "Generation", "Min_LL", "Avg_LL"))
+  cat(sprintf("%-10d %-15.6f %-15.6f\n", 0, best_fit, mean_fit))
+  #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
+  #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
+  
   for (gen in 1:n_generations) {
     #gen=1
     # Elitism - keep the top n runs
@@ -305,7 +328,6 @@ fn.GA <- function(myconfig){
     
     # Evaluate new population
     files.cmd <- apply(offspring,1,function(x) fn.parvec2cmd(x)) 
-    #files.cmd <- list.files(path=run_dir,pattern="cmd.txt", full.names=T, recursive=T)
     new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, cl.export = list("obs.ts"))
     
     # Combine elite + offspring, drop worst offspring and replace with elites
@@ -314,7 +336,14 @@ fn.GA <- function(myconfig){
     gapop <- rbind(elite, offspring[-drop.idx,])
     fitness <- c(fitness[elite_idx], new_fitness[-drop.idx])
     
-    message(sprintf("Generation %d: Lowest LL score = %.4f\n", gen, min(fitness)))
-    message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
+    #pipe output
+    g=gen
+    best_fit = min(fitness)
+    mean_fit = mean(fitness)
+    best_pars = round(exp(gapop[which.min(fitness),]),4)
+    write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+    cat(sprintf("%-10d %-15.6f %-15.6f\n", gen, best_fit, mean_fit))
+    #message(sprintf("Generation %d: Lowest LL score = %.4f\n", gen, min(fitness)))
+    #message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
   }
 }
