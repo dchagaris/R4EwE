@@ -52,7 +52,7 @@ fn.runEwE.parallel <-  function(
   t1 <- Sys.time()
   cl <- makeSOCKcluster(detectCores()-1)
   registerDoSNOW(cl)
-  clusterExport(cl,append(cl.export,list("file.console", "fn.runEwE", "fn.objfxn1", "fn.objfxn2","startyear","endyear_sens","group.names","df.names")))
+  clusterExport(cl,append(cl.export,list("file.console", "fn.runEwE", "fn.objfxn1", "fn.objfxn2","styear","enyear","group.names","df.names")))
   print(paste('Setup',detectCores()-1,'Clusters: Overhead time',round(as.numeric(Sys.time()-t1),2)))
   
   #runlist=runlist[1:20,]
@@ -74,14 +74,14 @@ fn.runEwE.parallel <-  function(
   #erruns <- c(3,5,7)
 
   while(length(erruns)>=1){
-    print(paste0('Redo missing runs: n=',length(erruns)))
+    message(paste0('Redo missing runs: n=',length(erruns)))
     
     pbar <- winProgressBar("Running Ecospace Console: Missing Runs",label=paste0("Simulation 0 of ",length(erruns)),max=100)
     prog <- function(n) setWinProgressBar(pbar,(n/length(erruns)*100),label=paste("Simulation Run", n,"of", length(erruns),"Completed"))
     opts <- list(progress=prog)
     
     runs.erruns <- foreach(i=1:length(erruns),.errorhandling='pass',.options.snow=opts) %dopar% {
-      fn.runEwE(dir.cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn)
+      fn.runEwE(cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn)
     }
     close(pbar)
     
@@ -138,10 +138,30 @@ fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01
                    "), ", sprintf("%.2f", predprey.out$vul), ", Indexed.Single")
     return(tags)
   }
-  
-  
-}
-  
+} #end of function
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
+#fn.disp_testval_tags-----
+#' @title Make dispersal parameter taglines for sensitivity runs.
+#' @description Create parameter taglines for the command file to test sensitivity of dispersal rates.
+#' @param disp A dataframe with baseline dispersal parameters, exported from EwE and read and renamed in the setup file.
+#' @param pct.change The percent change to use, applied as pct.change x base and (1+pct.change) x base. Default is 0.5 (+/-50%).
+#' @return A character vector containing the parameter taglines for the command file.
+#' @examples
+#' # example code:
+#' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+#' @export
+fn.disp_testval_tags = function(disp.base, pct.change=0.5){
+  disp.low = disp.hi = disp.base
+  disp.low$pred = disp.hi$pred = as.numeric(row.names(disp.base))
+  disp.low$disp = disp.low$disp*pct.change
+  disp.hi$disp = disp.hi$disp*(1+pct.change)
+  disp = rbind(disp.low[,c('pred','disp')],disp.hi[,c('pred','disp')])
+  disp = disp[order(disp$pred),]
+  disp$disp = round(disp$disp,2)
+  tags <- paste0("<ECOSPACE_DISPERSAL_RATE_INDEXED>(",disp$pred,"), ",disp$disp,", Indexed.Single")
+  return(tags)
+} #end of function 
   
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 #fn.make_cmd_files----------------------------------------------------------------------------------

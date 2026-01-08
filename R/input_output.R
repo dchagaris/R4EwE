@@ -23,6 +23,8 @@ fn.read_ecosim_timeseries = function(filename){
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #Ecospace output to arrays---------------------------------------------------------------------------------  
 fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=0){
+  
+  #dir.out = "C:/NWACS MICE/GA output 2026-01-06/GA_Run_20260106_114454/run_00abeb6e03a8897940ee4aa45b593526"
   if(n.reg==0){
     if(timestep=='annual') files.bio = list.files(dir.out,pattern="Ecospace_Annual_Average_Biomass.csv",recursive=T,full.names = T)
     if(timestep=='monthly') files.bio = list.files(dir.out,pattern="Ecospace_Average_Biomass.csv",recursive=T,full.names = T)
@@ -61,8 +63,8 @@ fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
       bio.array[,,reg.idx,run.idx] <- tmp
     }
   }
-  if(timestep=='annual') dimnames(bio.array)[[1]] <- startyear:(startyear+dim(bio.array)[1]-1)
-  if(timestep=='monthly') dimnames(bio.array)[[1]] <- length(seq(startyear,(startyear+dim(bio.array)[1]-1/12),1/12))
+  if(timestep=='annual') dimnames(bio.array)[[1]] <- styear:(styear+dim(bio.array)[1]-1)
+  if(timestep=='monthly') dimnames(bio.array)[[1]] <- length(seq(styear,(styear+dim(bio.array)[1]-1/12),1/12))
   return(bio.array)
 }
 
@@ -105,8 +107,8 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
       cat.array[,,reg.idx,run.idx] <- tmp
     }
   }
-  if(timestep=='annual') dimnames(cat.array)[[1]] <- startyear:(startyear+dim(cat.array)[1]-1)
-  if(timestep=='monthly') dimnames(cat.array)[[1]] <- length(seq(startyear,(startyear+dim(cat.array)[1]-1/12),1/12))
+  if(timestep=='annual') dimnames(cat.array)[[1]] <- styear:(styear+dim(cat.array)[1]-1)
+  if(timestep=='monthly') dimnames(cat.array)[[1]] <- length(seq(styear,(styear+dim(cat.array)[1]-1/12),1/12))
   return(cat.array)
 }
 
