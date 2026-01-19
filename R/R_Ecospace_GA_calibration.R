@@ -482,11 +482,13 @@ fn.GA <- function(myconfig){
   
   #create results file
   file.ga.results <- file.path(dir.main, paste0('ga_results_',timestamp,'.csv'))
+  myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
   write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
   write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
   write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
+  write.table(myconfig.string,file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(t(c("gen_num","min_fitness","mean_fitness",names(log_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
   #base run
