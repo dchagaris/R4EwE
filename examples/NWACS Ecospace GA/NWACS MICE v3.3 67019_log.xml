@@ -1,0 +1,132 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<doc>
+  <Platform>Microsoft Windows NT 10.0.26100.0</Platform>
+  <Is64BitOS>True</Is64BitOS>
+  <ModelName>NWACS MICE v3.3 67019</ModelName>
+  <Created>10:04:57 AM Wednesday, January 21, 2026</Created>
+<Session_Started
+  Date="10:04:57 AM Wednesday, January 21, 2026">
+  <Model>NWACS MICE v3.3 67019</Model>
+  <LogFile>C:\Users\dchagaris\Github\R4EwE\examples\NWACS Ecospace GA\NWACS MICE v3.3 67019_log.xml</LogFile>
+  <Is64BitExe>True</Is64BitExe>
+  <CultureOS>English (United States)</CultureOS>
+  <CultureUI>English (United States)</CultureUI>
+  <DecimalSeparator>.</DecimalSeparator>
+</Session_Started>
+<Information_Message
+  Date="10:04:57 AM Wednesday, January 21, 2026">
+  <Message>Ecopath model 'C:\Users\dchagaris\Github\R4EwE\examples\NWACS Ecospace GA\NWACS MICE v3.3 67019.eweaccdb' loaded.</Message>
+  <Message_Type>DataAddedOrRemoved</Message_Type>
+  <Message_Source>Ecopath</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Warning_Message
+  Date="10:05:04 AM Wednesday, January 21, 2026">
+  <Message>Your model is NOT mass-balanced!
+Computed Ecotrophic Efficiencies (EE) invalid for one or more group(s).</Message>
+  <Message_Type>EE</Message_Type>
+  <Message_Source>Ecopath</Message_Source>
+  <Message_DataType>EcoPathGroupOutput</Message_DataType>
+</Warning_Message>
+<Warning_Message
+  Date="10:05:04 AM Wednesday, January 21, 2026">
+  <Message>Your model is NOT mass-balanced!
+Computed Ecotrophic Efficiencies (EE) invalid for one or more group(s).</Message>
+  <Message_Type>EE</Message_Type>
+  <Message_Source>Ecopath</Message_Source>
+  <Message_DataType>EcoPathGroupOutput</Message_DataType>
+</Warning_Message>
+<Information_Message
+  Date="10:05:06 AM Wednesday, January 21, 2026">
+  <Message>Ecopath run completed.</Message>
+  <Message_Type>Any</Message_Type>
+  <Message_Source>Ecopath</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Log_Message
+  Date="10:05:06 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:05:06 AM Wednesday, January 21, 2026">
+  <Message>Ecotracer scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:05:06 AM Wednesday, January 21, 2026">
+  <Message>Ecosim scenario closed</Message>
+</Log_Message>
+<Information_Message
+  Date="10:05:06 AM Wednesday, January 21, 2026">
+  <Message>Ecosim scenario 'sim01_base ecospace' loaded.</Message>
+  <Message_Type>DataAddedOrRemoved</Message_Type>
+  <Message_Source>Ecosim</Message_Source>
+  <Message_DataType>EcoSimScenario</Message_DataType>
+</Information_Message>
+<Information_Message
+  Date="10:05:09 AM Wednesday, January 21, 2026">
+  <Message>Time Series dataset 'ts1_1985_2023_annual_effort forcing' loaded.</Message>
+  <Message_Type>DataAddedOrRemoved</Message_Type>
+  <Message_Source>TimeSeries</Message_Source>
+  <Message_DataType>TimeSeriesDataset</Message_DataType>
+</Information_Message>
+<Log_Message
+  Date="10:05:12 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario closed</Message>
+</Log_Message>
+<Information_Message
+  Date="10:05:12 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario 'sp02_15min_res' loaded.</Message>
+  <Message_Type>DataAddedOrRemoved</Message_Type>
+  <Message_Source>Ecospace</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Entry>
+  <Formcannotberesolved>frmEwE6 cmdNavigate OnInvoke</Formcannotberesolved>
+</Entry>
+<Entry>
+  <Formcannotberesolved>frmEwE6 cmdNavigate OnInvoke</Formcannotberesolved>
+</Entry>
+<Log_Message
+  Date="10:05:36 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario closed</Message>
+</Log_Message>
+<Information_Message
+  Date="10:05:36 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario 'sp02_15min_res' loaded.</Message>
+  <Message_Type>DataAddedOrRemoved</Message_Type>
+  <Message_Source>Ecospace</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Information_Message
+  Date="10:05:39 AM Wednesday, January 21, 2026">
+  <Message>Options applied successfully.</Message>
+  <Message_Type>Any</Message_Type>
+  <Message_Source>External</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Information_Message
+  Date="10:05:39 AM Wednesday, January 21, 2026">
+  <Message>Options applied successfully.</Message>
+  <Message_Type>Any</Message_Type>
+  <Message_Source>External</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Log_Message
+  Date="10:05:44 AM Wednesday, January 21, 2026">
+  <Message>EwECore.cMessageHandler.SendMessage(cMessage) Delegate has not been initialized.</Message>
+</Log_Message>
+<Information_Message
+  Date="10:07:16 AM Wednesday, January 21, 2026">
+  <Message>6 data set(s) successfully exported to C:\Users\dchagaris\Github\R4EwE\examples\NWACS Ecospace GA\ST drivers. This folder is ready to be transferred to another computer</Message>
+  <Message_Type>DataExport</Message_Type>
+  <Message_Source>External</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+<Information_Message
+  Date="10:07:16 AM Wednesday, January 21, 2026">
+  <Message>Spatial data configuration has been exported to C:\Users\dchagaris\Github\R4EwE\examples\NWACS Ecospace GA\ST drivers\ST drivers.xml</Message>
+  <Message_Type>DataExport</Message_Type>
+  <Message_Source>DataSource</Message_Source>
+  <Message_DataType>NotSet</Message_DataType>
+</Information_Message>
+</doc>

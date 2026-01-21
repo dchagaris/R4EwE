@@ -215,14 +215,16 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   #nc.files <- nc.files[which(!grepl("static",basename(nc.files)))]
   if(make.monthly){
   for(i in 1:length(nc.files)){  
-    #i=1
+    #i=2
     nc = nc_open(nc.files[i])
     nc.vars = names(nc$var)
     print(nc.vars)
-    nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
-    
+    nc$dim$time
+    if(i==1) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
+    if(i==2) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='secs')
+
     for(v in 1:length(nc.vars)){
-      #v=1
+      #v=2
       nc.v = ncvar_get(nc,nc.vars[v])
       ndims = length(dim(nc.v))
       
@@ -321,23 +323,23 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         
         #write ascii------------------------------------------------------------
         if(nlayers(out.surf)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_surf_glorys'))
+          dir.out = file.path(dir.stdriver,gsub('_glor','_surf_glorys',nc.vars[v]))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.surf,file.path(dir.out,paste0(nc.vars[v],"_surf")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(out.surf,file.path(dir.out,gsub('_glor','_surf',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.surf);gc()
         }
         
         if(nlayers(out.bott)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_bott_glorys'))
+          dir.out = file.path(dir.stdriver,gsub('_glor','_bott_glorys',nc.vars[v]))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.bott,file.path(dir.out,paste0(nc.vars[v],"_bott")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(out.bott,file.path(dir.out,gsub('_glor','_bott',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.bott);gc()
         }
         
         if(nlayers(out.mean)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_mean_glorys'))
+          dir.out = file.path(dir.stdriver,gsub('_glor','_mean_glorys',nc.vars[v]))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.mean,file.path(dir.out,paste0(nc.vars[v],"_mean")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(out.mean,file.path(dir.out,gsub('_glor','_mean',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.mean);gc()
         }
         
@@ -380,8 +382,8 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     st.mean_allyrs = mean(rast(st.stack),na.rm=T)
     st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
     
-    plot(st.mean_allyrs, colNA='black')
-    plot(st.mean_yr1, colNA='black')
+    #plot(st.mean_allyrs, colNA='black')
+    #plot(st.mean_yr1, colNA='black')
     
     #save static map
     writeRaster(raster(st.mean_allyrs),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_allyrs")),format='ascii',overwrite=T)
@@ -389,7 +391,8 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     rm(st.stack); gc()
   }
   }
-}
+}#eof
+
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title List variables and get URLs for CEFI data.
