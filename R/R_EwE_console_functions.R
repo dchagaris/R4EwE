@@ -1,35 +1,111 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #fn.runEwE-----------------------------------------------------------------------------------------
-#' @title Run EwE CLI app
-#' @description Function to run EwE using the CLI
-#' @param cmdfile A file path pointing to the command file
-#' @param do.obj Toggle swith indicating the likelihood function to use. 0=none, 1=timeseries only, 2=timeseries and spatial data
-#' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods is returned. 
-#' @examples
-#' # example code:
-#' result <- fn.runEwE(cmdfile=C://input//EwEcmd.txt, do.obj=1)
-#' @export
-fn.runEwE <- function(cmdfile, do.obj = 1) {
-  #runlist=runlist_sens; i=3; do.obj=T
-  #create command line and run Ecospace
-  #dir.cmdfile <- runlist$cmd_file[1]
-  #cmdfile <- files.cmd[1]
-  cmd = paste(paste0('"', file.console, '"'),
-              paste0('"', cmdfile, '"'))
-  system(cmd,intern = F)
-  
+# fn.runEwE <- function(cmdfile, do.obj = 1) {
+#   #runlist=runlist_sens; i=3; do.obj=T
+#   #create command line and run Ecospace
+#   #dir.cmdfile <- runlist$cmd_file[1]
+#   #cmdfile <- files.cmd[1]
+#   cmd = paste(paste0('"', file.console, '"'),
+#               paste0('"', cmdfile, '"'))
+#   system(cmd,intern = F)
+#   
+# 
+#   #calculate objective function
+#   if(do.obj==1){
+#     #objout <- fn.objfxn1(i,runlist)
+#     objout <- fn.objfxn1(dir.pred=dirname(cmdfile),obs.ts=obs.ts)
+#     return(objout)
+#   }
+#   if(do.obj==2){
+#     objout <- fn.objfxn2(dir.pred=dirname(cmdfile), obs.ts=obs.ts, obs.map=obs.map)
+#     return(objout)
+#   }
+# }
 
-  #calculate objective function
-  if(do.obj==1){
-    #objout <- fn.objfxn1(i,runlist)
-    objout <- fn.objfxn1(dir.pred=dirname(cmdfile),obs.ts=obs.ts)
-    return(objout)
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#fn.runEwE-----------------------------------------------------------------------------------------
+#' Run one Ecospace job (system2 version)
+#' @param cmdfile Character: full path to the command file Ecospace consumes
+#' @param do.obj Integer: reserved for later (kept for signature parity)
+#' @param console Character: full path to the Ecospace console executable (defaults to global file.console)
+#' @param stdout_target NULL/FALSE to suppress, or a file path to capture stdout
+#' @param stderr_target NULL/FALSE to suppress, or a file path to capture stderr
+#' @return Integer exit status (0 = success); invisibly
+fn.runEwE <- function(cmdfile,
+                      do.obj   = 1,
+                      console  = file.console,
+                      stdout_target = FALSE,
+                      stderr_target = FALSE) {
+  
+  # cmdfile=files.cmd[1]
+  # do.obj=1
+  # console=file.console
+  # stdout_target=FALSE
+  # stderr_target=FALSE
+
+  # Normalize paths (do NOT shQuote() for system2 on Windows)
+  console_path <- normalizePath(console, winslash = "\\", mustWork = TRUE)
+  cmdfile_path <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
+  
+  # Build argument vector: the command file is passed as an argument
+  args <- shQuote(cmdfile_path)
+
+  # Run the Ecospace console; block until it finishes (wait = TRUE)
+  status <- tryCatch(
+    system2(command = console_path,
+            args    = args,
+            stdout  = stdout_target,    # FALSE to suppress, or a file path
+            stderr  = stderr_target,    # FALSE to suppress, or a file path
+            wait    = TRUE),
+    error = function(e) {
+      # Could not launch the process (bad path, permissions, etc.)
+      warning(sprintf("Ecospace call failed to start: %s", conditionMessage(e)))
+      999L
+    }
+  )
+  
+  
+  # If only running the external job, return its status invisibly
+  if (isTRUE(do.obj == 0L)) {
+    if (!identical(status, 0L)) {
+      warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+    }
+    return(invisible(status))
   }
-  if(do.obj==2){
-    objout <- fn.objfxn2(dir.pred=dirname(cmdfile), obs.ts=obs.ts, obs.map=obs.map)
-    return(objout)
+  
+  # If we are computing an objective, do it only for successful runs
+  if (!identical(status, 0L)) {
+    warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+    return(NA_real_)
   }
-}
+  
+  
+  # Optionally warn if non-zero exit status
+   if (!is.numeric(status) || length(status) != 1L || status != 0L) {
+     warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+   }
+
+  # Compute objective (must return a single numeric or NA_real_)
+  pred_dir <- dirname(cmdfile_path)
+  
+  out <- tryCatch({
+    if (do.obj == 1L) {
+      fn.objfxn1(dir.pred = pred_dir, obs.ts = obs.ts)
+    } else if (do.obj == 2L) {
+      fn.objfxn2(dir.pred = pred_dir, obs.ts = obs.ts, obs.map = obs.map)
+    } else {
+      NA_real_
+    }
+  }, error = function(e) NA_real_)
+  
+  if (is.numeric(out) && length(out) >= 1L && is.finite(out[1])){
+    return(out)
+  } else {
+    return(NA_real_)
+  }
+  
+} #eof
+
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #fn.runEwE.parallel-----------------------------------------------------------------------------------------

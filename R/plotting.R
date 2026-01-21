@@ -8,14 +8,16 @@
 #' # example code:
 #' result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
 #' @export
-fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(1,1), pltC.dims=c(1,1), 
-                                scaleCatch=FALSE,
+fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(1,1), 
+                                scaleCatch=FALSE,plt.cols=1:dim(predB)[3],
                                 dir.plts = dir.pred, plot2pdf=TRUE){
   xtime = as.numeric(dimnames(predB)[[1]])
   if(plot2pdf) pdf(file.path(dir.plts,"biomass timeseries fits.pdf"), onefile=T)
-  par(mfrow=pltB.dims, mar=c(2,4,2,1))
+  par(mfrow=pltB.dims, mar=c(2,4,2,1), oma=c(4,0,0,1),xpd=F)
+  
   for(s in 1:dim(predB)[2]){
     #s=6
+    par(xpd=F)
     has.obs = ifelse(s%in%obs.ts$obsB.head$Poolcode,TRUE,FALSE)
     pred.s = predB[,s,]
     pred.base.s = predB[,s,scale2run]
@@ -29,11 +31,14 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
       obs.scaled.s = sweep(obs.s,2,obs.q,"/")
       plt.ylims = c(0,max(pred.s,obs.scaled.s,na.rm=T)*1.2)
     }
-    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=dimnames(predB)[[2]][s])
+    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=dimnames(predB)[[2]][s], col=plt.cols, xlab='')
     if(has.obs){
       legend('topleft',legend=colnames(obs.scaled.s), pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=.8)    
       matpoints(xtime,obs.scaled.s, type='p', pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=0.75)
-    } 
+    }
+    if(s%in%c(prod(pltB.dims)*(1:ceiling(dim(predB)[2]/prod(pltB.dims))),dim(predB)[2])){
+      #add legend
+    }
   }
   if(plot2pdf) dev.off()
   
@@ -60,7 +65,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
       obs.scaled.s = sweep(obs.s,2,obs.q,"/")
       plt.ylims = c(0,max(pred.s,obs.scaled.s,na.rm=T)*1.2)
     }
-    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=pred.name)
+    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=pred.name, col=plt.cols, xlab='')
     if(has.obs){
       legend('topleft',legend=colnames(obs.scaled.s), pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=.8)    
       matpoints(xtime,obs.scaled.s, type='p', pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=0.75)

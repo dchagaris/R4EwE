@@ -6,12 +6,12 @@
 #...............................................................................
 ##Objective fxn 1-----
 #fits to timeseries data only, using the ecosim timeseries csv file
-fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts){  
+fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts,run.idx=1){  
   #get annual timeseries predictions
   #dir.pred = "C:/NWACS MICE/GA output 2026-01-06/GA_Run_20260106_114454/run_00abeb6e03a8897940ee4aa45b593526"
-  predB = fn.ecospace_predB_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,1]
-  predC = fn.ecospace_predC_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,1] #unable to read region catch so far
-  
+  predB = fn.ecospace_predB_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,run.idx]
+  predC = fn.ecospace_predC_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,run.idx] #unable to read region catch so far
+  dim(predB); dim(predC)
   ###biomass timeseries annual----
   obs.ts.head = obs.ts$obsB.head
   obs.ts.biomass = obs.ts$obsB
