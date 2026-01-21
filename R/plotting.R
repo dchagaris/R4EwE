@@ -11,12 +11,22 @@
 fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(1,1), 
                                 scaleCatch=FALSE,plt.cols=1:dim(predB)[3],
                                 dir.plts = dir.pred, plot2pdf=TRUE){
+  
+  # timestep='annual'
+  # scale2run=1
+  # pltB.dims=c(3,3)
+  # pltC.dims=c(1,1)
+  # scaleCatch=FALSE
+  # plt.cols=1:dim(predB)[3]
+  # dir.plts = dir.pred
+  # plot2pdf=FALSE
+  
   xtime = as.numeric(dimnames(predB)[[1]])
   if(plot2pdf) pdf(file.path(dir.plts,"biomass timeseries fits.pdf"), onefile=T)
   par(mfrow=pltB.dims, mar=c(2,4,2,1), oma=c(4,0,0,1),xpd=F)
   
   for(s in 1:dim(predB)[2]){
-    #s=6
+    #s=2
     par(xpd=F)
     has.obs = ifelse(s%in%obs.ts$obsB.head$Poolcode,TRUE,FALSE)
     pred.s = predB[,s,]
@@ -45,9 +55,11 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   if(plot2pdf) pdf(file.path(dir.plts,"catch timeseries fits.pdf"), onefile=T)
   par(mfrow=pltC.dims, mar=c(2,4,2,1))
   for(s in 1:dim(predC)[2]){
-    #s=12
-    pred.name = paste(unique(strsplit(dimnames(predC)[[2]][s],split="\\.")[[1]][-c(1,2)],fromLast=T),collapse="_")
-    ss = match(pred.name, gsub("\\+","",gsub("-","_",df.names$group.names)))
+    #s=1
+    #pred.name = paste(unique(strsplit(dimnames(predC)[[2]][s],split="\\.")[[1]][-c(1,2)],fromLast=T),collapse="_")
+    #ss = match(pred.name, gsub("\\+","",gsub("-","_",df.names$group.names)))
+    pred.name = gsub(" ","_",dimnames(predC)[[2]][s])
+    ss = match(pred.name, df.names$group.names)
     has.obs = ifelse(ss%in%obs.ts$obsC.head$Poolcode,TRUE,FALSE)
     pred.s = predC[,s,]
     pred.base.s = predC[,s,scale2run]

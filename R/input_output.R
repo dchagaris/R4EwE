@@ -77,10 +77,10 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
     cat = lapply(files.cat,FUN=function(x){
       if(timestep=='annual') nskip = which(substr(readLines(x),1,4)=='Year')-1
       if(timestep=='monthly') nskip = which(substr(readLines(x),1,8)=='TimeStep')-1
-      read.csv(x, as.is=T, skip=nskip, row.names=1)
+      read.csv(x, as.is=T, skip=nskip, row.names=1, check.names=F)
     })
     cat.array = array(dim=c(dim(cat[[1]])[1],dim(cat[[1]])[2],length(files.cat)),
-                      dimnames=list(rownames(cat[[1]]),names(cat[[1]]),basename(dirname(files.cat))))
+                      dimnames=list(rownames(cat[[1]]),sapply(strsplit(names(cat[[1]]),"\\|"),tail,1),basename(dirname(files.cat))))
     for(r in 1:length(cat)){
       tmp = as.matrix(cat[[r]])
       cat.array[,,r] <- tmp
@@ -94,12 +94,12 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
     cat = lapply(files.cat,FUN=function(x){
       if(timestep=='annual') nskip = which(substr(readLines(x),1,4)=='Year')-1
       if(timestep=='monthly') nskip = which(substr(readLines(x),1,8)=='TimeStep')-1
-      read.csv(x, as.is=T, skip=nskip, row.names=1)
+      read.csv(x, as.is=T, skip=nskip, row.names=1, check.names=F)
     })
     
     cat.array = array(dim=c(dim(cat[[1]])[1],dim(cat[[1]])[2],n.reg+1,length(unique(dirname(files.cat)))),
-                      dimnames=list(rownames(cat[[1]]),names(cat[[1]]),paste0('reg',0:n.reg),unique(basename(dirname(files.cat)))))
-    for(r in 1:length(bio)){
+                      dimnames=list(rownames(cat[[1]]),sapply(strsplit(names(cat[[1]]),"\\|"),tail,1),paste0('reg',0:n.reg),unique(basename(dirname(files.cat)))))
+    for(r in 1:length(cat)){
       if(timestep=='annual') reg.idx=as.numeric(substr(basename(files.cat[r]),32,32))+1
       if(timestep=='monthly') reg.idx=as.numeric(substr(basename(files.cat[r]),25,25))+1
       run.idx=match(basename(dirname(files.cat[r])),dimnames(cat.array)[[4]])
