@@ -418,9 +418,6 @@ crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
   return(offspring)
 } #eof
 
-
-
-
 # === Mutation ===
 mutate <- function(population, margin=0.2) {
   #low = L.bounds
@@ -568,7 +565,6 @@ fn.GA <- function(myconfig){
     # Selection, Crossover, Mutation
     parents <- select_parents(gapop, fitness) #resamples the population, with replacement, with rank-based probabilities in the sample draws
     #offspring <- crossover(parents) #offspring are when two parents crossover a part of their parameter vector
-    #offspring <- crossover_group_swap(parents, p_cros=0.8)
     offspring <- crossover_uniform(parents, p_cross=0.8, p_gene=0.5)
     offspring <- mutate(offspring, margin=0.2) #randomly draw new parameter values to mutate the individual
     
