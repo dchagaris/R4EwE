@@ -1,3 +1,5 @@
+library('raster')
+library('terra')
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 #fn.read ecosim timeseries---------------------------------------------------------------------------------------
@@ -112,34 +114,70 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
   return(cat.array)
 }
 
-fn.ecospace_ascii2stack <- function(dir.out=dir.pred, do.bio=1:12, do.catch=c(2,3,5,6,8,10,12), do.eff=1:6, do.months=c(4:6,10:12), 
-                                    do.years=2010:2019){
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
+#fn.vul_testval_tags-----
+#' @title Read Ecospace output ascii files into a raster stack.
+#' @description This function reads a subset of asc grids produced by an Ecospace run into a raster stack.  Requires the terra package for faster processing.
+#' @param dir.out The run output folder containing.  It should contain a folder named 'asc', which holds all the output maps.
+#' @param do.vars The model output variables to read. Must match the naming convention of the output files, all  lowercase.  Current options are 'biomass','catch', and 'effort'.
+#' @param do.grps The model groups for which to read data.
+#' @param do.fleets The fleet numbers for which to read effort data.
+#' @param do.months The months to read output data, only used if monthly maps are output.
+#' @return A SpatRaster stack from the terra package.
+#' @examples
+#' # example code:
+#' predB.maps <- fn.ecospace_ascii2stack(dir.out=dir.pred, do.vars=c('biomass'), do.grps=c(3,5,6,8,10,12), do.fleets=1:6, do.months=1, do.years=2010:2019, annualmaps=TRUE)
+#' @export
+fn.ecospace_ascii2stack <- function(dir.out=dir.pred,   
+                                    do.vars=c('biomass'), 
+                                    do.grps=1:12, 
+                                    do.fleets=1:6, 
+                                    do.months=1, 
+                                    do.years=2010:2019,
+                                    annualmaps=TRUE){
+  # dir.out=dir.pred
+  # do.vars=c('biomass')
+  # do.grps=1:12
+  # do.fleets=1:6
+  # do.months=1
+  # do.years=2010:2019
+  # annualmaps=TRUE
+  library('terra')
   files.ascii <- list.files(file.path(dir.out,'asc'),pattern=".asc$", recursive=T, full.names=T)
   grpsplit = strsplit(basename(files.ascii),"-")
   grpnames = character()
   for(g in 1:length(grpsplit)){
-    #g=913
+    #g=1326
     name.g = grpsplit[[g]]
     name.g = name.g[-c(1,length(name.g))]
     name.g = paste(name.g,collapse="-")
     grpnames = c(grpnames,name.g)
   }
+  unique(grpnames)
   timestep = substr(basename(files.ascii),nchar(basename(files.ascii))-8,nchar(basename(files.ascii))-4)
-  time = startyear + (as.numeric(timestep)-1)/12
+  time = styear + (as.numeric(timestep)-1)/12
+  #output map metadata----
   ascii.df = data.frame(type=ifelse(grepl('Biomass',basename(files.ascii)),'biomass',
                                     ifelse(grepl('Catch',basename(files.ascii)),'catch',
                                            ifelse(grepl('Effort',basename(files.ascii)),'effort','other'))),
                         group=grpnames,
                         group.num = match(gsub(" ","_",grpnames),df.names$group.names),
+                        fleet.num = match(grpnames,df.names$fleet.names),
                         timestep =timestep,
                         time = time,
                         year = floor(time),
-                        month = round(1+((time-startyear)-floor(time-startyear))*12,0),
+                        month = round(1+((time-styear)-floor(time-styear))*12,0),
                         file=files.ascii)
+  #subset----
+  if(annualmaps) ascii.df.sub = subset(ascii.df, type%in%do.vars & (group.num%in%do.grps | fleet.num%in%do.fleets) & year%in%do.years)
+  if(!annualmaps) ascii.df.sub = subset(ascii.df, type%in%do.vars & (group.num%in%do.grps | fleet.num%in%do.fleets) & year%in%do.years & month%in%do.months)
+  ascii.df.sub$label = ifelse(ascii.df.sub$type=='effort',
+                              paste(ascii.df.sub$type,formatC(ascii.df.sub$fleet.num,width=2,flag="0"),ascii.df.sub$year,formatC(ascii.df.sub$month,width=2,flag="0"),sep="_"),
+                              paste(ascii.df.sub$type,formatC(ascii.df.sub$group.num,width=2,flag="0"),ascii.df.sub$year,formatC(ascii.df.sub$month,width=2,flag="0"),sep="_"))
   
-  sub.ascii.df = ascii.df[ascii.df$year%in%do.years & ascii.df$month%in%do.months &
-                            ((ascii.df$group.num %in% do.bio & ascii.df$type=='biomass')|
-                               (ascii.df$group.num %in% do.catch & ascii.df$type=='catch')|
-                               (ascii.df$type=='')),]
-  
+  #stack and return----
+  #out.stack <- stack(ascii.df.sub$file)
+  out.stack <- rast(ascii.df.sub$file)
+  names(out.stack) <- ascii.df.sub$label
+  return(out.stack)
 }
