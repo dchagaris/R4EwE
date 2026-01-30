@@ -175,7 +175,6 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
 #' @examples
 #' # example code:
 #' r.filled = fill_na_iter(r, mask=depth)
-#' @export
 fill_na_iter <- function(r, w = 3, max_iter = 50, mask=depth) {
   #filled = ras.v[[t]]
   filled <- r

@@ -1,5 +1,27 @@
 
 #prepare parameter vector----
+#' @title Construct parameter vectors and bounds for model estimation
+#' @description Builds the parameter vector and related metadata (labels, groups, bounds, CVs) for vulnerabilities, environmental responses, dispersal, and mediation parameters. Several objects are assigned in the parent/global environment.
+#' @param do.vuls Logical; include vulnerability parameters.
+#' @param vul_pars Data frame of vulnerability parameters.
+#' @param vul.min Minimum vulnerability (unused placeholder).
+#' @param vul.max Maximum vulnerability (unused placeholder).
+#' @param vul.cv Coefficient of variation for vulnerabilities.
+#' @param do.env Logical; include environmental parameters.
+#' @param env_pars Data frame of environmental parameters.
+#' @param env.min Minimum environmental value.
+#' @param env.max Maximum environmental value.
+#' @param env.cv Coefficient of variation for environmental parameters.
+#' @param do.disp Logical; include dispersal parameters.
+#' @param disp_pars Data frame of dispersal parameters.
+#' @param disp.min Minimum dispersal (unused placeholder).
+#' @param disp.max Maximum dispersal (unused placeholder).
+#' @param disp.cv Coefficient of variation for dispersal parameters.
+#' @param do.med Logical; include mediation parameters.
+#' @param med_pars Data frame of mediation shape parameters.
+#' @param med.xbase.cv CV applied to mediation x-base parameters.
+#' @return Invisibly returns \code{NULL}. Several objects are set globally.
+#' @export
 fn.makeparvec <- function(
   do.vuls = TRUE, 
   vul_pars = predprey_pars,
@@ -206,6 +228,17 @@ fn.makeparvec <- function(
 } #end function
 
 #make GA populations----
+
+#' Generate an initial GA population matrix
+#'
+#' Creates the initial population for a genetic algorithm using either
+#' uniform draws within parameter bounds or (optionally) lognormal/normal
+#' draws centered on existing parameter estimates. Uses several global
+#' objects created elsewhere.
+#' @param run_config List containing GA settings; must include \code{popSize}.
+#' @param usedist Character string; distribution type, either"unif" (uniform between bounds) or "ln" (log/normal hybrid). Default "unif".
+#' @return A numeric matrix of dimension run_config$popSize x n_pars.
+#' @export
 fn.GApop = function(run_config=myconfig, usedist='unif'){
   #run_config <- myconfig
   if(usedist=='unif'){
@@ -236,18 +269,9 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
   }
   return(mat)
   #matrix(rep(log_par_vec, run_config$popSize), nrow=run_config$popSize, byrow=T)
-}
-
-
-# Alternative minimalistic approach:
-# safe_make_run_dir_tempfile <- function(run_dir, log_par_vec) {
-#   h <- digest::digest(log_par_vec, algo = "md5", serialize = TRUE)
-#   run_path <- tempfile(pattern = paste0("run_", h, "_"), tmpdir = run_dir)
-#   dir.create(run_path, showWarnings = TRUE, recursive = TRUE)
-#   run_path
-# }
-
-
+} #eof
+#' @keywords internal
+#' @noRd
 safe_make_run_dir_tempfile <- function(base_dir,
                                        par_vec,
                                        gen = gen,
@@ -308,7 +332,17 @@ safe_make_run_dir_tempfile <- function(base_dir,
 
 
 #write command files----
-fn.parvec2cmd <- function(par_vec=est_par_vec, g=gen, idx=i, out_dir=run_dir){
+
+#' @title Write command file from parameter vector
+#' @description Takes as input a parameter vector and creates taglines and command files.
+#' @param par_vec Parameter vector.
+#' @param g Generation number, used for file tracking in a genetic algorithm loop. Default 0
+#' @param idx Index for run identifier.
+#' @param out_dir Output directory, where the command file will be saved along with model output.
+#'
+#' @return Path to the written command file.
+#' @export
+fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
   
   # par_vec = est_par_vec
   # g = 999
@@ -379,7 +413,8 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=gen, idx=i, out_dir=run_dir){
   
 }
 
-
+#' @keywords internal
+#' @NoRd
 safe_runEwE <- function(cmdfile, do.obj) {
   on.exit(gc(), add = TRUE)
   out <- tryCatch({
@@ -417,6 +452,26 @@ safe_runEwE <- function(cmdfile, do.obj) {
 
 
 #run the population of models----
+#' @title Run Ecospace in parallel, for GA calibration.
+#' @description
+#' Executes Ecospace runs from a vector of command file paths using parallel
+#' workers, retries any failed runs up to a limit, optionally deletes outputs,
+#' and returns the fitness (e.g., log-likelihood) vector.
+#'
+#' @param files.cmd Character vector of paths to Ecospace command files.
+#' @param obj.fxn Integer or flag selecting which objective function to use.
+#' @param delete.output Logical; if true, delete generated output folders after runs.
+#' @param max_tries Maximum number of retry rounds for failed runs.
+#'
+#' @details
+#' Uses foreach with a parallel backend to run fn_runEwE on each command file.
+#' Failed runs (NA results) are identified and resubmitted up to max_tries times.
+#' If delete.output is true and run_dir exists in the environment, subdirectories
+#' under run_dir are removed after completion.
+#'
+#' @return Numeric vector of fitness values (same length as files.cmd).
+#'
+
 fn.runEwE.gapop <-  function(
     files.cmd, 
     obj.fxn=1, 
@@ -491,16 +546,46 @@ fn.runEwE.gapop <-  function(
   return(fitness)
 } # eof
 
+
 # === Selection ===
+#' @title Select parents by rank-based sampling
+#' @description
+#' Ranks individuals by fitness (higher is better), converts ranks to selection
+#' probabilities, and samples a new parent population with replacement.
+#'
+#' @param gapop Matrix or data frame of individuals (rows = individuals, columns = parameters).
+#' @param fitness Numeric vector of fitness values (length equals nrow(gapop)); higher is better.
+#'
+#' @details
+#' Ranks are computed with ties broken at random, then normalized to probabilities.
+#' Parents are sampled with replacement to keep population size constant.
+#'
+#' @return Matrix of selected parents with the same dimensions as `gapop`.
+#' @export
 select_parents <- function(gapop, fitness) {
   ranks <- rank(-fitness, ties.method='random')
   probs <- ranks / sum(ranks)
-  #cbind(ranks,fitness,probs)
   selected <- gapop[sample(1:nrow(gapop), nrow(gapop), replace = TRUE, prob = probs), ]
   return(selected)
 }
 
 # === Crossover ===
+#' @title One-point crossover for paired parents
+#' @description
+#' Applies one-point crossover to pairs of parents to create offspring.
+#'
+#' @param parents Matrix of parent individuals (rows = individuals, columns = parameters).
+#'
+#' @details
+#' Processes rows in pairs (1–2, 3–4, …). With probability 0.8, a single crossover
+#' point is drawn uniformly from positions 1 to n_pars - 1, and the trailing gene
+#' segments are swapped between the pair.
+#'
+#' Requires global variables `pop_size` (number of rows in `parents`) and `n_pars`
+#' (number of columns) to be defined in the calling environment.
+#'
+#' @return Matrix of offspring with the same dimensions as `parents`.
+#' @export
 crossover <- function(parents) {
   offspring <- parents
   for (i in seq(1, pop_size - 1, by = 2)) {
@@ -514,6 +599,22 @@ crossover <- function(parents) {
   return(offspring)
 }
 
+
+#' @title Uniform crossover for paired parents
+#' @Description
+#' Applies uniform crossover to pairs of parents using a gene-wise mask.
+#'
+#' @param parents Matrix of parent individuals (rows = individuals, columns = parameters).
+#' @param p_cross Probability of applying crossover to a parent pair.
+#' @param p_gene Probability that a gene is swapped when crossover occurs.
+#'
+#' @details
+#' Processes rows in pairs. For each pair, crossover occurs with probability `p_cross`.
+#' A binary mask is drawn i.i.d. across genes with probability `p_gene`; masked genes
+#' are swapped between the two parents.
+#'
+#' @return Matrix of offspring with the same dimensions as `parents`.
+#' @export
 crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
   offspring <- parents
   pop_size <- nrow(parents)
@@ -531,6 +632,26 @@ crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
 } #eof
 
 # === Mutation ===
+#' @title Mutate population with parameter-wise random resets
+#' @description
+#' Mutates individuals by redrawing selected genes from a range informed by the
+#' current population, with a configurable margin.
+#'
+#' @param population Matrix of individuals on the log scale (rows = individuals, columns = parameters).
+#' @param margin Fractional expansion applied to the min–max range per parameter (on original scale).
+#'
+#' @details
+#' The algorithm:
+#' 1) Convert each parameter to original scale (exp), compute min and max across the population.  
+#' 2) Expand bounds by `margin` (lower reduced, upper increased); enforce vulnerability
+#'    parameters `vul.par.idx` to be strictly > 1.  
+#' 3) Transform bounds back to log scale and, for each individual, redraw genes indicated
+#'    by a Bernoulli mask (`mutation_rate`) uniformly within the parameter-specific bounds.
+#'
+#' Requires global variables: `n_pars`, `mutation_rate`, and `vul.par.idx`.
+#'
+#' @return Mutated population matrix (same dimensions as `population`).
+
 mutate <- function(population, margin=0.2) {
   #low = L.bounds
   #upp = U.bounds
@@ -550,7 +671,8 @@ mutate <- function(population, margin=0.2) {
   return(population)
 } #eof
 
-
+#' @keywords internal
+#' @NoRd
 cluster_is_ok <- function() {
   ok <- tryCatch({
     res <- foreach(i = 1:2, .combine = c) %dopar% { Sys.getpid() }
@@ -559,6 +681,8 @@ cluster_is_ok <- function() {
   ok
 }
 
+#' @keywords internal
+#' @NoRd
 ensure_cluster <- function() {
   if (!cluster_is_ok()) {
     # rebuild
@@ -577,155 +701,3 @@ ensure_cluster <- function() {
     ))
   }
 }
-
-
-#GA function----
-fn.GA <- function(myconfig){
-  #unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
-  pop_size <<- myconfig$popSize
-  n_generations <<- myconfig$n_gen
-  mutation_rate <<- myconfig$pmutation
-  elitism <<- myconfig$elitism
-  do.penalty <<- myconfig$do.penalty
-  pen.wt.mult <<- myconfig$pen.wt.mult
-  gapop.dist <<- myconfig$gapop.dist
-  
-  #create results file
-  file.ga.results <- file.path(dir.main, paste0('ga_results_',timestamp,'.csv'))
-  myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
-  write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
-  write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
-  write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(myconfig.string,file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(t(c("gen_num","min_fitness","mean_fitness",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
-  
-  #base run
-  files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
-  message('Running the base model')
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)  
-  
-  #pipe output
-  g=-1
-  best_fit = min(fitness, na.rm=T)
-  mean_fit = mean(fitness, na.rm=T)
-  sd_fit = sd(fitness, na.rm=T)
-  max_fit = max(fitness, na.rm=T)
-  median_fit = median(fitness, na.rm=T)
-  best_pars = est_par_vec 
-  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  cat(sprintf("%-10s %-15s %-15s %-15s %-15s %-15s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","time end"))
-  cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
-
-  #initial population.................................
-  #PICKUP HERE - NEED TO CHECK gn.GApop to work with mediation (1/26/2020)
-  #message('Running the initial population')
-  gapop <- fn.GApop(usedist=gapop.dist)
-  gapop[1,] <- est_par_vec  #include base run in initial population
-  #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
-  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
-  files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)
-  
-  #calculate penalty for parameter bounds violations
-  if(do.penalty){
-  pen.wt = abs(diff(range(fitness)))*pen.wt.mult
-  upp.pen = U.bounds*1.5
-  low.pen = L.bounds*0.5
-  penalties = rep(0,nrow(gapop))
-  for(i in 1:nrow(gapop)){
-    #i=119
-    penalty=rep(0,ncol(gapop))
-    penalties[i] <- sum((pmax(0,gapop[i,]-upp.pen)^2 + pmax(0,low.pen-gapop[i,])^2)*pen.wt)
-  }
-  fitness <- fitness+penalties
-  }
-  #pipe output
-  g=0
-  best_fit = min(fitness, na.rm=T)
-  mean_fit = mean(fitness, na.rm=T)
-  sd_fit = sd(fitness, na.rm=T)
-  max_fit = max(fitness, na.rm=T)
-  median_fit = median(fitness, na.rm=T)
-  best_pars = round(exp(gapop[which.min(fitness),]),4)
-  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
-  #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
-  #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
-  
-  for (gen in 1:n_generations) {
-    #gen=1
-    if(gen==1) unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
-    
-    #reset workers after every 5 generations - this didn't help but we'll keep it jic
-    if(gen %in% seq(6,n_generations,5)){
-      try(silent = TRUE, stopCluster(cl))
-      rm(cl); gc()
-      closeAllConnections()
-      workers <- floor(detectCores() / 4)
-      cl <- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
-      doParallel::registerDoParallel(cl)
-      clusterExport(cl, c("file.console","cmd_base","myconfig","run_dir",
-                          "safe_runEwE","fn.runEwE","fn.objfxn1","fn.objfxn2",
-                          "fn.ecospace_predB_ts2array","fn.ecospace_predC_ts2array",
-                          "styear","enyear","group.names","df.names","obs.ts"))
-    }
-    
-    # Elitism - keep the top n runs
-    elite_idx <- order(fitness, decreasing=F)[1:elitism]
-    elite <- gapop[elite_idx, ]
-    
-    # Selection, Crossover, Mutation
-    parents <- select_parents(gapop, fitness) #resamples the population, with replacement, with rank-based probabilities in the sample draws
-    #offspring <- crossover(parents) #offspring are when two parents crossover a part of their parameter vector
-    offspring <- crossover_uniform(parents, p_cross=0.8, p_gene=0.5)
-    offspring <- mutate(offspring, margin=0.2) #randomly draw new parameter values to mutate the individual
-    
-    # Evaluate new population
-    ensure_cluster()  # optional but recommended
-    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(log_par_vec=offspring[i,], g=gen, idx=i)) 
-    files.cmd <- unlist(files.cmd, use.names=F)
-    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.output=T)
-    
-    #calculate penalty for parameter bounds violations
-    # pen.wt = abs(diff(range(fitness)))*0.1
-    # upp.pen = U.bounds*1.5
-    # low.pen = L.bounds*0.5
-    if(do.penalty){
-    penalties = rep(0,nrow(offspring))
-    for(i in 1:nrow(offspring)){
-      #i=119
-      penalties[i] <- sum((pmax(0,offspring[i,]-upp.pen)^2 + pmax(0,low.pen-offspring[i,])^2)*pen.wt)
-    }
-    new_fitness <- new_fitness+penalties
-    }
-    
-    # Combine elite + offspring: keep elites and the best (lowest) offspring
-    worst_offspring_idx <- order(new_fitness, decreasing = TRUE)[1:elitism]  # drop worst 'elitism'
-    gapop   <- rbind(elite, offspring[-worst_offspring_idx, ])
-    fitness <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
-    
-    # Combine elite + offspring, drop worst offspring and replace with elites
-    # offspring.rank = rank(-new_fitness, ties.method='random')
-    # drop.idx = which(offspring.rank<=elitism)
-    # gapop <- rbind(elite, offspring[-drop.idx,])
-    # fitness <- c(fitness[elite_idx], new_fitness[-drop.idx])
-    
-    #pipe output
-    g=gen
-    best_fit = min(fitness, na.rm=T)
-    mean_fit = mean(fitness, na.rm=T)
-    sd_fit = sd(fitness, na.rm=T)
-    max_fit = max(fitness, na.rm=T)
-    median_fit = median(fitness, na.rm=T)
-    best_pars = round(exp(gapop[which.min(fitness),]),4)
-    write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-    cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
-    #message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
-    #unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
-    rm(parents,offspring,files.cmd);gc()
-  }
-}#eof
-
-

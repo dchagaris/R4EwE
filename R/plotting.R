@@ -1,9 +1,18 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-#fn.runEwE.parallel-----------------------------------------------------------------------------------------
 #' @title Plot Ecospace predicted timeseries.
 #' @description Makes a multipanel plot of 1 or more ecopace runs with observed data where available.
-#' @param 
-#' @return
+#' @param predB An array of biomass predictions, as produced by fn.ecospace_ts2array()
+#' @param predC An array of catch predictions, as produced by fn.ecospace_ts2array()
+#' @param obs.ts A list object containing reference timeseries information, as that created by fn.read_ecosim_timeseries().
+#' @param timestep Read 'annual' or 'monthly' data.
+#' @param scale2run If multiple models, which to scale the observed values to.
+#' @param pltB.dims Numeric vector of length 2 specifying the number of rows and columns for multipanel plotting.
+#' @param pltC.dims Numeric vector of length 2 specifying the number of rows and columns for multipanel plotting.
+#' @param scaleCatch Logical. TRUE will scale the predictions so the mean is equal to that of the observed.  Default is FALSE.
+#' @param plt.cols Vector of line colors.
+#' @param plot2pdf Logical.  TRUE (default) will save files to the specified directory.
+#' @param dir.plts  Location to save pdf plots. Defaults to dir.pred.
+#' @return Generate a figure in the active plotting device or saves as pdf file.
 #' @examples
 #' # example code:
 #' result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
@@ -88,4 +97,5 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   }
   if(plot2pdf) dev.off()
   
-}
+}#eof
+

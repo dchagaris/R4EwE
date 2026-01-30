@@ -129,4 +129,32 @@ Computed Ecotrophic Efficiencies (EE) invalid for one or more group(s).</Message
   <Message_Source>DataSource</Message_Source>
   <Message_DataType>NotSet</Message_DataType>
 </Information_Message>
+<Log_Message
+  Date="10:17:07 AM Wednesday, January 21, 2026">
+  <Message>EwECore.cMessageHandler.SendMessage(cMessage) Delegate has not been initialized.</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Ecotracer scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Ecospace scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Ecotracer scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Ecosim scenario closed</Message>
+</Log_Message>
+<Log_Message
+  Date="10:17:09 AM Wednesday, January 21, 2026">
+  <Message>Model closed</Message>
+</Log_Message>
 </doc>

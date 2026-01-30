@@ -357,6 +357,8 @@ fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.envpref_testvals-----
+#' @keywords internal
+#' @NoRd
 fn.envpref_testvals <- function(runlist) {
   # Created an empty tag column
   runlist$tag <- NA
