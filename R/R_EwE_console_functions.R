@@ -37,10 +37,10 @@ fn.runEwE <- function(cmdfile,
                       stdout_target = FALSE,
                       stderr_target = FALSE) {
   
-  # cmdfile=files.cmd[1]
+  # cmdfile=files.cmd
   # do.obj=1
   # console=file.console
-  # stdout_target=FALSE
+  # stdout_target=file.path(dirname(cmdfile),"stdout.txt")
   # stderr_target=FALSE
 
   # Normalize paths (do NOT shQuote() for system2 on Windows)
@@ -238,7 +238,85 @@ fn.disp_testval_tags = function(disp.base, pct.change=0.5){
   tags <- paste0("<ECOSPACE_DISPERSAL_RATE_INDEXED>(",disp$pred,"), ",disp$disp,", Indexed.Single")
   return(tags)
 } #end of function 
-  
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
+#fn.mediation_testval_tags-----
+#' @title Make mediation shape parameter taglines for sensitivity runs.
+#' @description Create parameter taglines for the command file to test sensitivity to mediation shapes.
+#' @param med A dataframe with baseline mediation parameters, this has to be created manually.
+#' @return A character vector containing the parameter taglines for the command file.
+#' @examples
+#' # example code:
+#' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+#' @export
+fn.mediation_testval_tags = function(meds.base, do.xbase=T){
+  meds.low = meds.hi = meds.base
+  meds.out = data.frame()
+  #meds.low$pred = meds.hi$pred = as.numeric(meds.base$group_index)
+  tags <- character()
+  for(i in 1:nrow(meds.base)){
+    #i=1
+    #LINEAR SHAPE....
+    if(meds.base$shape_type[i]==1){
+      meds.low$slope[i] = meds.base$slope[i]-1.96*meds.base$stderr[i]
+      meds.low$par1[i] = round(1-50*meds.low$slope[i],2)
+      meds.low$par2[i] = round(100*meds.low$slope[i]+meds.low$par1[i],2)
+      
+      meds.hi$slope[i] = meds.base$slope[i]+1.96*meds.base$stderr[i]
+      meds.hi$par1[i] = round(1-50*meds.hi$slope[i],2)
+      meds.hi$par2[i] = round(100*meds.hi$slope[i]+meds.hi$par1[i],2)
+      
+      tag.low.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.low$med_index[i],"),",meds.low$x_base[i],meds.low$shape_type[i], meds.low$par1[i],meds.low$par2[i],",Indexed.Single[]")
+      tag.hi.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.hi$med_index[i],"),",meds.hi$x_base[i],meds.hi$shape_type[i],meds.hi$par1[i],meds.hi$par2[i],",Indexed.Single[]")
+      tags <- c(tags,tag.low.i,tag.hi.i) 
+      
+      meds.out <- rbind(meds.out,meds.low[i,],meds.hi[i,])
+      
+      if(do.xbase){
+        x_base.ci = ceiling(1.96*(.017*meds.base$x_base[i]))
+        meds.xbase = rbind(meds.base[i,],meds.base[i,])
+        meds.xbase$x_base = c(meds.base$x_base[i]-x_base.ci, meds.base$x_base[i]+x_base.ci)
+        tag.xbaselow.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.base$med_index[i],"),",meds.base$x_base[i]-x_base.ci, meds.base$shape_type[i],meds.base$par1[i],meds.base$par2[i],",Indexed.Single[]")
+        tag.xbasehi.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.base$med_index[i],"),",meds.base$x_base[i]+x_base.ci,meds.base$shape_type[i],meds.base$par1[i],meds.base$par2[i],",Indexed.Single[]")
+        tags <- c(tags,tag.xbaselow.i,tag.xbasehi.i) 
+        meds.out <- rbind(meds.out,meds.xbase)
+      }
+    } #end linear
+    
+    #HYPERBOLIC SHAPE....
+    if(meds.base$shape_type[i]==3){
+      #low = flat curve
+      meds.low$par1[i] = round(meds.base$par1[i]-1.96*meds.base$par1[i]*meds.base$stderr[i],3)
+      meds.low$par2[i] = round(meds.base$par2[i]+1.96*meds.base$par2[i]*meds.base$stderr[i],3)
+      meds.low$par3[i] = round(meds.base$par3[i]+1.96*meds.base$par3[i]*meds.base$stderr[i],3)
+      #hi = steep curve
+      meds.hi$par1[i] = round(meds.base$par1[i]+1.96*meds.base$par1[i]*meds.base$stderr[i],3) 
+      meds.hi$par2[i] = round(meds.base$par2[i]-1.96*meds.base$par2[i]*meds.base$stderr[i],3)
+      meds.hi$par3[i] = round(meds.base$par3[i]-1.96*meds.base$par3[i]*meds.base$stderr[i],3)
+
+      tag.low.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.low$med_index[i],"),",meds.low$x_base[i],meds.low$shape_type[i], meds.low$par1[i],meds.low$par2[i],meds.low$par3[i],meds.low$par4[i],",Indexed.Single[]")
+      tag.hi.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.hi$med_index[i],"),",meds.hi$x_base[i],meds.hi$shape_type[i],meds.hi$par1[i],meds.hi$par2[i],meds.hi$par3[i],meds.hi$par4[i],",Indexed.Single[]")
+      tags <- c(tags,tag.low.i,tag.hi.i) 
+      
+      meds.out <- rbind(meds.out,meds.low[i,],meds.hi[i,])
+      
+      if(do.xbase){
+        x_base.ci = ceiling(1.96*(.017*meds.base$x_base[i]))
+        meds.xbase = rbind(meds.base[i,],meds.base[i,])
+        meds.xbase$x_base = c(meds.base$x_base[i]-x_base.ci, meds.base$x_base[i]+x_base.ci)
+        tag.xbaselow.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.base$med_index[i],"),",meds.base$x_base[i]-x_base.ci, meds.base$par1[i],meds.base$par2[i],meds.base$par3[i],meds.base$par4[i],",Indexed.Single[]")
+        tag.xbasehi.i = paste("<MEDIATION_FUNCTION_INDEXED>(",meds.base$med_index[i],"),",meds.base$x_base[i]+x_base.ci,meds.base$shape_type[i],meds.base$par1[i],meds.base$par2[i],meds.base$par3[i],meds.base$par4[i],",Indexed.Single[]")
+        tags <- c(tags,tag.xbaselow.i,tag.xbasehi.i) 
+        meds.out <- rbind(meds.out,meds.xbase)
+      }
+    } #end hyperbolic
+  } #end loop
+  meds.out$tag <- tags
+  #mediation <<- meds.out
+  #return(tags)
+  return(meds.out)
+} #eof
+
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 #fn.make_cmd_files----------------------------------------------------------------------------------
 #' @title Make command files.

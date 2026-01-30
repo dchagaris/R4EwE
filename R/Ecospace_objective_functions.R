@@ -6,7 +6,7 @@
 #...............................................................................
 ##Objective fxn 1-----
 #fits to timeseries data only, using the ecosim timeseries csv file
-fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts,run.idx=1){  
+fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){  
   #get annual timeseries predictions
   #dir.pred = "C:/NWACS MICE/GA output 2026-01-06/GA_Run_20260106_114454/run_00abeb6e03a8897940ee4aa45b593526"
   predB = fn.ecospace_predB_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,run.idx]
@@ -71,7 +71,7 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts,run.idx=1){
     lk.dat$obs[lk.dat$obs <=0] <- NA
     rownames(lk.dat) <- rownames(predC)
     
-    if(obs.ts.head$type[j]==61){
+    if(obs.ts.head$type[j]==61 | !fit.abs.catch){
       q = mean(lk.dat$pred,na.rm=T)/mean(lk.dat$obs,na.rm=T)
     } else {
       q = 1
@@ -85,7 +85,7 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts,run.idx=1){
     lk.ts.catch$loglik[j] = lk.sum
   } 
   
-  lk.ts = rbind(lk.ts.biomass,lk.ts.catch)
+  lk.ts <<- rbind(lk.ts.biomass,lk.ts.catch)
   
   ## Make output vector................................
   ##

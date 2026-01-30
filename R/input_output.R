@@ -70,7 +70,8 @@ fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
   return(bio.array)
 }
 
-
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#Ecospace output to arrays---------------------------------------------------------------------------------  
 fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=0){
   if(n.reg==0){
     if(timestep=='annual') files.cat = list.files(dir.out,pattern="Ecospace_Annual_Average_Catch.csv",recursive=T,full.names = T)
@@ -81,8 +82,9 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
       if(timestep=='monthly') nskip = which(substr(readLines(x),1,8)=='TimeStep')-1
       read.csv(x, as.is=T, skip=nskip, row.names=1, check.names=F)
     })
+    sppnames = sapply(strsplit(names(cat[[1]]),"\\|"),tail,1)
     cat.array = array(dim=c(dim(cat[[1]])[1],dim(cat[[1]])[2],length(files.cat)),
-                      dimnames=list(rownames(cat[[1]]),sapply(strsplit(names(cat[[1]]),"\\|"),tail,1),basename(dirname(files.cat))))
+                      dimnames=list(rownames(cat[[1]]),names(cat[[1]]),basename(dirname(files.cat))))
     for(r in 1:length(cat)){
       tmp = as.matrix(cat[[r]])
       cat.array[,,r] <- tmp
@@ -100,7 +102,7 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
     })
     
     cat.array = array(dim=c(dim(cat[[1]])[1],dim(cat[[1]])[2],n.reg+1,length(unique(dirname(files.cat)))),
-                      dimnames=list(rownames(cat[[1]]),sapply(strsplit(names(cat[[1]]),"\\|"),tail,1),paste0('reg',0:n.reg),unique(basename(dirname(files.cat)))))
+                      dimnames=list(rownames(cat[[1]]),names(cat[[1]]),paste0('reg',0:n.reg),unique(basename(dirname(files.cat)))))
     for(r in 1:length(cat)){
       if(timestep=='annual') reg.idx=as.numeric(substr(basename(files.cat[r]),32,32))+1
       if(timestep=='monthly') reg.idx=as.numeric(substr(basename(files.cat[r]),25,25))+1
@@ -112,7 +114,21 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
   if(timestep=='annual') dimnames(cat.array)[[1]] <- styear:(styear+dim(cat.array)[1]-1)
   if(timestep=='monthly') dimnames(cat.array)[[1]] <- length(seq(styear,(styear+dim(cat.array)[1]-1/12),1/12))
   return(cat.array)
-}
+}#eof
+
+#aggregate catch by group
+fn.agg_catch_by_group <- function(predC){
+  print(dimnames(predC)[[2]])
+  grps = sapply(strsplit(dimnames(predC)[[2]],"\\|"),tail,1)
+  print(grps)
+  length(unique(grps))
+  
+  #now aggregate columns in predC.agg to grps
+  predC.agg <- apply(predC, c(1,3), function(v) {tapply(v, grps, sum)})
+  predC.agg <- aperm(predC.agg, c(2,1,3))
+  dimnames(predC.agg)
+  return(predC.agg)
+}#eof
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.vul_testval_tags-----

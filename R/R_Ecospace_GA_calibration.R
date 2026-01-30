@@ -15,13 +15,16 @@ fn.makeparvec <- function(
   disp_pars = disp_pars,
   disp.min=3,
   disp.max=3000,
-  disp.cv=0.1){
+  disp.cv=0.1,
+  do.med = TRUE,
+  med_pars = med_pars,
+  med.xbase.cv = .1){
   
   # do.vuls = TRUE
   # vul_pars = predprey_pars
   # vul.min = 1.01
   # vul.max = 1e6
-  # vul.cv = 0.4
+  # vul.cv = 0.6
   # do.env = FALSE
   # env_pars = NULL
   # env.min=0.25
@@ -32,6 +35,9 @@ fn.makeparvec <- function(
   # disp.min=3
   # disp.max=3000
   # disp.cv=0.4
+  # do.med = FALSE
+  # med_pars = NULL
+  # med.xbase.cv = .1
   
   #validate setup----
   if(do.vuls){
@@ -43,81 +49,158 @@ fn.makeparvec <- function(
   }
   
   #build parameter vector----
-  n_vuls <- n_env <- n_disp <- 0
+  n_vuls <- n_env <- n_disp <- n_med <- 0
   if(do.vuls) n_vuls <- nrow(vul_pars)
   if(do.env) n_env <- nrow(env_pars)  #need to melt the env resp fxn dataframe
   if(do.disp) n_disp <- nrow(disp_pars)
+  if(do.med) n_med <- nrow(med_pars)
   #medations functions
   
-  n_pars <<- n_vuls + n_env + n_disp
+  n_pars <- n_vuls + n_env + n_disp + n_med
   if (n_pars == 0) stop("n_pars==0: No predator-prey pairs or environmental responses parameters to estimate.  Check inputs.")
   
-  log_vuln_vec <- log_env_vec <- log_disp_vec <- numeric()
-  par.idx <- par.labels <- character()
+  
+  #because med_pars and likely env_pars are more constrained and could be negative, we do not log them
+  #why log any of them?
+  #log_vuln_vec <- env_vec <- log_disp_vec <- med_vec <- numeric()
+  vuln_vec <- env_vec <- disp_vec <- med_vec <- numeric()
+  par.idx <- par.labels <- par.groups <- character()
+  #log.par.idx <- logical()
+  
   if(do.vuls) {
-    log_vuln_vec <- log(vul_pars$base.val)
+    #log_vuln_vec <- log(vul_pars$base.val)
+    vuln_vec <- vul_pars$base.val
     par.idx <- c(par.idx,rep('vul',n_vuls))
     par.labels <- c(par.labels,paste('vul',vul_pars$pred,vul_pars$prey,sep="_"))
+    par.groups <- c(par.groups,paste('vul',vul_pars$pred,vul_pars$prey,sep="_"))
+    #log.par.idx <- c(log.par.idx,rep(TRUE,length(log_vuln_vec)))
   }
   if(do.env) {
-    log_env_vec = rep(0,n_env)
+    env_vec = rep(0,n_env)
     par.idx = c(par.idx,rep('env',n_env))
     par.labels = c(par.labels,paste('env',env_pars$Function.number,sep="_"))
+    par.groups = c(par.groups,paste('env',env_pars$Function.number,sep="_"))
+    #log.par.idx <- c(log.par.idx, rep(FALSE,length(env_vec)))
   }
   if(do.disp){
-    log_disp_vec = log(disp_pars$base.val)
+    #log_disp_vec = log(disp_pars$base.val)
+    disp_vec = disp_pars$base.val
     par.idx = c(par.idx,rep('disp',n_disp))
     par.labels = c(par.labels,paste('disp',disp_pars$pred,sep="_"))
+    par.groups = c(par.groups,paste('disp',disp_pars$pred,sep="_"))
+    #log.par.idx <- c(log.par.idx,rep(TRUE,length(log_disp_vec)))
   }
-  log_par_vec <- c(log_vuln_vec,log_env_vec, log_disp_vec)
-  names(log_par_vec) <- par.labels
-  par.idx
+  
+  med.cv = numeric()
+  if(do.med){
+    for(i in 1:n_med){
+      #i=2
+      #HYPERBOLIC SHAPE
+      if(med_pars$shape_type[i]==3){
+        #par_vec.i <- c(log(med_pars$x_base[i]), med_pars$par1[i], med_pars$par2[i], med_pars$par3[i])
+        par_vec.i <- c(med_pars$x_base[i], med_pars$par1[i], med_pars$par2[i], med_pars$par3[i])
+        par.labels.i <- paste(paste0('med',rep(med_pars$med_index[i],length(par_vec.i))), paste0('type',rep(med_pars$shape_type[i],length(par_vec.i))), c('xbase','Yzero','Yend','Ybase'),sep="_")
+        par.groups.i <- paste0('med',rep(med_pars$med_index[i],length(par_vec.i)))
+      }
+      #LINEAR SHAPE
+      if(med_pars$shape_type[i]==1){
+        slope.i <- med_pars$par2[i] - med_pars$par1[i]
+        #par_vec.i <- c(log(med_pars$x_base[i]), slope.i)
+        par_vec.i <- c(med_pars$x_base[i], slope.i)
+        par.labels.i <- paste(paste0('med',rep(med_pars$med_index[i],length(par_vec.i))), paste0('type',rep(med_pars$shape_type[i],length(par_vec.i))), c('xbase','slope'),sep="_")
+        par.groups.i <- paste0('med',rep(med_pars$med_index[i],length(par_vec.i)))
+      }
+      med_vec <- c(med_vec,par_vec.i)
+      par.labels <- c(par.labels,par.labels.i)
+      par.groups <- c(par.groups,par.groups.i)
+      #log.par.idx <- c(log.par.idx,c(TRUE,rep(FALSE,length(par_vec.i)-1)))
+    }
+    par.idx <- c(par.idx,rep('med',length(med_vec)))
+  }
+  
+  #n_pars <<- length(log_vuln_vec) + length(env_vec) + length(log_disp_vec) + length(med_vec)
+  n_pars <<- length(vuln_vec) + length(env_vec) + length(disp_vec) + length(med_vec)
+  if (n_pars == 0) stop("n_pars==0: No parameters to estimate.  Check inputs.")
+  
+  #est_par_vec <- c(log_vuln_vec, env_vec, log_disp_vec, med_vec)
+  est_par_vec <- c(vuln_vec, env_vec, disp_vec, med_vec)
+  names(est_par_vec) <- par.labels
+  
   # index parameter types
-  #need to think about how to index the parameter vector as it continues to grow
   vul.par.idx <<- which(par.idx=='vul')
   env.par.idx <<- which(par.idx=='env')
   disp.par.idx <<- which(par.idx=='disp')
-
-  # index pred-prey vulnerabilities
+  med.par.idx <<- which(par.idx=='med')
+  #log.par.idx <<- log.par.idx
+  
+  # super assignment so these are available
   vul_pars <<- vul_pars
   disp_pars <<- disp_pars
+  med_pars <<- med_pars
   
   # set parameter bounds--------------------------------------------------------
-  lower.vuls <- upper.vuls <- lower.env <- upper.env <- lower.disp <- upper.disp <- numeric()
-  #lower.vuls <- rep(log(vul.min+1),n_vuls)
-  #upper.vuls <- rep(log(vul.max+1),n_vuls)
-  #lower.vuls <- vul_pars$base.val-1.96*vul_pars$base.val*vul.cv
-  #upper.vuls <- log(vul_pars$base.val+1.96*vul_pars$base.val*vul.cv)
-  lower.vuls <- exp(log(vul_pars$base.val)-1.96*sqrt(log(vul.cv^2+1)))
+  ##vulnerabilities - do these on the log scale
+  lower.vuls <- upper.vuls <- numeric()
+  lower.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.05))
   lower.vuls <- ifelse(lower.vuls<=1.0,1.01,lower.vuls)
-  lower.vuls <- log(lower.vuls)
-  upper.vuls <- log(vul_pars$base.val)+1.96*sqrt(log(vul.cv^2+1))
-  #cbind(lower.vuls,vul_pars$base.val,upper.vuls)
+  upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))
   
+  ##environmental shapes - TBD
+  lower.env <- upper.env <- numeric()
   lower.env <- rep(env.min,n_env)
   upper.env <- rep(env.max,n_env)
-  #lower.disp <- rep(log(disp.min),n_disp)
-  #upper.disp <- rep(log(disp.max),n_disp)
-  #lower.disp <- log(disp_pars$base.val-1.96*disp_pars$base.val*disp.cv)
-  #upper.disp <- log(disp_pars$base.val+1.96*disp_pars$base.val*disp.cv)
-  lower.disp <- (log(disp_pars$base.val)-1.96*sqrt(log(disp.cv^2+1)))
-  upper.disp <- (log(disp_pars$base.val)+1.96*sqrt(log(disp.cv^2+1)))
-  #cbind(lower.disp,disp_pars$base.val,upper.disp)
   
+  ##dispersal
+  lower.disp <- upper.disp <- numeric()
+  lower.disp <- disp_vec-2*disp.cv*disp_vec
+  upper.disp <- disp_vec+2*disp.cv*disp_vec
+  
+  ##mediation
+  lower.med <- upper.med <- numeric()  
+  if(n_med>0){
+  med.cv = numeric()  
+  for(i in 1:length(med_vec)){
+    #i=1
+    label.i <- par.labels[med.par.idx[i]]
+    shape.i <- as.numeric(gsub('med','',unlist(strsplit(label.i,"_"))[1]))
+    type.i <- as.numeric(gsub('type','',unlist(strsplit(label.i,"_"))[2]))
+    par.i <- unlist(strsplit(label.i,"_"))[3]
+    val.i <- med_vec[i]
+    if(par.i=="xbase"){
+      cv.i <- med.xbase.cv
+      lower.i <- floor(val.i-2*val.i*med.xbase.cv)
+      upper.i <- ceiling(val.i+2*val.i*med.xbase.cv)
+      #cv.i = med.xbase.cv
+    } else{
+      cv.i <- med_pars$cv[med_pars$med_index==shape.i]
+        if(val.i>0) lower.i <- val.i-2*cv.i*val.i
+        if(val.i<0) lower.i <- val.i+2*cv.i*val.i
+        if(val.i>0) upper.i <- val.i+2*cv.i*val.i
+        if(val.i<0) upper.i <- val.i-2*cv.i*val.i
+      }
+    lower.med <- c(lower.med,lower.i)
+    upper.med <- c(upper.med,upper.i)
+    med.cv <- c(med.cv,cv.i)
+  }
+  }
   
   #super assignment
-  log_par_vec <<- log_par_vec
-  L.bounds <<- c(lower.vuls,lower.env,lower.disp)
-  U.bounds <<- c(upper.vuls, upper.env, upper.disp)
+  est_par_vec <<- round(est_par_vec,2)
+  L.bounds <<- round(c(lower.vuls,lower.env,lower.disp,lower.med),2)
+  U.bounds <<- round(c(upper.vuls, upper.env, upper.disp,upper.med),2)
   n_vuls <<- n_vuls
   n_env <<- n_env
   n_disp <<- n_disp
+  n_med <<- length(med_vec)
+  par.groups <<- par.groups
+  par.labels <<- par.labels
   
-  #create vector of SD for rnorm() draws
-  par_cv_vec <- log_par_vec
+  #create vector of cv for rnorm() draws
+  par_cv_vec <- est_par_vec
   par_cv_vec[vul.par.idx] <- vul.cv
   par_cv_vec[env.par.idx] <- env.cv
   par_cv_vec[disp.par.idx] <- disp.cv
+  par_cv_vec[med.par.idx] <- med.cv
   par_cv_vec <<- par_cv_vec
   
 } #end function
@@ -129,12 +212,29 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
     mat <- matrix(runif(run_config$popSize*n_pars, L.bounds, U.bounds), nrow=run_config$popSize, byrow=T)
   }
   if(usedist=='ln'){
-    log_par_sd <- sqrt(log(par_cv_vec^2+1))
-    mat <- matrix(rlnorm(run_config$popSize*n_pars, meanlog=log_par_vec, sdlog=log_par_sd), nrow=run_config$popSize, byrow=T)
+    mat <- matrix(NA,nrow=run_config$popSize, ncol=n_pars)
+    colnames(mat) <- par.labels
+    par_sd <- rep(0,n_pars)
+    par_sd[log.par.idx] <- sqrt(log(par_cv_vec[log.par.idx]^2+1))
+    par_sd[!log.par.idx] <- sqrt((par_cv_vec[!log.par.idx]+1))
+    tmp.log <- matrix(rlnorm(run_config$popSize*sum(log.par.idx), meanlog=est_par_vec[log.par.idx], sdlog=par_sd[log.par.idx]),nrow=run_config$popSize, byrow=T)
+    tmp.norm <- matrix(rnorm(run_config$popSize*sum(!log.par.idx), mean=est_par_vec[!log.par.idx], sd=par_sd[!log.par.idx]),nrow=run_config$popSize, byrow=T)
+    mat[,log.par.idx] <- tmp.log
+    mat[,!log.par.idx] <- tmp.norm
+    
     idx <- mat[, vul.par.idx] < 1.0
     mat[,vul.par.idx][idx] <- 1.01
+    integer.idx <- grep("xbase",par.labels)
+    mat[,integer.idx] <- round(mat[,integer.idx])
+    mat[,log.par.idx] <- log(mat[,log.par.idx])
+    
+    # graphics.off();rm(.SavedPlots);windows(record=T)
+    # par(mfrow=c(3,3))
+    # for(i in 1:ncol(mat)){
+    #   hist(mat[,i],main=par.labels[i])
+    # }
   }
-  return(log(mat))
+  return(mat)
   #matrix(rep(log_par_vec, run_config$popSize), nrow=run_config$popSize, byrow=T)
 }
 
@@ -208,53 +308,64 @@ safe_make_run_dir_tempfile <- function(base_dir,
 
 
 #write command files----
-fn.parvec2cmd <- function(log_par_vec,g=gen,idx=i, out_dir=run_dir){
-  #par_vec <- log_par_vec
-  #log_par_vec=gapop.init[1,]
+fn.parvec2cmd <- function(par_vec=est_par_vec, g=gen, idx=i, out_dir=run_dir){
+  
+  # par_vec = est_par_vec
+  # g = 999
+  # idx = 0
+  # out_dir=run_dir
   
   #output directory----
-  #run_id <- paste0("run_", digest(log_par_vec, algo=c("md5")))
-  #run_path <- file.path(run_dir, run_id)
-  #dir.create(run_path, showWarnings = TRUE)
   run_path <- safe_make_run_dir_tempfile(base_dir=out_dir,
-                                         par_vec=log_par_vec,
+                                         par_vec=par_vec,
                                          gen = g,
                                          idx = idx,
                                          prefix = "run",
                                          random_len = 8)
   
   #parameter tags----
-  tags.vul = tags.env = tags.disp = character()
+  tags.vul <- tags.env <- tags.disp <- tags.med <- character()
   if(length(vul.par.idx)>0){
-    vuln_vec = exp(log_par_vec[vul.par.idx])
+    vuln_vec <- par_vec[vul.par.idx]
     tags.vul <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", vul_pars$pred, " ", ifelse(is.na(vul_pars$prey),"",vul_pars$prey),
                        "), ", sprintf("%.5f", vuln_vec), ", Indexed.Single")
   }
 
   if(length(disp.par.idx)>0){
-    disp_vec = exp(log_par_vec[disp.par.idx])
-    tags.disp <- paste0("<ECOSIM_DISPERSAL_RATE_INDEXED>(", disp_pars$pred,"), ",disp_vec, ", Indexed.Single")
+    disp_vec <- par_vec[disp.par.idx]
+    tags.disp <- paste0("<ECOSPACE_DISPERSAL_RATE_INDEXED>(", disp_pars$pred,"), ",disp_vec, ", Indexed.Single")
   }
   
   if(length(env.par.idx)>0){
-    env_vec = exp(log_par_vec[env.par.idx])
-    respfxn_num = envpars$Function.number
-    respfxn_type = envpars$Function.type
-    pars1 <- pars2 <- pars3 <- pars4 <- pars5 <- numeric(length=n_env)
-    for(p in 1:n_env){
-      #p=1
-      if(respfxn_type[p]==9){
-        pars1[p] = ifelse(envpars$Param.1[p]==0 & envpars$Param.2[p]==0,0,0.5*(1-env_vec[p])*(envpars$Param.4[p]-envpars$Param.1[p])+envpars$Param.1[p])
-        pars2[p] = ifelse(envpars$Param.1[p]==0 & envpars$Param.2[p]==0,0,0.5*(1-env_vec[p])*(envpars$Param.3[p]-envpars$Param.2[p])+envpars$Param.2[p])
-        pars3[p] = envpars$Param.3[p]-0.5*(1-env_vec[p])*(envpars$Param.3[p]-envpars$Param.2[p])
-        pars4[p] = envpars$Param.4[p]-0.5*(1-env_vec[p])*(envpars$Param.4[p]-envpars$Param.1[p])
-      }
-    }
     env_pars = paste(respfxn_type,sprintf("%.2f",pars1), sprintf("%.2f",pars2), sprintf("%.2f",pars3), sprintf("%.2f",pars4))
     tags.env <- paste0("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(", respfxn_num,"),", env_pars,", Indexed.Single[]")
   }
   
-  tags = c(tags.vul,tags.env,tags.disp)
+  if(length(med.par.idx)>0){
+    med_groups <- unique(par.groups[med.par.idx])
+    tags.med <- character()
+    for(i in 1:length(med_groups)){
+      #i=1
+      par_set.i <- par_vec[which(par.groups==med_groups[i])]
+      par_labels.i <- par.labels[which(par.groups==med_groups[i])]
+      type.i <- as.numeric(gsub('type','',strsplit(par_labels.i[1],"_")[[1]][2]))
+      shape.i <- as.numeric(gsub('med','',strsplit(par_labels.i[1],"_")[[1]][1]))
+      #LINEAR SHAPE
+      if(type.i==1){
+        par.string.i <- paste(par_set.i[1], type.i, 1-0.5*par_set.i[2], 1+0.5*par_set.i[2], sep=" ")
+        tag.i <- paste0("<MEDIATION_FUNCTION_INDEXED>(",shape.i,"), ",par.string.i,", Indexed.Single[]")
+      }
+      #HYPERBOLIC SHAPE
+      if(type.i==3){
+        par.string.i <- paste(par_set.i[1], type.i, par_set.i[2], par_set.i[3], par_set.i[4], 1, sep=" ")
+        tag.i <- paste0("<MEDIATION_FUNCTION_INDEXED>(",shape.i,"), ",par.string.i,", Indexed.Single[]")
+      }
+      
+      tags.med <- c(tags.med,tag.i)
+    }
+  }
+  
+  tags = c(tags.vul,tags.env,tags.disp, tags.med)
   
   
   #command files----
@@ -324,6 +435,7 @@ fn.runEwE.gapop <-  function(
   t1 <- Sys.time()
   runLL.out <- foreach(i = seq_along(files.cmd), .errorhandling = 'pass') %dopar% { #, .options.snow = opts
     #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
+    #i=1
     safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
   }
   runLL <- unlist(runLL.out)
@@ -476,6 +588,7 @@ fn.GA <- function(myconfig){
   elitism <<- myconfig$elitism
   do.penalty <<- myconfig$do.penalty
   pen.wt.mult <<- myconfig$pen.wt.mult
+  gapop.dist <<- myconfig$gapop.dist
   
   #create results file
   file.ga.results <- file.path(dir.main, paste0('ga_results_',timestamp,'.csv'))
@@ -486,11 +599,11 @@ fn.GA <- function(myconfig){
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(myconfig.string,file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(t(c("gen_num","min_fitness","mean_fitness",names(log_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
+  write.table(t(c("gen_num","min_fitness","mean_fitness",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
   #base run
+  files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
   message('Running the base model')
-  files.cmd <- fn.parvec2cmd(log_par_vec=log_par_vec,g=999,idx=0)
   fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)  
   
   #pipe output
@@ -500,17 +613,18 @@ fn.GA <- function(myconfig){
   sd_fit = sd(fitness, na.rm=T)
   max_fit = max(fitness, na.rm=T)
   median_fit = median(fitness, na.rm=T)
-  best_pars = round(exp(log_par_vec),4)
+  best_pars = est_par_vec 
   write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
   cat(sprintf("%-10s %-15s %-15s %-15s %-15s %-15s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","time end"))
   cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
 
   #initial population.................................
+  #PICKUP HERE - NEED TO CHECK gn.GApop to work with mediation (1/26/2020)
   #message('Running the initial population')
-  gapop <- fn.GApop(usedist='ln')
-  gapop[1,] <- log_par_vec  #include base run in initial population
+  gapop <- fn.GApop(usedist=gapop.dist)
+  gapop[1,] <- est_par_vec  #include base run in initial population
   #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
-  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(log_par_vec=gapop[i,], g=0, idx=i)) 
+  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
   fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)
   

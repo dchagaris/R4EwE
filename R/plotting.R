@@ -14,9 +14,9 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   
   # timestep='annual'
   # scale2run=1
-  # pltB.dims=c(3,3)
-  # pltC.dims=c(1,1)
-  # scaleCatch=FALSE
+  # pltB.dims=c(4,3)
+  # pltC.dims=c(4,3)
+  # scaleCatch=TRUE
   # plt.cols=1:dim(predB)[3]
   # dir.plts = dir.pred
   # plot2pdf=FALSE
@@ -41,7 +41,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
       obs.scaled.s = sweep(obs.s,2,obs.q,"/")
       plt.ylims = c(0,max(pred.s,obs.scaled.s,na.rm=T)*1.2)
     }
-    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=dimnames(predB)[[2]][s], col=plt.cols, xlab='')
+    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=dimnames(predB)[[2]][s], col=plt.cols, xlab='',ylab='biomass')
     if(has.obs){
       legend('topleft',legend=colnames(obs.scaled.s), pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=.8)    
       matpoints(xtime,obs.scaled.s, type='p', pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=0.75)
@@ -52,17 +52,20 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   }
   if(plot2pdf) dev.off()
   
+  
   if(plot2pdf) pdf(file.path(dir.plts,"catch timeseries fits.pdf"), onefile=T)
   par(mfrow=pltC.dims, mar=c(2,4,2,1))
-  for(s in 1:dim(predC)[2]){
-    #s=1
+  predC.agg <- fn.agg_catch_by_group(predC)
+  dimnames(predC.agg)
+  for(s in 1:dim(predC.agg)[2]){
+    #s=26
     #pred.name = paste(unique(strsplit(dimnames(predC)[[2]][s],split="\\.")[[1]][-c(1,2)],fromLast=T),collapse="_")
     #ss = match(pred.name, gsub("\\+","",gsub("-","_",df.names$group.names)))
-    pred.name = gsub(" ","_",dimnames(predC)[[2]][s])
+    pred.name = gsub(" ","_",dimnames(predC.agg)[[2]][s])
     ss = match(pred.name, df.names$group.names)
     has.obs = ifelse(ss%in%obs.ts$obsC.head$Poolcode,TRUE,FALSE)
-    pred.s = predC[,s,]
-    pred.base.s = predC[,s,scale2run]
+    pred.s = predC.agg[,s,]
+    pred.base.s = predC.agg[,s,scale2run]
     obs.s=NULL
     plt.ylims = c(0,max(pred.s,na.rm=T)*1.2)
     if(has.obs){
@@ -77,7 +80,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
       obs.scaled.s = sweep(obs.s,2,obs.q,"/")
       plt.ylims = c(0,max(pred.s,obs.scaled.s,na.rm=T)*1.2)
     }
-    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=pred.name, col=plt.cols, xlab='')
+    matplot(xtime,pred.s, type='l', lty=1, lwd=2, ylim=plt.ylims, main=pred.name, col=plt.cols, xlab='',ylab='catch')
     if(has.obs){
       legend('topleft',legend=colnames(obs.scaled.s), pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=.8)    
       matpoints(xtime,obs.scaled.s, type='p', pch=1:ncol(obs.scaled.s), col=1:ncol(obs.scaled.s), cex=0.75)
