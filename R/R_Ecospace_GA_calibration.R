@@ -743,9 +743,11 @@ mutate <- function(population, margin=0.2) {
   #upp = log(upp)
   for (i in 1:nrow(population)) {
         mask <- runif(n_pars) < mutation_rate #mask are the parameters to mutate
-        population[i, mask] <- runif(sum(mask), low[mask], upp[mask])
+        population[i, mask] <- round(runif(sum(mask), low[mask], upp[mask]),4)
   }
-  return(round(population,4))
+  integer.idx <- grep("xbase",par.labels)
+  population[,integer.idx] <- round(mat[,integer.idx])
+  return(population)
 } #eof
 
 #' @keywords internal
