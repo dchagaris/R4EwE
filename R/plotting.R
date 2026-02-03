@@ -3,7 +3,8 @@
 #' @description Makes a multipanel plot of 1 or more ecopace runs with observed data where available.
 #' @param predB An array of biomass predictions, as produced by fn.ecospace_ts2array()
 #' @param predC An array of catch predictions, as produced by fn.ecospace_ts2array()
-#' @param obs.ts A list object containing reference timeseries information, as that created by fn.read_ecosim_timeseries().
+#' @param obs.ts A list object containing reference timeseries information, as that created by 
+#' fn.read_ecosim_timeseries().
 #' @param timestep Read 'annual' or 'monthly' data.
 #' @param scale2run If multiple models, which to scale the observed values to.
 #' @param pltB.dims Numeric vector of length 2 specifying the number of rows and columns for multipanel plotting.
@@ -15,7 +16,7 @@
 #' @return Generate a figure in the active plotting device or saves as pdf file.
 #' @examples
 #' # example code:
-#' result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
+#' \dontrun{result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))}
 #' @export
 fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(1,1), 
                                 scaleCatch=FALSE,plt.cols=1:dim(predB)[3],

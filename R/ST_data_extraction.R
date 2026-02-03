@@ -1,29 +1,24 @@
-library('fields')
-library('colorRamps')
-library('ncdf4')
-library('jsonlite')
-library('terra')
-library('raster')
-library('rvest')
-library('httr')
-
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Pull GLORYS
-#' @description Pull monthly 1/4 degree physical and biogeochemical hindcast products from the Copernicus marine data store.  Requires the Copernicus marine toolbox CLI application.  Check website https://data.marine.copernicus.eu/products for dataset id and variable names.
+#' @description Pull monthly 1/4 degree physical and biogeochemical hindcast products from the 
+#' Copernicus marine data store.  Requires the Copernicus marine toolbox CLI application.  
+#' Check website https://data.marine.copernicus.eu/products for dataset id and variable names.
 #' @param dir.out Output directory to save netcdf files.
 #' @param bbox Numeric vector containing spatial domain (W,E,S,N).
 #' @param startdate First day to pull data, YYYY-MM-DD. 
 #' @param enddate Last day to pull data, YYYY-MM-DD. 
 #' @param datid.phy Dataset id for physical data, visit website.
 #' @param datid.bgc Dataset id for biogeochemical data, visit website.
-#' @param vars.phy Character vector containing physical variable names to download.  Check website for correct names.
-#' @param vars.bgc Character vector containing biogeochemical variable names to download.  Check website for correct names.
+#' @param vars.phy Character vector containing physical variable names to download.  Check website 
+#' for correct names.
+#' @param vars.bgc Character vector containing biogeochemical variable names to download.  Check 
+#' website for correct names.
 #' @param path.copernicusmarine File path location of copernicusmarine.exe file.
 #' @param getbathygrid Logical.  Should bathymetric grids be downloaded?
 #' @return One or more netcdf files containing the data.  
 #' @examples
 #' # example code:
-#' fn.pull_glorys(dir.out=dir.glorys, bbox=bbox, startdate = startdate, enddate = enddate, vars.phy = c('thetao','so','bottomT'), vars.bgc = c('chl','nppv','o2','phyc'), path.copernicusmarine <- "C:/Users/dchagaris/OneDrive - University of Florida/copernicusmarine/copernicusmarine.exe")
+#' \dontrun{fn.pull_glorys(dir.out=dir.glorys, bbox=bbox, startdate = startdate, enddate = enddate, vars.phy = c('thetao','so','bottomT'), vars.bgc = c('chl','nppv','o2','phyc'), path.copernicusmarine <- "C:/Users/dchagaris/OneDrive - University of Florida/copernicusmarine/copernicusmarine.exe")}
 #' @export
 fn.pull_glorys <- function(dir.out=dir.glorys, 
                            bbox=bbox,
@@ -166,15 +161,18 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
 }
 #Process Netcdf files-----------------------------------------------------------
 #' @title Fill missing cells
-#' @description Iteratively applies 3x3 nearest neighbor means to NA cells until all water cells have data.  Typically used to fill areas near the coastlilne with grids don't align perfectly.
+#' @description Iteratively applies 3x3 nearest neighbor means to NA cells until all water cells 
+#' have data.  Typically used to fill areas near the coastlilne with grids don't align perfectly.
 #' @param r A raster layer.
 #' @param w Neighborhood area, must be odd.
 #' @param max_iter Maximum number to times to iterate until cells are filled. 
 #' @param mask Raster layer with land cells NA. 
 #' @return Raster layer of dim(r), with all land cells NA and all water cells containing data.  
 #' @examples
-#' # example code:
-#' r.filled = fill_na_iter(r, mask=depth)
+#' \dontrun{
+#' fill_coastal_cells(r, mask=depth)
+#' }
+#' @export
 fill_coastal_cells <- function(r, w = 3, max_iter = 50, mask=depth) {
   #filled = ras.v[[t]]
   filled <- r
@@ -190,20 +188,26 @@ fill_coastal_cells <- function(r, w = 3, max_iter = 50, mask=depth) {
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Create ascii files from GLORYS netcdf
-#' @description This function opens a netcdf file, loops through variables and timesteps, and creates ascii files for input to Ecospace. Includes vertical integration of chl-a and coastline filling.
-#' @param nc.files A character variable containing the full file paths of the netcdf files to process.
-#' @param dir.stdriver Parent directory for spatial temporal drivers.  A folder will be created for each variable in this directory to save the ascii files.
-#' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have the same dimensions. 
-#' @param mask Raster layer with land cells NA. 
+#' @description This function opens a netcdf file, loops through variables and timesteps, and 
+#' creates ascii files for input to Ecospace. Includes vertical integration of chl-a and coastline filling.
+#' @param nc.files A character variable containing the full file paths of the netcdf files to 
+#' process.
+#' @param dir.stdriver Parent directory for spatial temporal drivers.  A folder will be created for 
+#' each variable in this directory to save the ascii files.
+#' @param depth Raster grid of depth, matching the basemap of Ecospacem with land cells NA.  Saved ascii files will have
+#' the same dimensions. 
+#' @param make.monthly Create the monthly ST driver ascii file.  Default TRUE.
+#' @param make.static Also create the static maps for initialization. Default TRUE.
 #' @return A series of ascii files saved in dir.stdriver directory.  
 #' @examples
 #' # example code:
+#' \dontrun{
 #' files.nc = list.files(dir.glorys, pattern=".nc$", full.names=T)
 #' fn.netcdf2ascii_glorys(nc.files = files.nc, depth=depth.15min,
-#'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min'))
+#'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min'))}
 #' @export
 fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$",full.names=T), 
-                                   dir.stdriver=dir.stdriver, depth=depth, make.monthly=TRUE, make.static=FALSE){
+                                   dir.stdriver=dir.stdriver, depth=depth, make.monthly=TRUE, make.static=TRUE){
   # dir.in=dir.glorys
   # dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min')
   # depth = depth.15min
@@ -412,13 +416,15 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title List variables and get URLs for CEFI data.
-#' @description This function will get information on CEFI data and return a dataframe that can be subset for pulling data.
+#' @description This function will get information on CEFI data and return a dataframe that can be 
+#' subset for pulling data.
 #' @param dir.cefi Parent directory for CEFI data.
-#' @param file.cefivars Name of csv file to be created (or read) containing cefi variables. Default is CEFI_vars.csv.
+#' @param file.cefivars Name of csv file to be created (or read) containing cefi variables. Default 
+#' is CEFI_vars.csv.
 #' @param region CEFI region nwa=northwest Atlantic, nep=northeast Pacific
 #' @examples
 #' # example code:
-#' vars.cefi <- fn.get_cefi_vars(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', region='nwa')
+#' \dontrun{vars.cefi <- fn.get_cefi_vars(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', region='nwa')}
 #' @export
 fn.get_cefi_vars = function(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', region='nwa'){ 
   if(!file.exists(file.path(dir.cefi,file.cefivars))){
@@ -444,15 +450,19 @@ fn.get_cefi_vars = function(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', re
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Pull CEFI data
-#' @description Downloads the full netcdf for MOM6-COBALT variables from https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6 using the httr::GET function.  It applies the spatial subset based on the extent of depth and writes a new netcdf file.
+#' @description Downloads the full netcdf for MOM6-COBALT variables from 
+#' https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6 using the httr::GET function.  It 
+#' applies the spatial subset based on the extent of depth and writes a new netcdf file.
 #' @param dir.cefi Parent directory for CEFI data, where the netcdf files will be saved.
-#' @param vars.cefi A dataframe returned by fn.get_cefi_vars(), likely subset to fewer variables. Must contain the variables "cefi_filename" and "cefi_rel_path".
+#' @param vars.cefi A dataframe returned by fn.get_cefi_vars(), likely subset to fewer variables. 
+#' Must contain the variables "cefi_filename" and "cefi_rel_path".
 #' @param reg CEFI region, either northwest_atlantic or northeast_pacific
-#' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have the same dimensions. 
+#' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have
+#' the same dimensions. 
 #' @param delete.full.nc Logical. TRUE will delete the full nc files if they exist.  Default is False.
 #' @examples
 #' # example code:
-#' fn.pull_cefi(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_atlantic', depth=depth.5min, delete.full.nc=TRUE)
+#' \dontrun{fn.pull_cefi(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_atlantic', depth=depth.5min, delete.full.nc=TRUE)}
 #' @export
 fn.pull_cefi = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_atlantic', depth=depth.5min, delete.full.nc=FALSE){
   path.downloads <- "https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6"
@@ -549,13 +559,15 @@ fn.pull_cefi = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_a
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Download full CEFI netcdf files
-#' @description Downloads the full netcdf for MOM6-COBALT variables from https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6.  Uses the httr::GET function.
+#' @description Downloads the full netcdf for MOM6-COBALT variables from 
+#' https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6.  Uses the httr::GET function.
 #' @param dir.cefi Parent directory for CEFI data, where the netcdf files will be saved.
-#' @param vars.cefi A dataframe returned by fn.get_cefi_vars(), likely subset to fewer variables. Must contain the variables "cefi_filename" and "cefi_rel_path".
+#' @param vars.cefi A dataframe returned by fn.get_cefi_vars(), likely subset to fewer variables. 
+#' Must contain the variables "cefi_filename" and "cefi_rel_path".
 #' @param reg CEFI region, either northwest_atlantic or northeast_pacific
 #' @examples
 #' # example code:
-#' vars.cefi <- fn.get_cefi_vars(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', region='nwa')
+#' \dontrun{vars.cefi <- fn.get_cefi_vars(dir.cefi=dir.cefi, file.cefivars='CEFI_vars.csv', region='nwa')}
 #' @export
 fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg='northwest_atlantic'){
   path.downloads <- "https://downloads.psl.noaa.gov/Projects/CEFI/regional_mom6"
@@ -576,18 +588,25 @@ fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg=
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Create ascii files from CEFI netcdf
-#' @description This function processes netcdf files from local machine, downloaded with fn.download_cefi_full_nc().  It peforms spatial subset based on depth map, regrids and resamples to depth, fills missing water cells, and writes ascii files.
-#' @param nc.files A character variable containing the full file paths of the netcdf files to process.
-#' @param dir.stdriver Parent directory for spatial temporal drivers.  A folder will be created for each variable in this directory to save the ascii files.
-#' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have the same dimensions. 
-#' @param make.monthly Logical.  TRUE will run all the code to create monthly raster stacks.  Use FALSE if only want to make static maps.
-#' @param make.static Logical.  TRUE will create a static map (average) for each variable to use as Ecospace basemap layer.
+#' @description This function processes netcdf files from local machine, 
+#' downloaded with fn.download_cefi_full_nc().  It peforms spatial subset based on depth map, 
+#' regrids and resamples to depth, fills missing water cells, and writes ascii files.
+#' @param nc.files A character variable containing the file paths of the netcdf files to process.
+#' @param dir.stdriver Parent directory for spatial temporal drivers.  A folder will be created for
+#' each variable in this directory to save the ascii files.
+#' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have
+#' the same dimensions. 
+#' @param make.monthly Logical.  TRUE will run all the code to create monthly raster stacks.  Use
+#' FALSE if only want to make static maps.
+#' @param make.static Logical.  TRUE will create a static map (average) for each variable to use as
+#' Ecospace basemap layer.
 #' @return A series of ascii files saved in dir.stdriver directory.  
 #' @examples
+#' \dontrun{
 #' # example code:
 #' files.nc = list.files(dir.cefi, pattern=".nc$", full.names=T)
 #' fn.netcdf2ascii_cefi(nc.files = files.nc, depth=depth.15min,
-#'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','5min'))
+#'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','5min'))}
 #' @export
 
 fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth.5min,
@@ -713,12 +732,14 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
 }
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Make static maps from monthly ST files.
-#' @description This stacks all the ascii in stdriver directory and compute long term mean and year-1 mean layers, and saves them as ascii files in the 'static' folder.
-#' @param dir.stdriver Directory for ST driver variable.  A 'static' folder will be created one level up if it doesn't exist.
+#' @description This stacks all the ascii in stdriver directory and compute long term mean and 
+#' year-1 mean layers, and saves them as ascii files in the 'static' folder.
+#' @param dir.stdriver Directory for ST driver variable.  A 'static' folder will be created one 
+#' level up if it doesn't exist.
 #' @return Saves an ascii file to the static folder.  
 #' @examples
 #' # example code:
-#' fn.make_static_maps(dir.stdriver=file.path(dir.stdriver,"tos_cefi"))
+#' \dontrun{fn.make_static_maps(dir.stdriver=file.path(dir.stdriver,"tos_cefi"))}
 #' @export
 fn.make_static_maps <- function(dir.stdriver=dir.stdriver){
   #dir.stdriver = list.dirs(dir.stdriver,full.names=T, recursive=F)[1]
@@ -754,14 +775,17 @@ fn.make_static_maps <- function(dir.stdriver=dir.stdriver){
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Make monthly climatology maps.
-#' @description This stacks all the ascii in stdriver directory and compute long term mean for each month.
+#' @description This stacks all the ascii in stdriver directory and compute long term mean for each
+#' month.
 #' @param dir.stdriver Directory for ST driver variable.
-#' @return Saves 12 ascii files to the variable folder with suffix '9999mm', where mm is numeric month.  
+#' @return Saves 12 ascii files to the variable folder with suffix '9999mm', where mm is numeric
+#' month.  
 #' @examples
+#' \dontrun{
 #' # example code:
 #' for(i in 1:length(dirs.stvars)){
 #' fn.make_monthly_climatology_maps(dir.stdriver=dirs.stvars[i])
-#' }
+#' }}
 #' @export
 fn.make_monthly_climatology_maps <- function(dir.stdriver=dir.stdriver){
   #dir.stdriver = list.dirs(dir.stdriver,full.names=T, recursive=F)[1]

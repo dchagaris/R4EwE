@@ -11,19 +11,22 @@ fn.runEwE.parallel(
 )
 }
 \arguments{
-\item{runlist}{A dataframe that must contain a variable named 'cmd_file', which is the full file path of the command files to run.}
+\item{runlist}{A dataframe that must contain a variable named 'cmd_file', which is the full file
+path of the command files to run.}
 
-\item{obj.fxn}{A single number indicating the likelihood function to use. 0=none, 1=timeseries only, 2=timeseries and spatial data.}
+\item{obj.fxn}{A single number indicating the likelihood function to use. 0=none, 1=timeseries
+only, 2=timeseries and spatial data.}
 
 \item{cl.export}{A list of objects exported to each worker.}
 }
 \value{
-Model output is saved according to command file. If do.obj!=0 then a vector likelihoods is returned and added to the runlist dataframe.
+Model output is saved according to command file. If do.obj!=0 then a vector likelihoods
+is returned and added to the runlist dataframe.
 }
 \description{
 Calls fn.runEwE in parallel framework.
 }
 \examples{
 # example code:
-result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
+\dontrun{result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))}
 }

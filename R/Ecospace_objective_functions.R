@@ -9,12 +9,13 @@
 #' @title Ecospace objective function, timeseries only
 #' @description Calculates the composite likelihood.
 #' @param dir.pred Full directory path to model output folder containing .csv files.
-#' @param obs.ts A list object containing reference timeseries information, as that created by fn.read_ecosim_timeseries().
+#' @param obs.ts A list object containing reference timeseries information, as that created by 
+#' fn.read_ecosim_timeseries().
 #' @param run.idx If dir.pred has multiple output folders, use this to select which to calculate.
-#' @param fit.abs.catch If TRUE (default), do not rescale predicions.  If FALSE, predictions were divided by q, where q=mean(pred)/mean(obs)
+#' @param fit.abs.catch If TRUE (default), do not rescale predicions.  If FALSE, predictions were 
+#' divided by q, where q=mean(pred)/mean(obs)
 #' @return A vector containing the total and functional group specific likelihood.  
 #' @export
-
 fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){  
   #get annual timeseries predictions
   #dir.pred = "C:/NWACS MICE/GA output 2026-01-06/GA_Run_20260106_114454/run_00abeb6e03a8897940ee4aa45b593526"
@@ -114,12 +115,16 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){
 #' @title Ecospace objective function, timeseries plut spatial reference data
 #' @description  Calculates the composite likelihood, including spatial reference datasets.
 #' @param dir.pred Full directory path to model output folder containing .csv files.
-#' @param obs.ts A list object containing reference timeseries information, as that created by fn.read_ecosim_timeseries().
+#' @param obs.ts A list object containing reference timeseries information, as that created by 
+#' fn.read_ecosim_timeseries().
 #' @param obs.maps A raster stack???
-#' @param obs.maps.met A dataframe??? Likely nrow=nlyrs(obs.maps) If TRUE (default), do not rescale predicions.  If FALSE, predictions were divided by q, where q=mean(pred)/mean(obs)
-#' @param autoweight.LL Logical value.  If TRUE (default), the timeseries and maps likelihoods are each scaled to their own means LL.w=LL*1/mean(LL)  This puts them on equal footing, but needs more thought.
+#' @param obs.maps.meta A dataframe??? Likely nrow=nlyrs(obs.maps) If TRUE (default), do not rescale
+#' predicions.  If FALSE, predictions were divided by q, where q=mean(pred)/mean(obs)
+#' @param autoweight.LL Logical value.  If TRUE (default), the timeseries and maps likelihoods are 
+#' each scaled to their own means LL.w=LL*1/mean(LL)  This puts them on equal footing, but needs more thought.
 #' @return A vector containing the total and functional group specific likelihood.  
-#' #export
+#' @keywords internal
+#' @noRd
 fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta=obs.maps.meta, autoweight.LL=T){
   #get annual timeseries predictions
   predB = fn.ecospace_predB_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,1]

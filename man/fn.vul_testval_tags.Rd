@@ -4,24 +4,41 @@
 \alias{fn.vul_testval_tags}
 \title{Make vulnerability parameter taglines for sensitivity runs.}
 \usage{
-fn.vul_testval_tags(predprey, maxvul = 100, minvul = 1.01, is.maxvul.mult = T)
+fn.vul_testval_tags(
+  predprey,
+  pct.change = 0.5,
+  maxvul = 100,
+  minvul = 1.01,
+  is.maxvul.mult = T,
+  test.type = "absolute"
+)
 }
 \arguments{
-\item{predprey}{A dataframe containing 3 numeric columns, "pred", "prey", and "basevul", containing the group numbers of predator prey pairs to evaluate and starting values for the vulnerabilities.  Missing (NA) in the prey column will set the vulnerability by predator column.}
+\item{predprey}{A dataframe containing 3 numeric columns, "pred", "prey", and "basevul",
+containing the group numbers of predator prey pairs to evaluate and starting values for the
+vulnerabilities.  Missing (NA) in the prey column will set the vulnerability by predator column.}
+
+\item{pct.change}{The percent change to use when test.type='percentage'.  Applied as pct.change
+x base and (1+pct.change) x base. Default is 0.5.}
 
 \item{maxvul}{A high vulnerability number to test}
 
 \item{minvul}{A low vulnerability number to test.}
 
-\item{is.maxvul.mult}{Logical indicating whether the maxvul is treated as a multiplier on the basevul (TRUE) or as the absolute value (FALSE).}
+\item{is.maxvul.mult}{Logical indicating whether the maxvul is treated as a multiplier on the
+basevul (TRUE) or as the absolute value (FALSE).}
+
+\item{test.type}{Either 'absolute' in which case maxvul, minvul, and maxvul.mult are applied, or
+'percentage', where pct.change and (1+pct.change) is multiplied by the base value.}
 }
 \value{
 A character vector containing the parameter taglines for the command file.
 }
 \description{
-Create parameter taglines for the command file to test sensitivity of vulnerability parameters.
+Create parameter taglines for the command file to test sensitivity of vulnerability
+parameters.
 }
 \examples{
 # example code:
-tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+\dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 }

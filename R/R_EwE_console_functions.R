@@ -27,7 +27,8 @@
 #' Run one Ecospace job (system2 version)
 #' @param cmdfile Character: full path to the command file Ecospace consumes
 #' @param do.obj Integer: reserved for later (kept for signature parity)
-#' @param console Character: full path to the Ecospace console executable (defaults to global file.console)
+#' @param console Character: full path to the Ecospace console executable (defaults to global 
+#' file.console)
 #' @param stdout_target NULL/FALSE to suppress, or a file path to capture stdout
 #' @param stderr_target NULL/FALSE to suppress, or a file path to capture stderr
 #' @return Integer exit status (0 = success); invisibly
@@ -111,13 +112,16 @@ fn.runEwE <- function(cmdfile,
 #fn.runEwE.parallel-----------------------------------------------------------------------------------------
 #' @title Run EwE CLI app in parallel
 #' @description Calls fn.runEwE in parallel framework.
-#' @param runlist A dataframe that must contain a variable named 'cmd_file', which is the full file path of the command files to run.
-#' @param obj.fxn A single number indicating the likelihood function to use. 0=none, 1=timeseries only, 2=timeseries and spatial data.
+#' @param runlist A dataframe that must contain a variable named 'cmd_file', which is the full file 
+#' path of the command files to run.
+#' @param obj.fxn A single number indicating the likelihood function to use. 0=none, 1=timeseries 
+#' only, 2=timeseries and spatial data.
 #' @param cl.export A list of objects exported to each worker.
-#' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods is returned and added to the runlist dataframe. 
+#' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods 
+#' is returned and added to the runlist dataframe. 
 #' @examples
 #' # example code:
-#' result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))
+#' \dontrun{result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))}
 #' @export
 fn.runEwE.parallel <-  function(
     runlist=runlist, 
@@ -177,17 +181,23 @@ fn.runEwE.parallel <-  function(
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.vul_testval_tags-----
 #' @title Make vulnerability parameter taglines for sensitivity runs.
-#' @description Create parameter taglines for the command file to test sensitivity of vulnerability parameters.
-#' @param predprey A dataframe containing 3 numeric columns, "pred", "prey", and "basevul", containing the group numbers of predator prey pairs to evaluate and starting values for the vulnerabilities.  Missing (NA) in the prey column will set the vulnerability by predator column.
-#' @param test.type Either 'absolute' in which case maxvul, minvul, and maxvul.mult are applied, or 'percentage', where pct.change and (1+pct.change) is multiplied by the base value.
-#' @param pct.change The percent change to use when test.type='percentage'.  Applied as pct.change x base and (1+pct.change) x base. Default is 0.5.
+#' @description Create parameter taglines for the command file to test sensitivity of vulnerability 
+#' parameters.
+#' @param predprey A dataframe containing 3 numeric columns, "pred", "prey", and "basevul", 
+#' containing the group numbers of predator prey pairs to evaluate and starting values for the 
+#' vulnerabilities.  Missing (NA) in the prey column will set the vulnerability by predator column.
+#' @param test.type Either 'absolute' in which case maxvul, minvul, and maxvul.mult are applied, or
+#' 'percentage', where pct.change and (1+pct.change) is multiplied by the base value.
+#' @param pct.change The percent change to use when test.type='percentage'.  Applied as pct.change 
+#' x base and (1+pct.change) x base. Default is 0.5.
 #' @param maxvul A high vulnerability number to test
 #' @param minvul A low vulnerability number to test.
-#' @param is.maxvul.mult Logical indicating whether the maxvul is treated as a multiplier on the basevul (TRUE) or as the absolute value (FALSE).
+#' @param is.maxvul.mult Logical indicating whether the maxvul is treated as a multiplier on the 
+#' basevul (TRUE) or as the absolute value (FALSE).
 #' @return A character vector containing the parameter taglines for the command file.
 #' @examples
 #' # example code:
-#' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+#' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 #' @export
 fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01, is.maxvul.mult=T, test.type='absolute'){
   #predprey = data.frame(pred=1:5,prey=6:10, basevul=2)
@@ -219,13 +229,15 @@ fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.disp_testval_tags-----
 #' @title Make dispersal parameter taglines for sensitivity runs.
-#' @description Create parameter taglines for the command file to test sensitivity of dispersal rates.
-#' @param disp A dataframe with baseline dispersal parameters, exported from EwE and read and renamed in the setup file.
-#' @param pct.change The percent change to use, applied as pct.change x base and (1+pct.change) x base. Default is 0.5 (+/-50%).
+#' @description Create parameter lines for the command file to test sensitivity of dispersal rates.
+#' @param disp.base A dataframe with baseline dispersal parameters, exported from EwE and read and 
+#' renamed in the setup file.
+#' @param pct.change The percent change to use, 
+#' applied as pct.change x base and (1+pct.change) x base. Default is 0.5 (+/-50%).
 #' @return A character vector containing the parameter taglines for the command file.
 #' @examples
 #' # example code:
-#' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+#' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 #' @export
 fn.disp_testval_tags = function(disp.base, pct.change=0.5){
   disp.low = disp.hi = disp.base
@@ -242,14 +254,15 @@ fn.disp_testval_tags = function(disp.base, pct.change=0.5){
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.mediation_testval_tags-----
 #' @title Make mediation shape parameter taglines for sensitivity runs.
-#' @description Create parameter taglines for the command file to test sensitivity to mediation shapes.
-#' @param med A dataframe with baseline mediation parameters, this has to be created manually.
+#' @description Create parameter lines for the command file to test sensitivity to mediation shapes.
+#' @param meds.base A dataframe with baseline mediation parameters, this has to be created manually.
+#' @param do.xbase Logical.  Should the x_base parameter also be tested? (default=TRUE).
 #' @return A character vector containing the parameter taglines for the command file.
 #' @examples
 #' # example code:
-#' tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)
+#' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 #' @export
-fn.mediation_testval_tags = function(meds.base, do.xbase=T){
+fn.mediation_testval_tags = function(meds.base, do.xbase=TRUE){
   meds.low = meds.hi = meds.base
   meds.out = data.frame()
   #meds.low$pred = meds.hi$pred = as.numeric(meds.base$group_index)
@@ -321,12 +334,15 @@ fn.mediation_testval_tags = function(meds.base, do.xbase=T){
 #fn.make_cmd_files----------------------------------------------------------------------------------
 #' @title Make command files.
 #' @description This function adds taglines to the base command file and saves them in run folders.
-#' @param runlist A dataframe where each row is a separate model run.  It must include, at a minimum, the 3 variables 'dir.out', which provides the output directory for each run; 'cmd_file' which is the full file path of the command file to be saved in the folder; and 'tag', which is the tagline to be appended to the command file. 
+#' @param runlist A dataframe where each row is a separate model run.  It must include, at a 
+#' minimum, the 3 variables 'dir.out', which provides the output directory for each run; 
+#' 'cmd_file' which is the full file path of the command file to be saved in the folder; and 'tag', 
+#' which is the tagline to be appended to the command file. 
 #' @param nyrs A single number representing the number of years to run ecospace.
 #' @return Create command .txt files and saves them in their respecitive run folders.
 #' @examples
 #' # example code:
-#' fn.make_cmd_files(runlist)
+#' \dontrun{fn.make_cmd_files(runlist)}
 #' @export
 fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
   #runlist = runlist_sens; iter=1
@@ -358,7 +374,7 @@ fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.envpref_testvals-----
 #' @keywords internal
-#' @NoRd
+#' @noRd
 fn.envpref_testvals <- function(runlist) {
   # Created an empty tag column
   runlist$tag <- NA

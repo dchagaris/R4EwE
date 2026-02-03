@@ -1,12 +1,10 @@
-library('raster')
-library('terra')
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 #fn.read ecosim timeseries---------------------------------------------------------------------------------------
 #' @title Read an ecosim timeseries file.
 #' @description Reads an ecosim timeseries file and parses out the observed (non-forcing) components
 #' @param filename The location of the Ecosim timeseries file.
-#' @return A list containing an 4 dataframes, one each for observed biomass and catch timeseries and one each for observed biomass and catch header information.
+#' @return A list containing an 4 dataframes, one each for observed biomass and catch timeseries and 
+#' one each for observed biomass and catch header information.
 #' #examples
 #' #example code:
 #' fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)
@@ -35,7 +33,8 @@ fn.read_ecosim_timeseries = function(filename){
 #Ecospace output to arrays---------------------------------------------------------------------------------  
 #' @title Read Ecospace predicted biomass timeseries output.
 #' @description Reads biomass timeseries output csv into an array.
-#' @param dir.out Output directory.  All .csv biomass files created with Ecospace naming conventions in this directory will be read.
+#' @param dir.out Output directory.  All .csv biomass files created with Ecospace naming conventions 
+#' in this directory will be read.
 #' @param timestep Read 'annual' or 'monthly' data.
 #' @param n.reg If output for multiple regions, how many?  Default to 0.
 #' @return An array of biomass output with dimensions (nyrs,ngrps,nregions,nruns)
@@ -92,8 +91,10 @@ fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #Ecospace output to arrays---------------------------------------------------------------------------------  
 #' @title Read Ecospace predicted catch timeseries output.
-#' @description Reads catch timeseries output csv, sums over fleets for each species, and puts into an array.
-#' @param dir.out Output directory.  All .csv catch files created with Ecospace naming conventions in this directory will be read.
+#' @description Reads catch timeseries output csv, sums over fleets for each species, and puts into 
+#' an array.
+#' @param dir.out Output directory.  All .csv catch files created with Ecospace naming conventions 
+#' in this directory will be read.
 #' @param timestep Read 'annual' or 'monthly' data.
 #' @param n.reg If output for multiple regions, how many?  Default to 0.
 #' @return An array of catch output with dimensions (nyrs,ngrps,nregions,nruns)
@@ -163,16 +164,21 @@ fn.agg_catch_by_group <- function(predC){
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #' @title Read Ecospace output ascii files into a raster stack.
-#' @description This function reads a subset of asc grids produced by an Ecospace run into a raster stack.  Requires the terra package for faster processing.
-#' @param dir.out The run output folder containing.  It should contain a folder named 'asc', which holds all the output maps.
-#' @param do.vars The model output variables to read. Must match the naming convention of the output files, all  lowercase.  Current options are 'biomass','catch', and 'effort'.
+#' @description This function reads a subset of asc grids produced by an Ecospace run into a raster 
+#' stack.  Requires the terra package for faster processing.
+#' @param dir.out The run output folder containing.  It should contain a folder named 'asc', which 
+#' holds all the output maps.
+#' @param do.vars The model output variables to read. Must match the naming convention of the output
+#' files, all  lowercase.  Current options are 'biomass','catch', and 'effort'.
 #' @param do.grps The model groups for which to read data.
 #' @param do.fleets The fleet numbers for which to read effort data.
 #' @param do.months The months to read output data, only used if monthly maps are output.
+#' @param do.years Years to read output data, will combine with do.months
+#' @param annualmaps Import annual (TRUE, default) or monthly (FALSE) maps from Ecospace.
 #' @return A SpatRaster stack from the terra package.
 #' @examples
 #' # example code:
-#' predB.maps <- fn.ecospace_ascii2stack(dir.out=dir.pred, do.vars=c('biomass'), do.grps=c(3,5,6,8,10,12), do.fleets=1:6, do.months=1, do.years=2010:2019, annualmaps=TRUE)
+#' \dontrun{predB.maps <- fn.ecospace_ascii2stack(dir.out=dir.pred, do.vars=c('biomass'), do.grps=c(3,5,6,8,10,12), do.fleets=1:6, do.months=1, do.years=2010:2019, annualmaps=TRUE)}
 #' @export
 fn.ecospace_ascii2stack <- function(dir.out=dir.pred,   
                                     do.vars=c('biomass'), 
@@ -188,7 +194,6 @@ fn.ecospace_ascii2stack <- function(dir.out=dir.pred,
   # do.months=1
   # do.years=2010:2019
   # annualmaps=TRUE
-  library('terra')
   files.ascii <- list.files(file.path(dir.out,'asc'),pattern=".asc$", recursive=T, full.names=T)
   grpsplit = strsplit(basename(files.ascii),"-")
   grpnames = character()

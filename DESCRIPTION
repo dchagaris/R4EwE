@@ -1,11 +1,28 @@
 Package: R4EwE
-Title: What the Package Does (One Line, Title Case)
+Title: R for Ecopath with Ecosim (R4EwE)
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+    person("David", "Chagaris", , "dchagaris@ufl.edu", role = c("aut", "cre"))
+Description: Utilities, workflows, and helpers for Ecopath with Ecosim
+    users.
+License: MIT + file LICENSE
 Encoding: UTF-8
+Language: en-US
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
+Imports: 
+    colorRamps,
+    digest,
+    doParallel,
+    fields,
+    foreach,
+    gifski,
+    httr,
+    maps,
+    ncdf4,
+    raster,
+    reshape2,
+    rvest,
+    stats,
+    terra,
+    viridis

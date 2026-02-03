@@ -5,3 +5,8 @@
 ^pkgdown$
 ^renv$
 ^renv\.lock$
+^LICENSE\.md$
+^inst/examples/NWACS Ecospace GA/
+^inst/examples/NWACS ST data extraction2.R
+^.*\.Rproj$
+^\.Rproj\.user$

@@ -1,12 +1,14 @@
 #' @title Make ST driver gifs
 #' @description Creates a movie (gif) file from ST driver ascii rasters.
 #' @param dir.stdriver Full directory path to the ST driver folder.
-#' @param do.files A numeric vector indexing which of the ascii files in dir.stdriver to plot.  The default NULL plots all files in the folder.
-#' @param datestamps Optional character vector of timesteps for each file.  Setting to NULL (default) will pull the timestep from the ascii file suffix that is ...YYYYMM.asc. 
+#' @param do.files A numeric vector indexing which of the ascii files in dir.stdriver to plot.  
+#' The default NULL plots all files in the folder.
+#' @param datestamps Optional character vector of timesteps for each file.  Setting to NULL 
+#' (default) will pull the timestep from the ascii file suffix that is ...YYYYMM.asc. 
 #' @return Place a gif file in a folder one level up from dri.stdriver  
 #' @examples
 #' #example code:
-#' fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)
+#' \dontrun{fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)}
 #' @export
 fn.STdriver_gif <- function(dir.stdriver=dir.stdriver, do.files=NULL, datestamps=NULL){
   
@@ -15,18 +17,18 @@ fn.STdriver_gif <- function(dir.stdriver=dir.stdriver, do.files=NULL, datestamps
   # datestamps=NULL
 
   #package setup
-  required <- c("terra", "viridis", "maps", "gifski", "fields")
-  missing  <- required[!vapply(required, requireNamespace, FUN.VALUE = TRUE, quietly = TRUE)]
-  if (length(missing)>0) {
-    stop(
-      sprintf(
-        "Missing required packages: %s\nInstall with: install.packages(c(%s))",
-        paste(missing, collapse = ", "),
-        paste(sprintf('"%s"', missing), collapse = ", ")
-      ),
-      call. = FALSE
-    )
-  }
+  # required <- c("terra", "viridis", "maps", "gifski", "fields")
+  # missing  <- required[!vapply(required, requireNamespace, FUN.VALUE = TRUE, quietly = TRUE)]
+  # if (length(missing)>0) {
+  #   stop(
+  #     sprintf(
+  #       "Missing required packages: %s\nInstall with: install.packages(c(%s))",
+  #       paste(missing, collapse = ", "),
+  #       paste(sprintf('"%s"', missing), collapse = ", ")
+  #     ),
+  #     call. = FALSE
+  #   )
+  # }
   
   # ---- Input validation ----
   if (missing(dir.stdriver) || is.null(dir.stdriver) || !dir.exists(dir.stdriver)) {
@@ -46,7 +48,7 @@ fn.STdriver_gif <- function(dir.stdriver=dir.stdriver, do.files=NULL, datestamps
   if(!is.null(do.files))   files.st = files.st[do.files]
   
   #read them into terra stack
-  st.rast = rast(files.st)
+  st.rast = terra::rast(files.st)
   names(st.rast) = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
   
   #unit conversions
@@ -103,6 +105,6 @@ fn.STdriver_gif <- function(dir.stdriver=dir.stdriver, do.files=NULL, datestamps
   
   #make gif----
   png_files <- list.files(dir.png, pattern = "png$", full.names = TRUE)
-  gifski(png_files, gif_file = file.path(dir.gif,paste0(var.name,".gif")), width = 1400, height = 1000, delay = .1)
+  gifski::gifski(png_files, gif_file = file.path(dir.gif,paste0(var.name,".gif")), width = 1400, height = 1000, delay = .1)
   unlink(dir.png, recursive=T, force=T)
 } #eof 
