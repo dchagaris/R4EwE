@@ -175,7 +175,7 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
 #' @examples
 #' # example code:
 #' r.filled = fill_na_iter(r, mask=depth)
-fill_na_iter <- function(r, w = 3, max_iter = 50, mask=depth) {
+fill_coastal_cells <- function(r, w = 3, max_iter = 50, mask=depth) {
   #filled = ras.v[[t]]
   filled <- r
   kernel <- matrix(1, w, w)
@@ -214,16 +214,20 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   #nc.files <- nc.files[which(!grepl("static",basename(nc.files)))]
   if(make.monthly){
   for(i in 1:length(nc.files)){  
-    #i=2
+    #i=1
     nc = nc_open(nc.files[i])
     nc.vars = names(nc$var)
     print(nc.vars)
     nc$dim$time
     if(i==1) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
     if(i==2) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='secs')
-
+    zthickness <- nc$dim$depth$vals
+    
+    st.existing <- list.dirs(dir.stdriver,full.names=F,recursive=F)
+    st.existing <- st.existing[which(!st.existing %in% c('hoard','plots','static'))]
+    
     for(v in 1:length(nc.vars)){
-      #v=2
+      #v=1
       nc.v = ncvar_get(nc,nc.vars[v])
       ndims = length(dim(nc.v))
       
@@ -240,7 +244,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         for(t in 1:nlyr(ras.v)){
           #t=1
           print(paste0(nc.vars[v],"--month ",t," of ",ntimes));flush.console()
-          ras.t.filled <- fill_na_iter(ras.v[[t]])
+          ras.t.filled <- fill_coastal_cells(ras.v[[t]])
           ras.t <- mask(ras.t.filled,rast(depth))
           out.v <- addLayer(out.v, raster(ras.t))
           rm(ras.t, ras.t.filled); gc()
@@ -272,10 +276,11 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           extent(brick1) = extent(depth)
           
           #surface layer----
-          if(!nc.vars[v] %in% c('chl','no3','nppv','phyc')){
+          #if(!nc.vars[v] %in% c('chl','no3','nppv','phyc')){
+          if(!nc.vars[v] %in% c('x')){
             ras.s = rast(brick1[[1]])
             ras.s = resample(ras.s,rast(depth)) #resample to output resolution
-            ras.s.filled <- fill_na_iter(ras.s) #fill missing cells iteratively
+            ras.s.filled <- fill_coastal_cells(ras.s) #fill missing cells iteratively
             ras.s <- mask(ras.s.filled, rast(depth))  #mask the land
             out.surf = addLayer(out.surf,raster(ras.s)) #add to stack
             rm(ras.s, ras.s.filled);gc()
@@ -287,17 +292,21 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
             brick2 = approxNA(brick1, method='constant', rule=2)
             ras.b = rast(brick2[[nlayers(brick2)]])
             ras.b = resample(ras.b,rast(depth))
-            ras.b.filled <- fill_na_iter(ras.b)
+            ras.b.filled <- fill_coastal_cells(ras.b)
             ras.b <- mask(ras.b.filled, rast(depth))
             out.bott = addLayer(out.bott,raster(ras.b))
             rm(brick2, ras.b, ras.b.filled); gc()
           }
           
           #mean over water column----
+          
+          # Should show a terra method for SpatRaster
+
           if(!nc.vars[v] %in% c('chl','no3','nppv','phyc')){
             ras.m = mean(rast(brick1),na.rm=T)
+            #ras.m = terra::weighted.mean(x=rast(brick1),w=zthickness, na.rm=T)
             ras.m = resample(ras.m,rast(depth))
-            ras.m.filled <- fill_na_iter(ras.m)
+            ras.m.filled <- fill_coastal_cells(ras.m)
             ras.m <- mask(ras.m.filled, rast(depth))
             out.mean = addLayer(out.mean,raster(ras.m))
             rm(ras.m, ras.m.filled);gc()
@@ -305,9 +314,17 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           
           #sum over water column----
           if(nc.vars[v] %in% c('chl','no3','nppv','phyc')){
-            ras.sum = sum(rast(brick1),na.rm=T)
+            #ras.sum = sum(rast(brick1),na.rm=T)
+            ras.sum <- app(rast(brick1), fun = 
+                             function(v) {
+                               if (all(is.na(v))) {
+                                 NA               # keep land as NA
+                               } else {
+                                 sum(v * zthickness, na.rm = TRUE)
+                               }
+                             })
             ras.sum = resample(ras.sum, rast(depth))
-            ras.sum.filled <- fill_na_iter(ras.sum, mask=depth)
+            ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
             ras.sum <- mask(ras.sum.filled, rast(depth))
             out.sum <- addLayer(out.sum, raster(ras.sum))
             rm(ras.sum, ras.sum.filled); gc()
@@ -675,7 +692,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
       message("----",s," of ",nlayers(var.regrid))
       ras.s = rast(var.regrid[[s]])
       ras.s = resample(ras.s,rast(depth)) #resample to output resolution
-      ras.s.filled <- fill_na_iter(ras.s, mask='depth') #fill missing cells iteratively
+      ras.s.filled <- fill_coastal_cells(ras.s, mask='depth') #fill missing cells iteratively
       ras.s <- mask(ras.s.filled, rast(depth))  #mask the land
       #plot(ras.s, colNA='black',main=paste(nc.vars,var_units))
       var.out = addLayer(var.out,raster(ras.s)) #add to stack
