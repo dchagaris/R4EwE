@@ -2,22 +2,31 @@
 % Please edit documentation in R/R_EwE_console_functions.R
 \name{fn.runEwE}
 \alias{fn.runEwE}
-\title{Run EwE CLI app}
+\title{Run one Ecospace job (system2 version)}
 \usage{
-fn.runEwE(cmdfile, do.obj = 1)
+fn.runEwE(
+  cmdfile,
+  do.obj = 1,
+  console = file.console,
+  stdout_target = FALSE,
+  stderr_target = FALSE
+)
 }
 \arguments{
-\item{cmdfile}{A file path pointing to the command file}
+\item{cmdfile}{Character: full path to the command file Ecospace consumes}
 
-\item{do.obj}{Toggle swith indicating the likelihood function to use. 0=none, 1=timeseries only, 2=timeseries and spatial data}
+\item{do.obj}{Integer: reserved for later (kept for signature parity)}
+
+\item{console}{Character: full path to the Ecospace console executable (defaults to global
+file.console)}
+
+\item{stdout_target}{NULL/FALSE to suppress, or a file path to capture stdout}
+
+\item{stderr_target}{NULL/FALSE to suppress, or a file path to capture stderr}
 }
 \value{
-Model output is saved according to command file. If do.obj!=0 then a vector likelihoods is returned.
+Integer exit status (0 = success); invisibly
 }
 \description{
-Function to run EwE using the CLI
-}
-\examples{
-# example code:
-result <- fn.runEwE(cmdfile=C://input//EwEcmd.txt, do.obj=1)
+Run one Ecospace job (system2 version)
 }

@@ -37,6 +37,7 @@ fn.GA <- function(myconfig){
   pen.wt.mult <<- myconfig$pen.wt.mult
   gapop.dist <<- myconfig$gapop.dist
   mutate.margin <<- myconfig$mutate.margin
+  #small test change here
   
   #create results file
   file.ga.results <- file.path(dir.main, paste0('ga_results_',timestamp,'.csv'))

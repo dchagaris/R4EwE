@@ -1,7 +1,9 @@
 
 #prepare parameter vector----
 #' @title Construct parameter vectors and bounds for model estimation
-#' @description Builds the parameter vector and related metadata (labels, groups, bounds, CVs) for vulnerabilities, environmental responses, dispersal, and mediation parameters. Several objects are assigned in the parent/global environment.
+#' @description Builds the parameter vector and related metadata (labels, groups, bounds, CVs) for 
+#' vulnerabilities, environmental responses, dispersal, and mediation parameters. Several objects 
+#' are assigned in the parent/global environment.
 #' @param do.vuls Logical; include vulnerability parameters.
 #' @param vul_pars Data frame of vulnerability parameters.
 #' @param vul.min Minimum vulnerability (unused placeholder).
@@ -236,7 +238,8 @@ fn.makeparvec <- function(
 #' draws centered on existing parameter estimates. Uses several global
 #' objects created elsewhere.
 #' @param run_config List containing GA settings; must include \code{popSize}.
-#' @param usedist Character string; distribution type, either"unif" (uniform between bounds) or "normln" (log/normal hybrid). Default "unif".
+#' @param usedist Character string; distribution type, either"unif" (uniform between bounds) or 
+#' "normln" (log/normal hybrid). Default "unif".
 #' @return A numeric matrix of dimension run_config$popSize x n_pars.
 #' @export
 fn.GApop = function(run_config=myconfig, usedist='unif'){
@@ -349,8 +352,7 @@ safe_make_run_dir_tempfile <- function(base_dir,
 #' @param par_vec Parameter vector.
 #' @param g Generation number, used for file tracking in a genetic algorithm loop. Default 0
 #' @param idx Index for run identifier.
-#' @param out_dir Output directory, where the command file will be saved along with model output.
-#'
+#' @param out_dir Output directory, where the command file will be saved along with model output.#'
 #' @return Path to the written command file.
 #' @export
 fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
@@ -425,7 +427,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 }
 
 #' @keywords internal
-#' @NoRd
+#' @noRd
 safe_runEwE <- function(cmdfile, do.obj) {
   on.exit(gc(), add = TRUE)
   out <- tryCatch({
@@ -611,38 +613,6 @@ crossover <- function(parents) {
 }
 
 
-#' @title Uniform crossover for paired parents
-#' @Description
-#' Applies uniform crossover to pairs of parents using a gene-wise mask.
-#'
-#' @param parents Matrix of parent individuals (rows = individuals, columns = parameters).
-#' @param p_cross Probability of applying crossover to a parent pair.
-#' @param p_gene Probability that a gene is swapped when crossover occurs.
-#'
-#' @details
-#' Processes rows in pairs. For each pair, crossover occurs with probability `p_cross`.
-#' A binary mask is drawn i.i.d. across genes with probability `p_gene`; masked genes
-#' are swapped between the two parents.
-#'
-#' @return Matrix of offspring with the same dimensions as `parents`.
-#' @export
-# crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
-#   offspring <- parents
-#   pop_size <- nrow(parents)
-#   n_pars <- ncol(parents)
-#   for (i in seq(1, pop_size - 1, by = 2)) {
-#     if (runif(1) < p_cross) {
-#       mask <- runif(n_pars) < p_gene  #mask is the index of parameters to be crossed
-#       # swap masked genes
-#       tmp <- offspring[i, mask]
-#       offspring[i, mask] <- offspring[i + 1, mask]
-#       offspring[i + 1, mask] <- tmp
-#     }
-#   }
-#   return(offspring)
-# } #eof
-
-
 #' @title Uniform crossover with grouped (linked) parameters
 #' @description
 #' Performs uniform crossover on pairs of parents, but treats specified columns
@@ -712,8 +682,9 @@ crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, 
 #' Mutates individuals by redrawing selected genes from a range informed by the
 #' current population, with a configurable margin.
 #'
-#' @param population Matrix of individuals on the log scale (rows = individuals, columns = parameters).
-#' @param margin Fractional expansion applied to the min–max range per parameter (on original scale).
+#' @param population Matrix of individuals on the log scale (rows = individuals, columns = 
+#' parameters).
+#' @param margin Fractional expansion applied to the min–max range per parameter (on orig scale).
 #'
 #' @details
 #' The algorithm:
@@ -751,7 +722,7 @@ mutate <- function(population, margin=0.2) {
 } #eof
 
 #' @keywords internal
-#' @NoRd
+#' @noRd
 cluster_is_ok <- function() {
   ok <- tryCatch({
     res <- foreach(i = 1:2, .combine = c) %dopar% { Sys.getpid() }
@@ -761,7 +732,7 @@ cluster_is_ok <- function() {
 }
 
 #' @keywords internal
-#' @NoRd
+#' @noRd
 ensure_cluster <- function() {
   if (!cluster_is_ok()) {
     # rebuild

@@ -1,12 +1,15 @@
 #' @title Get ST driver timeseries average.
 #' @description Creates a movie (gif) file from ST driver ascii rasters.
-#' @param dirs.stdriver A character vector containing the full directory paths to 1 or more ST driver variable folders.
-#' @param grid.subset A numeric vector of lenght 4 (xmin,xmax,ymin,ymax) indicating which grid cells subset and then average over. These are row and column indexes. NULL, the default, averages over the entire spatial grid.  A value of c(1,3,1,3) would get the top left 3x3 corner. Need to switch to a grid mask so cells subset can be any shape/cells.
-#' @param datestamps Optional character vector of timesteps for each file.  Setting to NULL (default) will pull the timestep from the ascii file suffix that is ...YYYYMM.asc. 
+#' @param dirs.stdriver A character vector containing the full directory paths to 1 or more ST 
+#' driver variable folders.
+#' @param grid.subset A numeric vector of lenght 4 (xmin,xmax,ymin,ymax) indicating which grid 
+#' cells subset and then average over. These are row and column indexes. NULL, the default, averages over the entire spatial grid.  A value of c(1,3,1,3) would get the top left 3x3 corner. Need to switch to a grid mask so cells subset can be any shape/cells.
+#' @param datestamps Optional character vector of timesteps for each file.  Setting to NULL 
+#' (default) will pull the timestep from the ascii file suffix that is ...YYYYMM.asc. 
 #' @return Saves a STdriver_timeseries.csv file in the parent directoryr  
 #' @examples
 #' #example code:
-#' fn.STdriver_timeseries(dirs.stdriver=list.dirs("./ST drivers/30min")[1:2], grid.subset=NULL, datestamps=NULL)
+#' \dontrun{fn.STdriver_timeseries(dirs.stdriver=list.dirs("./ST drivers/30min")[1:2], grid.subset=NULL, datestamps=NULL)}
 #' @export
 fn.STdriver_timeseries <- function(dirs.stdriver=dirs.stdriver, datestamps=NULL, grid.subset=NULL){
   
@@ -15,24 +18,24 @@ fn.STdriver_timeseries <- function(dirs.stdriver=dirs.stdriver, datestamps=NULL,
   # grid.subset = NULL
 
   #package setup
-  required <- c("terra")
-  #apply(1:length(required), FUN=function(i)library(required[i]))
-  missing  <- required[!vapply(required, requireNamespace, FUN.VALUE = TRUE, quietly = TRUE)]
-  if (length(missing)>0) {
-    stop(
-      sprintf(
-        "Missing required packages: %s\nInstall with: install.packages(c(%s))",
-        paste(missing, collapse = ", "),
-        paste(sprintf('"%s"', missing), collapse = ", ")
-      ),
-      call. = FALSE
-    )
-  }
+  # required <- c("terra")
+  # #apply(1:length(required), FUN=function(i)library(required[i]))
+  # missing  <- required[!vapply(required, requireNamespace, FUN.VALUE = TRUE, quietly = TRUE)]
+  # if (length(missing)>0) {
+  #   stop(
+  #     sprintf(
+  #       "Missing required packages: %s\nInstall with: install.packages(c(%s))",
+  #       paste(missing, collapse = ", "),
+  #       paste(sprintf('"%s"', missing), collapse = ", ")
+  #     ),
+  #     call. = FALSE
+  #   )
+  # }
   
   # attach once
-  invisible(lapply(required, function(p) {
-    if (!p %in% .packages()) library(p, character.only = TRUE)
-  }))
+  # invisible(lapply(required, function(p) {
+  #   if (!p %in% .packages()) library(p, character.only = TRUE)
+  # }))
   
   for(i in 1:length(dirs.stdriver)){
     #i=1

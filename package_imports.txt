@@ -1,0 +1,28 @@
+
+# R/package_imports.R
+
+#' @keywords internal
+#' @import foreach
+#' @import doParallel
+#' @import parallel
+#' @import terra
+#' @import raster
+#' @import stats
+#' @import graphics
+#' @import grDevices
+#' @import utils
+#' @import jsonlite
+#' @import rvest
+#' @import viridis
+#' @import ncdf4
+#' @import snow
+#' @import fields
+#' @import colorRamps
+#' @import httr
+#' @import digest
+#' @import reshape2
+#' @import gifski
+#' @import maps
+#' @import viridis
+#' @import stats
+NULL
