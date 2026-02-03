@@ -16,7 +16,7 @@ You can install the development version of R4EwE from
 
 ``` r
 # install.packages("pak")
-pak::pak("dchagaris/R4EwE")
+remotes::install_github("dchagaris/R4EwE")
 ```
 
 ## Example
