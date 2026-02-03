@@ -176,6 +176,3 @@ fn.GA <- function(myconfig){
   }
 }#eof
 
-
-fitness
-
