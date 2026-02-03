@@ -67,10 +67,10 @@ fn.GA <- function(myconfig){
   cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
   
   #initial population.................................
-  #PICKUP HERE - NEED TO CHECK gn.GApop to work with mediation (1/26/2020)
   #message('Running the initial population')
   gapop <- fn.GApop(usedist=gapop.dist)
   gapop[1,] <- est_par_vec  #include base run in initial population
+  
   #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
@@ -175,3 +175,7 @@ fn.GA <- function(myconfig){
     rm(parents,offspring,files.cmd);gc()
   }
 }#eof
+
+
+fitness
+

@@ -245,33 +245,37 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
     mat <- matrix(runif(run_config$popSize*n_pars, L.bounds, U.bounds), nrow=run_config$popSize, byrow=T)
   }
   if(usedist=='normln'){
+    #two things: fix vul so it goes below 2; fix mediation base_x values
     mat <- matrix(NA,nrow=run_config$popSize, ncol=n_pars)
     colnames(mat) <- par.labels
     
     #inspect the parameter set and their bounds
     data.frame(L.bounds, est_par_vec, U.bounds, par_cv_vec,par.groups)
     #get standard deviation from cv
-    par_sd = sqrt(par_cv_vec+1)
+    #par_sd = sqrt(par_cv_vec+1)
+    par_sd <- abs(par_cv_vec*est_par_vec)
+
     #population of vulnerabilities, use lognormal to get more values at low end with a long tail to some higher values
-    pop.vuls <- exp(round(matrix(rlnorm(run_config$popSize*length(vul.par.idx), meanlog=log(est_par_vec[vul.par.idx]), sdlog=log(par_sd[vul.par.idx])),nrow=run_config$popSize, byrow=T),4))
+    pop.vuls <- round(matrix(rlnorm(run_config$popSize*length(vul.par.idx), meanlog=log(est_par_vec[vul.par.idx]), sdlog=par_sd[vul.par.idx]),nrow=run_config$popSize, byrow=T),4)
     pop.vuls[pop.vuls<1.01] <- 1.01
     
     #other parameters
     pop.norm <- matrix(rnorm(run_config$popSize*(n_pars-length(vul.par.idx)), mean=est_par_vec[-vul.par.idx], sd=par_sd[-vul.par.idx]),nrow=run_config$popSize, byrow=T)
     pop.norm <- round(pop.norm,4)
-    
     mat[,vul.par.idx] <- pop.vuls
     mat[,-vul.par.idx] <- pop.norm
     mat <- round(mat,4)
     integer.idx <- grep("xbase",par.labels)
     mat[,integer.idx] <- round(mat[,integer.idx])
     
-    # graphics.off();rm(.SavedPlots);windows(record=T)
-    # par(mfrow=c(3,3))
-    # for(i in 1:ncol(mat)){
-    #   hist(mat[,i],main=par.labels[i])
-    # }
   }
+  pdf(file.path(dirname(dirname(files.cmd[1])),'init pop distributions.pdf'),onefile=T)
+  par(mfrow=c(3,3))
+  for(i in 1:ncol(mat)){
+    hist(mat[,i],breaks=100,main=colnames(mat)[i],xlab='value')
+    abline(v=est_par_vec[i],col='blue',lty=2)
+  }
+  dev.off()
   return(mat)
   #matrix(rep(log_par_vec, run_config$popSize), nrow=run_config$popSize, byrow=T)
 } #eof
