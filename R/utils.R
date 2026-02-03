@@ -3,8 +3,7 @@
 #' @title Melt vulnerability matrix
 #' @description melt a vulnerability matrix.
 #' @param vuls A vulnerability matrix
-#' @keywords internal
-#' @noRd
+#' @export
 fn.longvuls <- function(vuls=vuls){
   #vuls=vuls.base
   longvuls <- reshape2::melt(vuls, id.vars=1) ## Melt to long
