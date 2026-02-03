@@ -236,7 +236,7 @@ fn.makeparvec <- function(
 #' draws centered on existing parameter estimates. Uses several global
 #' objects created elsewhere.
 #' @param run_config List containing GA settings; must include \code{popSize}.
-#' @param usedist Character string; distribution type, either"unif" (uniform between bounds) or "ln" (log/normal hybrid). Default "unif".
+#' @param usedist Character string; distribution type, either"unif" (uniform between bounds) or "normln" (log/normal hybrid). Default "unif".
 #' @return A numeric matrix of dimension run_config$popSize x n_pars.
 #' @export
 fn.GApop = function(run_config=myconfig, usedist='unif'){
@@ -244,22 +244,27 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
   if(usedist=='unif'){
     mat <- matrix(runif(run_config$popSize*n_pars, L.bounds, U.bounds), nrow=run_config$popSize, byrow=T)
   }
-  if(usedist=='ln'){
+  if(usedist=='normln'){
     mat <- matrix(NA,nrow=run_config$popSize, ncol=n_pars)
     colnames(mat) <- par.labels
-    par_sd <- rep(0,n_pars)
-    par_sd[log.par.idx] <- sqrt(log(par_cv_vec[log.par.idx]^2+1))
-    par_sd[!log.par.idx] <- sqrt((par_cv_vec[!log.par.idx]+1))
-    tmp.log <- matrix(rlnorm(run_config$popSize*sum(log.par.idx), meanlog=est_par_vec[log.par.idx], sdlog=par_sd[log.par.idx]),nrow=run_config$popSize, byrow=T)
-    tmp.norm <- matrix(rnorm(run_config$popSize*sum(!log.par.idx), mean=est_par_vec[!log.par.idx], sd=par_sd[!log.par.idx]),nrow=run_config$popSize, byrow=T)
-    mat[,log.par.idx] <- tmp.log
-    mat[,!log.par.idx] <- tmp.norm
     
-    idx <- mat[, vul.par.idx] < 1.0
-    mat[,vul.par.idx][idx] <- 1.01
+    #inspect the parameter set and their bounds
+    data.frame(L.bounds, est_par_vec, U.bounds, par_cv_vec,par.groups)
+    #get standard deviation from cv
+    par_sd = sqrt(par_cv_vec+1)
+    #population of vulnerabilities, use lognormal to get more values at low end with a long tail to some higher values
+    pop.vuls <- exp(round(matrix(rlnorm(run_config$popSize*length(vul.par.idx), meanlog=log(est_par_vec[vul.par.idx]), sdlog=log(par_sd[vul.par.idx])),nrow=run_config$popSize, byrow=T),4))
+    pop.vuls[pop.vuls<1.01] <- 1.01
+    
+    #other parameters
+    pop.norm <- matrix(rnorm(run_config$popSize*(n_pars-length(vul.par.idx)), mean=est_par_vec[-vul.par.idx], sd=par_sd[-vul.par.idx]),nrow=run_config$popSize, byrow=T)
+    pop.norm <- round(pop.norm,4)
+    
+    mat[,vul.par.idx] <- pop.vuls
+    mat[,-vul.par.idx] <- pop.norm
+    mat <- round(mat,4)
     integer.idx <- grep("xbase",par.labels)
     mat[,integer.idx] <- round(mat[,integer.idx])
-    mat[,log.par.idx] <- log(mat[,log.par.idx])
     
     # graphics.off();rm(.SavedPlots);windows(record=T)
     # par(mfrow=c(3,3))
@@ -270,6 +275,8 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
   return(mat)
   #matrix(rep(log_par_vec, run_config$popSize), nrow=run_config$popSize, byrow=T)
 } #eof
+
+
 #' @keywords internal
 #' @noRd
 safe_make_run_dir_tempfile <- function(base_dir,
@@ -615,21 +622,85 @@ crossover <- function(parents) {
 #'
 #' @return Matrix of offspring with the same dimensions as `parents`.
 #' @export
-crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
+# crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
+#   offspring <- parents
+#   pop_size <- nrow(parents)
+#   n_pars <- ncol(parents)
+#   for (i in seq(1, pop_size - 1, by = 2)) {
+#     if (runif(1) < p_cross) {
+#       mask <- runif(n_pars) < p_gene  #mask is the index of parameters to be crossed
+#       # swap masked genes
+#       tmp <- offspring[i, mask]
+#       offspring[i, mask] <- offspring[i + 1, mask]
+#       offspring[i + 1, mask] <- tmp
+#     }
+#   }
+#   return(offspring)
+# } #eof
+
+
+#' @title Uniform crossover with grouped (linked) parameters
+#' @description
+#' Performs uniform crossover on pairs of parents, but treats specified columns
+#' as linked "groups" that must be swapped together.
+#'
+#' @param parents Numeric matrix. Rows = individuals, columns = parameters.
+#' @param group_id Vector of length ncol(parents) giving the group ID of each column.
+#'   Columns with the same ID form a linkage block and will be swapped together.
+#'   Use a unique ID per column to leave it ungrouped. NA IDs are treated as unique.
+#' @param p_cross Probability of attempting crossover for a parent pair.
+#' @param p_group Probability a group is swapped when crossover occurs.
+#'   Either a scalar (applied to all groups) or a vector of length = number of groups.
+#'
+#' @details
+#' Pairs rows (1&2, 3&4, ...) and for each pair attempts crossover with probability
+#' `p_cross`. If crossover happens, a binary mask is drawn over groups with probability
+#' `p_group`, and all columns in the selected groups are swapped.
+#'
+#' @return Matrix of offspring with the same dimensions as `parents`.
+#' @export
+crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, p_group = 0.5) {
+  if (!is.matrix(parents)) stop("`parents` must be a matrix.")
+  n_pars <- ncol(parents)
+  if (length(group_id) != n_pars)
+    stop("`group_id` must have length equal to ncol(parents).")
+  
+  # Treat NA group IDs as unique (i.e., their own single-gene group)
+  if (anyNA(group_id)) {
+    na_idx <- which(is.na(group_id))
+    group_id[na_idx] <- paste0("__NA__", na_idx)
+  }
+  
+  # Build list of column indices per group; drop ensures no empty groups
+  groups <- split(seq_len(n_pars), as.factor(group_id), drop = TRUE)
+  n_groups <- length(groups)
+  
+  # Handle scalar or group-wise p_group
+  if (length(p_group) == 1L) {
+    p_group_vec <- rep(p_group, n_groups)
+  } else if (length(p_group) == n_groups) {
+    p_group_vec <- as.numeric(p_group)
+  } else {
+    stop("`p_group` must be length 1 or equal to the number of groups (", n_groups, ").")
+  }
+  
   offspring <- parents
   pop_size <- nrow(parents)
-  n_pars <- ncol(parents)
-  for (i in seq(1, pop_size - 1, by = 2)) {
-    if (runif(1) < p_cross) {
-      mask <- runif(n_pars) < p_gene  #mask is the index of parameters to be crossed
-      # swap masked genes
-      tmp <- offspring[i, mask]
-      offspring[i, mask] <- offspring[i + 1, mask]
-      offspring[i + 1, mask] <- tmp
+  
+  for (i in seq(1L, pop_size - 1L, by = 2L)) {
+    if (runif(1L) < p_cross) {
+      swap_groups <- runif(n_groups) < p_group_vec
+      if (any(swap_groups)) {
+        idx <- unlist(groups[swap_groups], use.names = FALSE)
+        tmp <- offspring[i, idx, drop = FALSE]
+        offspring[i, idx] <- offspring[i + 1L, idx]
+        offspring[i + 1L, idx] <- tmp
+      }
     }
   }
-  return(offspring)
-} #eof
+  offspring
+}
+
 
 # === Mutation ===
 #' @title Mutate population with parameter-wise random resets
@@ -651,24 +722,26 @@ crossover_uniform <- function(parents, p_cross = 0.8, p_gene = 0.5) {
 #' Requires global variables: `n_pars`, `mutation_rate`, and `vul.par.idx`.
 #'
 #' @return Mutated population matrix (same dimensions as `population`).
-
+#' @export
 mutate <- function(population, margin=0.2) {
   #low = L.bounds
   #upp = U.bounds
   #original scale
-  low = exp(apply(population,2,min))
-  upp = exp(apply(population,2,max))
+  #low = exp(apply(population,2,min))
+  #upp = exp(apply(population,2,max))
+  low = apply(population,2,min)
+  upp = apply(population,2,max)
   low = low-margin*abs(low)
   low[vul.par.idx] <- ifelse(low[vul.par.idx]<=1.0,1.01,low[vul.par.idx])
   upp = upp+margin*abs(upp)
   #back to log scale
-  low = log(low)
-  upp = log(upp)
+  #low = log(low)
+  #upp = log(upp)
   for (i in 1:nrow(population)) {
         mask <- runif(n_pars) < mutation_rate #mask are the parameters to mutate
         population[i, mask] <- runif(sum(mask), low[mask], upp[mask])
   }
-  return(population)
+  return(round(population,4))
 } #eof
 
 #' @keywords internal

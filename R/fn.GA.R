@@ -36,6 +36,7 @@ fn.GA <- function(myconfig){
   do.penalty <<- myconfig$do.penalty
   pen.wt.mult <<- myconfig$pen.wt.mult
   gapop.dist <<- myconfig$gapop.dist
+  mutate.margin <<- myconfig$mutate.margin
   
   #create results file
   file.ga.results <- file.path(dir.main, paste0('ga_results_',timestamp,'.csv'))
@@ -95,7 +96,7 @@ fn.GA <- function(myconfig){
   sd_fit = sd(fitness, na.rm=T)
   max_fit = max(fitness, na.rm=T)
   median_fit = median(fitness, na.rm=T)
-  best_pars = round(exp(gapop[which.min(fitness),]),4)
+  best_pars = round(gapop[which.min(fitness),],4)
   write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
   cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
   #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
@@ -126,12 +127,12 @@ fn.GA <- function(myconfig){
     # Selection, Crossover, Mutation
     parents <- select_parents(gapop, fitness) #resamples the population, with replacement, with rank-based probabilities in the sample draws
     #offspring <- crossover(parents) #offspring are when two parents crossover a part of their parameter vector
-    offspring <- crossover_uniform(parents, p_cross=0.8, p_gene=0.5)
-    offspring <- mutate(offspring, margin=0.2) #randomly draw new parameter values to mutate the individual
+    offspring <- crossover_uniform(parents, group_id=par.groups, p_cross=0.8, p_group=0.5)
+    offspring <- mutate(offspring, margin=mutate.margin) #randomly draw new parameter values to mutate the individual
     
     # Evaluate new population
     ensure_cluster()  # optional but recommended
-    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(log_par_vec=offspring[i,], g=gen, idx=i)) 
+    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i)) 
     files.cmd <- unlist(files.cmd, use.names=F)
     new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.output=T)
     
@@ -166,7 +167,7 @@ fn.GA <- function(myconfig){
     sd_fit = sd(fitness, na.rm=T)
     max_fit = max(fitness, na.rm=T)
     median_fit = median(fitness, na.rm=T)
-    best_pars = round(exp(gapop[which.min(fitness),]),4)
+    best_pars = round(gapop[which.min(fitness),],4)
     write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
     cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
     #message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
