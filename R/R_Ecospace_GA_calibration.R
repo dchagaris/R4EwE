@@ -259,7 +259,8 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
     par_sd <- abs(par_cv_vec*est_par_vec)
 
     #population of vulnerabilities, use lognormal to get more values at low end with a long tail to some higher values
-    pop.vuls <- round(matrix(rlnorm(run_config$popSize*length(vul.par.idx), meanlog=log(est_par_vec[vul.par.idx]), sdlog=par_sd[vul.par.idx]),nrow=run_config$popSize, byrow=T),4)
+    pop.vuls <- round(matrix(rgamma(run_config$popSize*length(vul.par.idx), shape=2, rate=2/est_par_vec[vul.par.idx]),nrow=run_config$popSize, byrow=T),4)
+    #pop.vuls <- round(matrix(rlnorm(run_config$popSize*length(vul.par.idx), meanlog=log(est_par_vec[vul.par.idx]), sdlog=par_sd[vul.par.idx]),nrow=run_config$popSize, byrow=T),4)
     pop.vuls[pop.vuls<1.01] <- 1.01
     
     #other parameters
@@ -272,7 +273,8 @@ fn.GApop = function(run_config=myconfig, usedist='unif'){
     mat[,integer.idx] <- round(mat[,integer.idx])
     
   }
-  pdf(file.path(dirname(dirname(files.cmd[1])),'init pop distributions.pdf'),onefile=T)
+  pdf(file.path(dir.main,'init pop distributions.pdf'),onefile=T)
+  #graphics.off();rm(.SavedPlots);windows(record=T)
   par(mfrow=c(3,3))
   for(i in 1:ncol(mat)){
     hist(mat[,i],breaks=100,main=colnames(mat)[i],xlab='value')
@@ -699,16 +701,15 @@ crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, 
 #' @return Mutated population matrix (same dimensions as `population`).
 #' @export
 mutate <- function(population, margin=0.2) {
-  #low = L.bounds
-  #upp = U.bounds
-  #original scale
-  #low = exp(apply(population,2,min))
-  #upp = exp(apply(population,2,max))
-  low = apply(population,2,min)
-  upp = apply(population,2,max)
-  low = low-margin*abs(low)
+  low = L.bounds
+  upp = U.bounds
+  #for vuls allow to creep up/down with gamma draws
+  avg = apply(population,2,mean)
+  low[vul.par.idx] <- qgamma(0.01, shape = 2, rate = 2/avg[vul.par.idx])
+  upp[vul.par.idx] <- qgamma(0.99, shape = 2, rate = 2/avg[vul.par.idx])
+  
   low[vul.par.idx] <- ifelse(low[vul.par.idx]<=1.0,1.01,low[vul.par.idx])
-  upp = upp+margin*abs(upp)
+  upp[vul.par.idx] <- ifelse(upp[vul.par.idx]>1e6,1e6,upp[vul.par.idx])
   #back to log scale
   #low = log(low)
   #upp = log(upp)
@@ -717,7 +718,7 @@ mutate <- function(population, margin=0.2) {
         population[i, mask] <- round(runif(sum(mask), low[mask], upp[mask]),4)
   }
   integer.idx <- grep("xbase",par.labels)
-  population[,integer.idx] <- round(mat[,integer.idx])
+  population[,integer.idx] <- round(population[,integer.idx])
   return(population)
 } #eof
 

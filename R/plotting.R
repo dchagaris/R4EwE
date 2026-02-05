@@ -20,7 +20,7 @@
 #' @export
 fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(1,1), 
                                 scaleCatch=FALSE,plt.cols=1:dim(predB)[3],
-                                dir.plts = dir.pred, plot2pdf=TRUE){
+                                dir.plts = dir.pred, plot2pdf=TRUE, run.label=Sys.Date()){
   
   # timestep='annual'
   # scale2run=1
@@ -32,7 +32,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   # plot2pdf=FALSE
   
   xtime = as.numeric(dimnames(predB)[[1]])
-  if(plot2pdf) pdf(file.path(dir.plts,"biomass timeseries fits.pdf"), onefile=T)
+  if(plot2pdf) pdf(file.path(dir.plts,paste0("biomass timeseries fits_",run.label,".pdf")), onefile=T)
   par(mfrow=pltB.dims, mar=c(2,4,2,1), oma=c(4,0,0,1),xpd=F)
   
   for(s in 1:dim(predB)[2]){
@@ -63,7 +63,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   if(plot2pdf) dev.off()
   
   
-  if(plot2pdf) pdf(file.path(dir.plts,"catch timeseries fits.pdf"), onefile=T)
+  if(plot2pdf) pdf(file.path(dir.plts,paste0("catch timeseries fits_",run.label,".pdf")), onefile=T)
   par(mfrow=pltC.dims, mar=c(2,4,2,1))
   predC.agg <- fn.agg_catch_by_group(predC)
   dimnames(predC.agg)

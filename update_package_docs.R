@@ -1,5 +1,6 @@
 getwd()
 #setwd(dirname(getwd()))
+library('devtools')
 
 # Create or update package metadata
 usethis::use_description(fields = list(
@@ -35,6 +36,8 @@ devtools::document()
 devtools::check(vignettes=FALSE)
 
 devtools::build()
+
+devtools::load_all()
 
 install.packages("../R4EwE_0.0.0.9000.tar.gz", repos=NULL, type='source')
 library('R4EwE')

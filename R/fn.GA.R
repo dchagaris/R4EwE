@@ -72,6 +72,13 @@ fn.GA <- function(myconfig){
   gapop <- fn.GApop(usedist=gapop.dist)
   gapop[1,] <- est_par_vec  #include base run in initial population
   
+  # graphics.off();rm(.SavedPlots);windows(record=T)
+  # par(mfrow=c(3,3))
+  # for(i in 1:ncol(gapop)){
+  #   hist(gapop[,i],breaks=50,main=colnames(gapop)[i])
+  #   abline(v=gapop[1,i],col='blue',lty=2)
+  # }
+  
   #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
@@ -130,6 +137,13 @@ fn.GA <- function(myconfig){
     #offspring <- crossover(parents) #offspring are when two parents crossover a part of their parameter vector
     offspring <- crossover_uniform(parents, group_id=par.groups, p_cross=0.8, p_group=0.5)
     offspring <- mutate(offspring, margin=mutate.margin) #randomly draw new parameter values to mutate the individual
+    
+    # graphics.off();rm(.SavedPlots);windows(record=T)
+    # par(mfrow=c(3,3))
+    # for(i in 1:ncol(offspring)){
+    #   hist(offspring[,i],breaks=100,main=colnames(offspring)[i],xlab='value')
+    #   abline(v=est_par_vec[i],col='blue',lty=2)
+    # }
     
     # Evaluate new population
     ensure_cluster()  # optional but recommended
