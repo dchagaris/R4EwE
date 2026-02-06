@@ -52,9 +52,9 @@ fn.STdriver_gif <- function(dir.stdriver=dir.stdriver, do.files=NULL, datestamps
   names(st.rast) = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
   
   #unit conversions
-  #npp: molC/m2/s to gC/m2/yr
+  #npp: molN/m2/s to gN/m2/yr
   st.units<-""
-  if(var.name=='wc_vert_int_npp_cefi') st.rast <- st.rast*(365*24*60*60)*12
+  if(var.name=='wc_vert_int_npp_cefi') st.rast <- st.rast*(365*24*60*60)*14.007
   if(var.name=='wc_vert_int_npp_cefi') st.units <- "gC/m2/yr"
   
   #get limits
