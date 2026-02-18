@@ -1,5 +1,5 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-#fn.runEwE-----------------------------------------------------------------------------------------
+#fn.runEwE
 # fn.runEwE <- function(cmdfile, do.obj = 1) {
 #   #runlist=runlist_sens; i=3; do.obj=T
 #   #create command line and run Ecospace
@@ -38,7 +38,7 @@ fn.runEwE <- function(cmdfile,
                       stdout_target = FALSE,
                       stderr_target = FALSE) {
   
-  # cmdfile=files.cmd
+  # cmdfile=files.cmd[1]
   # do.obj=1
   # console=file.console
   # stdout_target=file.path(dirname(cmdfile),"stdout.txt")
@@ -66,25 +66,25 @@ fn.runEwE <- function(cmdfile,
   )
   
   
-  # If only running the external job, return its status invisibly
-  if (isTRUE(do.obj == 0L)) {
-    if (!identical(status, 0L)) {
-      warning(sprintf("Ecospace returned non-zero exit status: %s", status))
-    }
-    return(invisible(status))
-  }
-  
-  # If we are computing an objective, do it only for successful runs
-  if (!identical(status, 0L)) {
-    warning(sprintf("Ecospace returned non-zero exit status: %s", status))
-    return(NA_real_)
-  }
-  
-  
-  # Optionally warn if non-zero exit status
-   if (!is.numeric(status) || length(status) != 1L || status != 0L) {
-     warning(sprintf("Ecospace returned non-zero exit status: %s", status))
-   }
+  # # If only running the external job, return its status invisibly
+  # if (isTRUE(do.obj == 0L)) {
+  #   if (!identical(status, 0L)) {
+  #     warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+  #   }
+  #   return(invisible(status))
+  # }
+  # 
+  # # If we are computing an objective, do it only for successful runs
+  # if (!identical(status, 0L)) {
+  #   warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+  #   return(NA_real_)
+  # }
+  # 
+  # 
+  # # Optionally warn if non-zero exit status
+  #  if (!is.numeric(status) || length(status) != 1L || status != 0L) {
+  #    warning(sprintf("Ecospace returned non-zero exit status: %s", status))
+  #  }
 
   # Compute objective (must return a single numeric or NA_real_)
   pred_dir <- dirname(cmdfile_path)
@@ -251,6 +251,41 @@ fn.disp_testval_tags = function(disp.base, pct.change=0.5){
   return(tags)
 } #end of function 
 
+#fn.fleetdyn_testval_tags-----
+#' @title Make fleet dynamics parameter taglines for sensitivity runs.
+#' @description Create parameter lines for the command file to test sensitivity of effective power and effort multiplier parameters.
+#' @param fleetdyn.base A dataframe with baseline parameters, exported from EwE and read 
+#' in the setup file.
+#' @param pct.change The percent change to use, 
+#' applied as pct.change x base and (1+pct.change) x base. Default is 0.5 (+/-50%).
+#' @return A character vector containing the parameter taglines for the command file.
+#' @examples
+#' # example code:
+#' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
+#' @export
+fn_fleetdyn_testval_tags <- function(fleetdyn.base, pct.change=0.5){
+  pow.low = pow.hi = fleetdyn.base
+  pow.low$fleet = pow.hi$fleet = as.numeric(row.names(fleetdyn.base))
+  pow.low$effective.power = pow.low$effective.power*pct.change
+  pow.hi$effective.power = pow.hi$effective.power*(1+pct.change)
+  pow = rbind(pow.low[,c('fleet','effective.power')],pow.hi[,c('fleet','effective.power')])
+  pow = pow[order(pow$fleet),]
+  pow$effective.power = round(pow$effective.power,2)
+  tags.pow <- paste0("<ECOSPACE_FLEET_EFFECTIVEPOWER_INDEXED>(",pow$fleet,"), ",pow$effective.power,", Indexed.Single")
+  
+  mult.low = mult.hi = fleetdyn.base
+  mult.low$fleet = mult.hi$fleet = as.numeric(row.names(fleetdyn.base))
+  mult.low$effort.mult = mult.low$effort.mult*pct.change
+  mult.hi$effort.mult = mult.hi$effort.mult*(1+pct.change)
+  mult = rbind(mult.low[,c('fleet','effort.mult')],mult.hi[,c('fleet','effort.mult')])
+  mult = mult[order(mult$fleet),]
+  mult$effort.mult = round(mult$effort.mult,2)
+  tags.mult <- paste0("<ECOSPACE_FLEET_EFFORTMULT_INDEXED>(",mult$fleet,"), ",mult$effort.mult,", Indexed.Single")
+  
+  tags <- c(tags.pow,tags.mult)
+  return(tags)
+} #eof
+
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
 #fn.mediation_testval_tags-----
 #' @title Make mediation shape parameter taglines for sensitivity runs.
@@ -330,6 +365,50 @@ fn.mediation_testval_tags = function(meds.base, do.xbase=TRUE){
   return(meds.out)
 } #eof
 
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
+#fn.envresp_testval_tags-----
+#' @title Make environmental response shape parameter taglines for sensitivity runs.
+#' @description Create parameter lines for the command file to test sensitivity to environmental response shapes.
+#' @param env.base A dataframe with baseline mediation parameters, this has to be created manually.
+#' @return A character vector containing the parameter taglines for the command file.
+#' @examples
+#' # example code:
+#' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
+#' @export
+fn.envresp_testval_tags = function(env.base){
+  #env.base = envpars
+  env.narrow = env.wide = env.base
+  env.out = data.frame()
+  tags <- character()
+  for(i in 1:nrow(env.base)){
+    #i=1
+    #TRAPEZOID....
+    if(env.base$shape.idx[i]==9){
+      pref.range = env.base$par3[i]-env.base$par2[i]
+      #wide
+      env.wide$par2[i] <- (env.base$par2[i]-env.base$par1[i])*.5
+      env.wide$par3[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])*.5
+      #narrow
+      env.narrow$par1[i] <- (env.base$par2[i]-env.base$par1[i])*.5
+      env.narrow$par2[i] <- env.base$par2[i]+(pref.range*.25)
+      env.narrow$par3[i] <- env.base$par3[i]-(pref.range*.25)
+      env.narrow$par4[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])*.5
+      #print(rbind(env.base[i,],env.wide[i,], env.narrow[i,]))
+      tag.wide.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.wide$resp.idx[i],"),",env.wide$type.idx[i], env.wide$par1[i],env.wide$par2[i],env.wide$par3[i],env.wide$par4[i],",Indexed.Single[]")
+      tag.narrow.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.narrow$resp.idx[i],"),",env.narrow$type.idx[i], env.narrow$par1[i],env.narrow$par2[i],env.narrow$par3[i],env.narrow$par4[i],",Indexed.Single[]")
+      tags <- c(tags,tag.wide.i,tag.narrow.i) 
+      #env.out <- rbind(env.out,env.wide[i,],env.narrow[i,])
+      env.out <- rbind(env.out,env.base[i,],env.base[i,])
+    } #end trapezoid  
+    
+   } #end loop
+  env.out$tag <- tags
+  return(env.out)
+} #eof
+
+
+
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 #fn.make_cmd_files----------------------------------------------------------------------------------
 #' @title Make command files.
@@ -368,43 +447,3 @@ fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
     write.table(cmd_i, runlist$cmd_file[i],  row.names = FALSE, col.names = FALSE, quote = FALSE)
   }
 }
-
-
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  
-#fn.envpref_testvals-----
-#' @keywords internal
-#' @noRd
-fn.envpref_testvals <- function(runlist) {
-  # Created an empty tag column
-  runlist$tag <- NA
-  
-  for (i in 1:nrow(runlist)) {
-    if (runlist$shape.type[i] == "trapezoid") {
-      runlist$tag[i] <- paste0(
-        "<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",
-        runlist$responsefxn.number[i], "), ",
-        runlist$shape.type.number[i], " ",
-        runlist$abs.min[i], " ",
-        runlist$pref.min[i], " ",
-        runlist$pref.max[i], " ",
-        runlist$abs.max[i],
-        ", Indexed.Single[]"
-      )
-    } else if (runlist$shape.type[i] == "linear") {
-      runlist$tag[i] <- paste0(
-        "<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",
-        runlist$responsefxn.number[i], "), ",
-        runlist$shape.type.number[i], " ",
-        runlist$abs.min[i], " ",
-        runlist$abs.max[i],
-        ", Indexed.Single[]"
-      )
-    }
-  }
-  
-  return(runlist)
-}
-
-
-
