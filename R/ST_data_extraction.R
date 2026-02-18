@@ -668,14 +668,35 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     var.stack = stack()
     for (t in 1:ntime) {
       #t=1
-      mat <- nc.sub[lon_idx, lat_idx,t] #subset for lat lon
-      mat <- t(mat[, dim(mat)[2]:1])  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
-      r_k <- raster(nrows = nrow_nc, ncols = ncol_nc,
-                    ext = ext_nc, crs = crs(depth))
-      # raster fills values column-wise; t() keeps spatial layout
-      values(r_k) <- as.vector((mat))
+      
+      mat <- nc.sub[lon_idx, lat_idx, t, drop = FALSE][,,1]
+      
+      # flip north-south
+      mat <- mat[, ncol(mat):1]
+      
+      r_k <- raster(
+        nrows = nrow_nc,
+        ncols = ncol_nc,
+        ext   = ext_nc,
+        crs   = crs(depth)
+      )
+      
+      values(r_k) <- as.vector(mat)
+      #plot(r_k)
+      
+      # mat <- nc.sub[lon_idx, lat_idx,t] #subset for lat lon
+      # mat <- t(mat)                 # swap lon,lat → lat,lon
+      # if (lat[1] < lat[length(lat)]){mat <- mat[nrow(mat):1, ]}   # flip latitude only if ascending
+      # 
+      # #mat <- t(mat[, dim(mat)[2]:1])  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
+      # r_k <- raster(nrows = nrow_nc, ncols = ncol_nc,
+      #               ext = ext_nc, crs = crs(depth))
+      # # raster fills values column-wise; t() keeps spatial layout
+      # values(r_k) <- as.vector((mat))
+      
       var.stack <- addLayer(var.stack, r_k)
     }
+    
     names(var.stack) <- nc.times
 
     # ---- Regrid to depth (sq 1/12°) ----
