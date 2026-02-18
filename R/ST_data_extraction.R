@@ -795,18 +795,25 @@ fn.make_monthly_climatology_maps <- function(dir.stdriver=dir.stdriver){
   #read output--------------------------------------------------------------------
   #list ecospace output ascii files
   files.st = list.files(dir.stdriver,full.names = T,recursive=T)#[-c(1:6)]
-  month.id = substr(basename(files.st),nchar(basename(files.st))-5,nchar(basename(files.st))-4)
-  #read them into raster stack
-  st.stack = stack(files.st)
-  #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
-  yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
-  names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+  vars<-unique(basename(dirname(files.st)))
   
-  monthly_means <- stackApply(st.stack, indices = month.id, fun = mean, na.rm = TRUE)
+  for (ivar in vars) {
+      
+    #ivar<-vars[1]
+    ifiles.st<-files.st[grepl(ivar,files.st)]
+    month.id = substr(basename(ifiles.st),nchar(basename(ifiles.st))-5,nchar(basename(ifiles.st))-4)
+    #read them into raster stack
+    st.stack = raster::stack(ifiles.st)
+    #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
+    yrmo = substr(basename(ifiles.st),nchar(basename(ifiles.st))-9,nchar(basename(ifiles.st))-4)
+    names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+    
+    monthly_means <- stackApply(st.stack, indices = month.id, fun = mean, na.rm = TRUE)
+    
+    writeRaster(monthly_means,file.path(dir.stdriver,ivar),bylayer=T,suffix=paste0("9999",sort(unique(month.id))),format='ascii',overwrite=T)
   
-  writeRaster(monthly_means,file.path(dir.stdriver,gsub("_cefi","",basename(dir.stdriver))),bylayer=T,suffix=paste0("9999",sort(unique(month.id))),format='ascii',overwrite=T)
-
-  rm(st.stack); gc()
+    rm(st.stack); gc()
+  }
 }
 
 
