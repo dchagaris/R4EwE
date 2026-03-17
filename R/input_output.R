@@ -11,6 +11,7 @@
 #' @export
 
 fn.read_ecosim_timeseries = function(filename){
+  #filename = file.obsts
   fnm.obs_ts = filename
   obs.ts.head = as.data.frame(t(read.csv(fnm.obs_ts,header=F,nrows=4)))
   names(obs.ts.head) = obs.ts.head[1,]; obs.ts.head = obs.ts.head[-1,]
@@ -129,6 +130,8 @@ fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
     if(timestep=='annual') files.bio = list.files(dir.out,pattern="Ecospace_Annual_Average_Biomass.csv",recursive=T,full.names = T)
     if(timestep=='monthly') files.bio = list.files(dir.out,pattern="Ecospace_Average_Biomass.csv",recursive=T,full.names = T)
     
+    file.bio <- files.bio[grep("Region_0",basename(files.bio))]
+    
     bio = lapply(files.bio,FUN=function(x){
       if(timestep=='annual') nskip = which(substr(readLines(x),1,4)=='Year')-1
       if(timestep=='monthly') nskip = which(substr(readLines(x),1,8)=='TimeStep')-1
@@ -186,6 +189,8 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
   if(n.reg==0){
     if(timestep=='annual') files.cat = list.files(dir.out,pattern="Ecospace_Annual_Average_Catch.csv",recursive=T,full.names = T)
     if(timestep=='monthly') files.cat = list.files(dir.out,pattern="Ecospace_Average_Catch.csv",recursive=T,full.names = T)
+    
+    file.cat <- files.cat[grep("Region_0",basename(files.cat))]
     
     cat = lapply(files.cat,FUN=function(x){
       if(timestep=='annual') nskip = which(substr(readLines(x),1,4)=='Year')-1

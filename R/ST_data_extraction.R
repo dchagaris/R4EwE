@@ -218,13 +218,13 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   #nc.files <- nc.files[which(!grepl("static",basename(nc.files)))]
   if(make.monthly){
   for(i in 1:length(nc.files)){  
-    #i=1
+    #i=3
     nc = nc_open(nc.files[i])
     nc.vars = names(nc$var)
     print(nc.vars)
     nc$dim$time
-    if(i==1) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
-    if(i==2) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='secs')
+    if(i %in% c(1,3)) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
+    if(i %in% c(2,4)) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='secs')
     zthickness <- nc$dim$depth$vals
     
     st.existing <- list.dirs(dir.stdriver,full.names=F,recursive=F)
@@ -244,7 +244,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         brick1 = brick(nc.tmp, crs=crs(depth))
         extent(brick1) = extent(depth)
         ras.v <- resample(rast(brick1),rast(depth))
-        
+        plot(ras.v)
         for(t in 1:nlyr(ras.v)){
           #t=1
           print(paste0(nc.vars[v],"--month ",t," of ",ntimes));flush.console()
@@ -303,9 +303,6 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           }
           
           #mean over water column----
-          
-          # Should show a terra method for SpatRaster
-
           if(!nc.vars[v] %in% c('chl','no3','nppv','phyc')){
             ras.m = mean(rast(brick1),na.rm=T)
             #ras.m = terra::weighted.mean(x=rast(brick1),w=zthickness, na.rm=T)
@@ -336,37 +333,69 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         }
         rm(brick1);gc()
         
+        #change units
+        if(nc.vars[v]=='nppv'){
+          message('changing nppv units from mg C m-3 day-1 to g C m-3 day-1')
+          out.surf <- out.surf/1000
+          out.sum <- out.sum/1000
+        }
+        
+        if(nc.vars[v]=='phyc'){
+          message('changing phyc units from mmol C m-3 to g C m-3')
+          out.surf <- out.surf*.012
+          out.sum <- out.sum*.012
+        }
+        
+        if(nlayers(out.surf)>0) out.surf <- round(out.surf,4)
+        if(nlayers(out.bott)>0) out.bott <- round(out.bott,4)
+        if(nlayers(out.mean)>0) out.mean <- round(out.mean,4)
+        if(nlayers(out.sum)>0) out.sum <- round(out.sum,4)
+        
         if(nlayers(out.surf)>0) names(out.surf) <- paste0("X",format(nc.times,"%Y%m"))
         if(nlayers(out.bott)>0) names(out.bott) <- paste0("X",format(nc.times,"%Y%m"))
         if(nlayers(out.mean)>0) names(out.mean) <- paste0("X",format(nc.times,"%Y%m"))
         if(nlayers(out.sum)>0) names(out.sum) <- paste0("X",format(nc.times,"%Y%m"))
         
+        #depth integration of surface chlorophyll-------------------------------------------------------
+        if(nc.vars[v]=='chl'){
+          message("Creating depth integrated chl from surface chl using Morel and Berthon (1989) equations 2b and 2c")
+          chlos.zint <- out.surf
+          chlos.zint <- raster::calc(chlos.zint,function(x) {ifelse(x < 1.0,
+                                                                    38.0 * x^0.425,  # Eq 2b
+                                                                    40.2 * x^0.507)})  # Eq 2c
+          
+          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_zint_glorys'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(nc.vars[v],'_zint')),bylayer=T,suffix=format(nc.times,"%Y%m"),
+                      format='ascii',overwrite=T)
+        }
+        
         #write ascii------------------------------------------------------------
         if(nlayers(out.surf)>0){
-          dir.out = file.path(dir.stdriver,gsub('_glor','_surf_glorys',nc.vars[v]))
+          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_surf_glorys"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.surf,file.path(dir.out,gsub('_glor','_surf',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.surf,4),file.path(dir.out,nc.vars[v]),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.surf);gc()
         }
         
         if(nlayers(out.bott)>0){
-          dir.out = file.path(dir.stdriver,gsub('_glor','_bott_glorys',nc.vars[v]))
+          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_bott_glorys"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.bott,file.path(dir.out,gsub('_glor','_bott',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.bott,4),file.path(dir.out,gsub('_glor','_bott',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.bott);gc()
         }
         
         if(nlayers(out.mean)>0){
-          dir.out = file.path(dir.stdriver,gsub('_glor','_mean_glorys',nc.vars[v]))
+          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_mean_glorys"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.mean,file.path(dir.out,gsub('_glor','_mean',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.mean,4),file.path(dir.out,gsub('_glor','_mean',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.mean);gc()
         }
         
         if(nlayers(out.sum)>0){
           dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_sum_glorys'))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(out.sum,file.path(dir.out,paste0(nc.vars[v],"_sum")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.sum,4),file.path(dir.out,paste0(nc.vars[v],"_sum")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
           rm(out.sum); gc()
         }
       }
@@ -623,7 +652,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     nc <- nc_open(nc.files[i])
     on.exit(nc_close(nc), add = TRUE)
     nc.vars = names(nc$var)
-    print(nc.vars)
+    message(nc.vars)
     ndims = nc$ndims
     message("- Processing variable ",i," of ",length(nc.files),": ",nc.vars)
     nc.sub <- ncvar_get(nc, var=nc.vars)
@@ -669,15 +698,17 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     for (t in 1:ntime) {
       #t=1
       mat <- nc.sub[lon_idx, lat_idx,t] #subset for lat lon
-      mat <- t(mat[, dim(mat)[2]:1])  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
+      mat <- t(t(mat[, dim(mat)[2]:1]))  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
       r_k <- raster(nrows = nrow_nc, ncols = ncol_nc,
                     ext = ext_nc, crs = crs(depth))
       # raster fills values column-wise; t() keeps spatial layout
       values(r_k) <- as.vector((mat))
+      #plot(r_k)
+      
       var.stack <- addLayer(var.stack, r_k)
     }
     names(var.stack) <- nc.times
-
+var.stack
     # ---- Regrid to depth (sq 1/12°) ----
     # Project CRS if needed
     message("-- Regridding to depth...")
@@ -717,19 +748,57 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
       var.out = addLayer(var.out,raster(ras.s)) #add to stack
       rm(ras.s, ras.s.filled);gc()
     }  
+    
+    #----unit conversions----
+    #convert units of NPP from mol N m-2 s-1 to gC m-2 month-1
+    if(nc.vars=='wc_vert_int_npp'){
+      message("Converting units of NPP from mol N m-2 s-1 to gC m-2 month-1")
+      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      var.out <- var.out*6.625*12*30.5*24*60*60
+    }
+    
+    #convert units of chlos from kg m-3 to mg m-3
+    if(nc.vars=='chlos'){
+      message("Converting units of chlos from kg m-3 to mg m-3")
+      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      var.out <- var.out*1e6
+    }
+    
+    #convert units of oxygen from mol kg-1 to  mmol m-3
+    if(nc.vars=='btm_o2'){
+      message("Converting units of btm_o2 from mol kg-1 to  mmol m-3")
+      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      var.out <- var.out*1000*1025
+    }
+    
+    #----depth integration of surface chlorophyll----
+    if(nc.vars=='chlos'){
+      message("Creating depth integrated chl from surface chl using Morel and Berthon (1989) equations 2b and 2c")
+      chlos.zint <- var.out
+      chlos.zint <- raster::calc(chlos.zint,function(x) {ifelse(x < 1.0,
+                            38.0 * x^0.425,  # Eq 2b
+                            40.2 * x^0.507)})  # Eq 2c
+      
+      dir.out = file.path(dir.stdriver,paste0(nc.vars,'_zint_cefi'))
+      if(!dir.exists(dir.out)) dir.create(dir.out)
+      writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(nc.vars,'_zint')),bylayer=T,suffix=format(nc.times,"%Y%m"),
+                                       format='ascii',overwrite=T)
+    }
 
-    #write ascii------------------------------------------------------------
+    #write ascii------------------------------------------------------------------------------------
     message("-- Writing ascii files...")
     if(nlayers(var.out)>0){
       dir.out = file.path(dir.stdriver,paste0(nc.vars,'_cefi'))
       if(!dir.exists(dir.out)) dir.create(dir.out)
-      writeRaster(var.out,file.path(dir.out,nc.vars),bylayer=T,suffix=format(nc.times,"%Y%m"),format='ascii',overwrite=T)
+      writeRaster(round(var.out,4),file.path(dir.out,nc.vars),bylayer=T,suffix=format(nc.times,"%Y%m"),
+                  format='ascii',overwrite=T)
       rm(var.out);gc()
     }
   }
   }
   
-}
+} #eof
+
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Make static maps from monthly ST files.
 #' @description This stacks all the ascii in stdriver directory and compute long term mean and 
