@@ -53,7 +53,7 @@ fn.makeparvec <- function(
   fltdyn.max=5,
   fltdyn.cv=0.2){
   
-  # do.vuls=TRUE; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4; 
+  # do.vuls=TRUE; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4;
   # do.env=TRUE; env_pars=env_pars; env.min=0.1; env.max=2; env.cv=0.2;
   # do.disp=TRUE; disp_pars=disp_pars; disp.cv=0.2;
   # do.med = FALSE; med_pars = NULL; med.xbase.cv = .1;
@@ -150,7 +150,7 @@ fn.makeparvec <- function(
   if(do.fltdyn){
     #log_disp_vec = log(disp_pars$base.val)
     fleet_vec = fltdyn_pars$base.val
-    par.idx = c(par.idx,rep('fleetdyn',n_disp))
+    par.idx = c(par.idx,rep('fleetdyn',length(fleet_vec)))
     tag.short = ifelse(fltdyn_pars$tag.type=='effective power','pow','mult')
     par.labels = c(par.labels,paste('flt',fltdyn_pars$fleet.idx,tag.short,sep="_"))
     par.groups = c(par.groups,paste('flt',fltdyn_pars$fleet.idx,sep="_"))
