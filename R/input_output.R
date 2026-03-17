@@ -1,5 +1,5 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-#fn.read ecosim timeseries---------------------------------------------------------------------------------------
+#Ecosim observed timeseries---------------------------------------------------------------------------------------
 #' @title Read an ecosim timeseries file.
 #' @description Reads an ecosim timeseries file and parses out the observed (non-forcing) components
 #' @param filename The location of the Ecosim timeseries file.
@@ -30,6 +30,85 @@ fn.read_ecosim_timeseries = function(filename){
 }
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#Ecosim output to arrays---------------------------------------------------------------------------------  
+#' @title Read Ecosim predicted biomass timeseries output.
+#' @description Reads biomass timeseries output csv into an array.
+#' @param dir.out Output directory.  All .csv biomass files created with Ecospace naming conventions 
+#' in this directory will be read.  Can be a vector of directories.
+#' @param timestep Read 'annual' or 'monthly' data.
+#' @return An array of biomass output with dimensions (nyrs,ngrps,nregions,nruns)
+#' #examples
+#' #example code:
+#' predB <- fn.ecospace_predB_ts2array (dir.out="./output/", timestep='annual',n.reg=0)
+#' @export
+fn.ecosim_predB_ts2array = function(dir.out=dir.pred, timestep='annual'){
+  
+  if(timestep=='annual') files.bio = list.files(dir.out,pattern="^biomass_annual.csv",recursive=T,full.names = T)
+  if(timestep=='monthly') files.bio = list.files(dir.out,pattern="^biomass_monthly.csv",recursive=T,full.names = T)
+  
+  x = list.files(dir.out,pattern="^biomass_annual.csv",recursive=T,full.names = T)[1]
+  nskip = which(tolower(substr(readLines(x),1,4))=='year')-1  
+  styear <- as.numeric(read.csv(x, as.is=T, skip=nskip)[1,1])
+  
+  bio = lapply(files.bio,FUN=function(x){
+      if(timestep=='annual') nskip = which(tolower(substr(readLines(x),1,4))=='year')-1
+      if(timestep=='monthly') nskip = which(tolower(substr(readLines(x),1,8))=='timeStep')-1
+      read.csv(x, as.is=T, skip=nskip, row.names=1)
+    })
+    
+  bio.array = array(dim=c(dim(bio[[1]])[1],dim(bio[[1]])[2],length(files.bio)),
+                    dimnames=list(rownames(bio[[1]]),names(bio[[1]]),basename(dirname(files.bio))))
+  for(r in 1:length(bio)){
+    tmp = as.matrix(bio[[r]])
+    bio.array[,,r] <- tmp
+  }
+  
+  if(timestep=='monthly') dimnames(bio.array)[[1]] <- length(seq(styear,(styear+dim(bio.array)[1]-1/12),1/12))
+  return(bio.array)
+}
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#Ecosim output to arrays---------------------------------------------------------------------------------  
+#' @title Read Ecosim predicted catch timeseries output.
+#' @description Reads catch timeseries output csv, sums over fleets for each species, and puts into 
+#' an array.
+#' @param dir.out Output directory.  All .csv catch files created with Ecospace naming conventions 
+#' in this directory will be read. Can be a vector of directories.
+#' @param timestep Read 'annual' or 'monthly' data.
+#' @return An array of catch output with dimensions (nyrs,ngrps,nregions,nruns)
+#' #examples
+#' #example code:
+#' predB <- fn.ecospace_predB_ts2array (dir.out="./output/", timestep='annual',n.reg=0)
+#' @export
+fn.ecosim_predC_ts2array = function(dir.out=dir.out, timestep='annual'){
+    if(timestep=='annual') files.cat = list.files(dir.out,pattern="^catch_annual.csv",recursive=T,full.names = T)
+    if(timestep=='monthly') files.cat = list.files(dir.out,pattern="^catch_monthly.csv",recursive=T,full.names = T)
+    
+    x = list.files(dir.out,pattern="^catch_annual.csv",recursive=T,full.names = T)[1]
+    nskip = which(tolower(substr(readLines(x),1,4))=='year')-1  
+    styear <- as.numeric(read.csv(x, as.is=T, skip=nskip)[1,1])
+    
+    cat = lapply(files.cat,FUN=function(x){
+      if(timestep=='annual') nskip = which(tolower(substr(readLines(x),1,4))=='year')-1
+      if(timestep=='monthly') nskip = which(tolower(substr(readLines(x),1,8))=='timeStep')-1
+      read.csv(x, as.is=T, skip=nskip, row.names=1, check.names=F)
+    })
+    cat.array = array(dim=c(dim(cat[[1]])[1],dim(cat[[1]])[2],length(files.cat)),
+                      dimnames=list(rownames(cat[[1]]),names(cat[[1]]),basename(dirname(files.cat))))
+    for(r in 1:length(cat)){
+      tmp = as.matrix(cat[[r]])
+      cat.array[,,r] <- tmp
+    }
+  
+  #if(timestep=='annual') dimnames(cat.array)[[1]] <- styear:(styear+dim(cat.array)[1]-1)
+  if(timestep=='monthly') dimnames(cat.array)[[1]] <- length(seq(styear,(styear+dim(cat.array)[1]-1/12),1/12))
+  return(cat.array)
+}#eof
+
+
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #Ecospace output to arrays---------------------------------------------------------------------------------  
 #' @title Read Ecospace predicted biomass timeseries output.
 #' @description Reads biomass timeseries output csv into an array.
@@ -42,6 +121,7 @@ fn.read_ecosim_timeseries = function(filename){
 #' #example code:
 #' predB <- fn.ecospace_predB_ts2array (dir.out="./output/", timestep='annual',n.reg=0)
 #' @export
+
 fn.ecospace_predB_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=0){
   
   #dir.out = "C:/NWACS MICE/GA output 2026-01-06/GA_Run_20260106_114454/run_00abeb6e03a8897940ee4aa45b593526"
