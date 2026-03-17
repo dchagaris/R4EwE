@@ -128,6 +128,7 @@ fn.runEwE.parallel <-  function(
     obj.fxn=1, 
     cl.export = list("runlist", "obs.ts")
 ){
+  #runlist=runlist[runlist$tag.type=='environmental response',]
   #source(file.setup)
   t1 <- Sys.time()
   cl <- makeSOCKcluster(detectCores()-1)
@@ -376,7 +377,7 @@ fn.mediation_testval_tags = function(meds.base, do.xbase=TRUE){
 #' # example code:
 #' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 #' @export
-fn.envresp_testval_tags = function(env.base){
+fn.envresp_testval_tags = function(env.base, fact=2){
   #env.base = envpars
   env.narrow = env.wide = env.base
   env.out = data.frame()
@@ -387,16 +388,16 @@ fn.envresp_testval_tags = function(env.base){
     if(env.base$shape.idx[i]==9){
       pref.range = env.base$par3[i]-env.base$par2[i]
       #wide
-      env.wide$par2[i] <- (env.base$par2[i]-env.base$par1[i])*.5
-      env.wide$par3[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])*.5
+      env.wide$par2[i] <- (env.base$par2[i]-env.base$par1[i])/fact
+      env.wide$par3[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])/fact
       #narrow
-      env.narrow$par1[i] <- (env.base$par2[i]-env.base$par1[i])*.5
-      env.narrow$par2[i] <- env.base$par2[i]+(pref.range*.25)
-      env.narrow$par3[i] <- env.base$par3[i]-(pref.range*.25)
-      env.narrow$par4[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])*.5
+      env.narrow$par1[i] <- (env.base$par2[i]-env.base$par1[i])/fact
+      env.narrow$par2[i] <- env.base$par2[i]+(pref.range*(1/fact)^2)
+      env.narrow$par3[i] <- env.base$par3[i]-(pref.range*(1/fact)^2)
+      env.narrow$par4[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])/fact
       #print(rbind(env.base[i,],env.wide[i,], env.narrow[i,]))
-      tag.wide.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.wide$resp.idx[i],"),",env.wide$type.idx[i], env.wide$par1[i],env.wide$par2[i],env.wide$par3[i],env.wide$par4[i],",Indexed.Single[]")
-      tag.narrow.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.narrow$resp.idx[i],"),",env.narrow$type.idx[i], env.narrow$par1[i],env.narrow$par2[i],env.narrow$par3[i],env.narrow$par4[i],",Indexed.Single[]")
+      tag.wide.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.wide$resp.idx[i],"),",env.wide$shape.idx[i], env.wide$par1[i],env.wide$par2[i],env.wide$par3[i],env.wide$par4[i],",Indexed.Single[]")
+      tag.narrow.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.narrow$resp.idx[i],"),",env.narrow$shape.idx[i], env.narrow$par1[i],env.narrow$par2[i],env.narrow$par3[i],env.narrow$par4[i],",Indexed.Single[]")
       tags <- c(tags,tag.wide.i,tag.narrow.i) 
       #env.out <- rbind(env.out,env.wide[i,],env.narrow[i,])
       env.out <- rbind(env.out,env.base[i,],env.base[i,])
@@ -406,8 +407,6 @@ fn.envresp_testval_tags = function(env.base){
   env.out$tag <- tags
   return(env.out)
 } #eof
-
-
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 #fn.make_cmd_files----------------------------------------------------------------------------------

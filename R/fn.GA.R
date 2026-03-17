@@ -75,11 +75,11 @@ fn.GA <- function(myconfig){
   gapop[1,] <- est_par_vec  #include base run in initial population
   write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
-  pdf(file.path(dir.ga_results,paste0('init_ga_pop_distributions',timestamp,'.pdf')),onefile=T)
+  pdf(file.path(dir.ga_results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
   #graphics.off();rm(.SavedPlots);windows(record=T)
   par(mfrow=c(3,3))
-  for(i in 1:ncol(mat)){
-    hist(mat[,i],breaks=100,main=colnames(mat)[i],xlab='value')
+  for(i in 1:ncol(gapop)){
+    hist(gapop[,i],breaks=100,main=colnames(gapop)[i],xlab='value')
     abline(v=est_par_vec[i],col='blue',lty=2)
   }
   dev.off()
@@ -88,7 +88,7 @@ fn.GA <- function(myconfig){
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
   fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=F)
-  
+
   #calculate penalty for parameter bounds violations
   if(do.penalty){
     pen.wt = abs(diff(range(fitness)))*pen.wt.mult
@@ -115,7 +115,7 @@ fn.GA <- function(myconfig){
   #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
   #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
   
-  for (gen in 2:n_generations) {
+  for (gen in 1:n_generations) {
     #gen=1
     if(gen==1) unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
     
