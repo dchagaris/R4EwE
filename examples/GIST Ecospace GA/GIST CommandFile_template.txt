@@ -1,0 +1,95 @@
+Parameter.file.supplied.to.the.command.line.of.EcospaceConsole
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+FORMAT
+Coma delimited Parameter file for EcospaceConsole.
+Lines that do not start with a recognised TAG will be ignored.
+Recognized TAG's need to be braced with a closing and opening angle brackets
+If an expected TAG is not found, it was missing or there is a typo, the varible will be left at the database value and a waring will be written to the console window.
+The first three columns contain data in the format, TAG, Value, Variable Type, comments can be added in the forth column.
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TAG =  ECOSPACE_ENVIRONMENTAL_RESPONSE_STRING
+Response function enumerators 
+use to set the response function type in 
+ Public Enum eShapeFunctionType As Long
+        NotSet = 0
+        Linear = 1
+        Sigmoid_Legacy = 2
+        Hyperbolic = 3
+        Exponential = 4
+        Betapdf = 5
+        Normal = 6
+        RightShoulder = 7
+        LeftShoulder = 8
+        Trapezoid = 9
+        Sigmoid = 10
+        Logistic4Params = 11
+    End Enum
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TAG = MODEL_RUN_TYPE
+Enumerator for type of EwE Run    
+Public Enum eModelTypes As Integer
+    NotSet = 0
+    Ecospace = 1
+    NGOMEXEcospace = 2
+    EcospaceMonteCarlo = 3
+    Ecosim = 4
+End Enum
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+-----Inputs model and spatail temporal config-----
+<EWE_MODEL_FILE>, C:\Users\msw200\OneDrive - University of Miami\Documents\Ecopath\GIST\Model\GIST_to calibrate.eweaccdb, System.String
+<SPATIAL_CONFIG_FILE>, C:\Users\msw200\OneDrive - University of Miami\Documents\Ecopath\GIST\Model\GISTSTConfig.xml, System.String
+
+-----Scenarios and Ecospace run type-----
+<MODEL_RUN_TYPE>, 1, System.Int32, Type of run 1 is a normal Ecospace Run, 2 is NGOMEX scenarios, 3 is Ecospace MonteCarlo
+<ECOSIM_SCENARIO_INDEX>, 1, System.Int32
+<ECOSPACE_SCENARIO_INDEX>, 1, System.Int32
+<SPATIAL_ENABLED>, True, System.Boolean, Use the spatial temporal framework
+<ECOSPACE_USE_IBM>, False, System.Boolean
+<ECOSPACE_USE_MULTISTANZA>, True, System.Boolean
+<N_ECOSPACE_TIMESTEPS_YEAR>, 12, System.Int32
+<ECOSPACE_USE_SPINUP>, True, System.Boolean
+<ECOSPACE_SPINUP_LENGTH>, 10, System.Int32
+<N_ECOSPACE_YEARS>, 37, System.Int32, Run length in years
+
+-----Output and saving-----
+<ECOSPACE_USE_CORE_OUPUT_DIR>, False, System.Boolean
+<ECOSPACE_OUTPUT_DIR>, C:\Users\msw200\OneDrive - University of Miami\Documents\Ecopath\GIST\Calibration\Output, System.String
+<ECOSPACE_USE_ANNUAL_OUTPUT>, True, System.Boolean, Output monthly maps and spatially averaged .csv files
+<ECOSPACE_SAVE_AVERAGED_BIOMASS>, True, System.Boolean, Save the spatially averaged biomass .csv file (time series)
+<ECOSPACE_SAVE_MAP_BIOMASS>, False, System.Boolean
+<MO_SAVE_MAP_BIOMASS>, False, System.Boolean
+<ECOSPACE_FIRST_OUTPUT_TIMESTEP>, 1, System.Int32
+<ECOSPACE_SAVE_THREAD_LOG>,False, System.Boolean, Save the thread timing log in the same directory as the model. This will be the model name with _log_ThreadTiming.txt appended
+
+-----Threads-----
+<N_BIOMASS_THREADS>, 15, System.Int32, number of thread to run trophic model on
+<N_GRID_THREADS>, 15, System.Int32, number of thread to run movement on
+<N_EFFORT_DIST_THREADS>, 15, System.Int32, number of thread to run fishing effort distribution on
+<N_IBM_MOVEMENT_THREADS>, 15, System.Int32, number of threads to run IBM movement on. This will default to the number of cores on the system.
+
+-----Vulnerabilities-----
+//<ECOSIM_VULNERABILITIES_INDEXED>(1),999.9, Indexed.Single
+//The indexed parameter refers to the predator column.
+//For setting all the prey vulnerabilities in the predator 1 column to 999.9
+
+//<ECOSIM_VULNERABILITIES_INDEXED>(1 2),999.9, Indexed.Single
+//The two indexes refer to the predator then prey groups.
+//For setting predator 1 and prey 2 to 999.9, group indexes are space separated.
+
+-----Dispersal-----
+//<ECOSPACE_DISPERSAL_RATE_INDEXED>(1),666.666, Indexed.Single
+//Set the first groups dispersal rate to 666.666
+
+-----Environmental Responses-----
+//<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(3),10 0 666 333 555 0 1,Indexed.Single[]
+//This would set the third shape to Sigmoid [10] with the parameters, x min=0, x max = 666, x mid 333, x opt = 555, steep = 0, y max =1
+
+-----Applied tag lines-----
+
+
+

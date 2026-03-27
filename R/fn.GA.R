@@ -39,6 +39,7 @@ fn.GA <- function(myconfig){
   gapop.vuldist <<- myconfig$gapop.vuldist
   mutate.margin <<- myconfig$mutate.margin
   dir.results <<- myconfig$dir.ga_results
+  bug <- myconfig$bug
   #small test change here
   
   #create results file
@@ -55,7 +56,7 @@ fn.GA <- function(myconfig){
   #base run
   files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
   message('Running the base model')
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)  
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1,bug=bug)  
   
   #pipe output
   g=-1
@@ -75,7 +76,7 @@ fn.GA <- function(myconfig){
   gapop[1,] <- est_par_vec  #include base run in initial population
   write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
-  pdf(file.path(dir.ga_results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
+  pdf(file.path(dir.results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
   #graphics.off();rm(.SavedPlots);windows(record=T)
   par(mfrow=c(3,3))
   for(i in 1:ncol(gapop)){
@@ -87,7 +88,7 @@ fn.GA <- function(myconfig){
   #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=F)
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=F,bug=bug)
 
   #calculate penalty for parameter bounds violations
   if(do.penalty){
@@ -154,7 +155,7 @@ fn.GA <- function(myconfig){
     ensure_cluster()  # optional but recommended
     files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i)) 
     files.cmd <- unlist(files.cmd, use.names=F)
-    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.output=T)
+    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.output=T,bug=bug)
     
     #calculate penalty for parameter bounds violations
     # pen.wt = abs(diff(range(fitness)))*0.1
