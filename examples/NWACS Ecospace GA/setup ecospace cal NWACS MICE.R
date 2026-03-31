@@ -1,6 +1,6 @@
-rm(list=ls())
+# rm(list=ls())
 library('dplyr'); library('reshape2'); library('tidyr'); library('stringr'); library('foreach')
-library('PBSmodelling'); library('snowfall'); library('parallel'); library('snow'); 
+library('PBSmodelling'); library('snowfall'); library('parallel'); library('snow');
 library('doSNOW'); library('openxlsx'); library('tcltk')
 library('plyr')
 library('digest')
@@ -21,8 +21,7 @@ source("C:\\dchagaris\\GitHub\\R4EwE\\R\\input_output.R")
 source("C:\\dchagaris\\GitHub\\R4EwE\\R\\utils.R")
 source("C:\\dchagaris\\GitHub\\R4EwE\\R\\plotting.R")
 source("C:\\dchagaris\\GitHub\\R4EwE\\R\\R_Ecospace_GA_calibration.R")
-
-getwd()
+source("C:\\dchagaris\\GitHub\\R4EwE\\R\\fn.GA.R")
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #USER INPUT---------------------------------------------------------------------
@@ -31,32 +30,39 @@ dir.main <- getwd()
 dir.ewe <- dirname(dir.main)
 dir.out <- paste0("C:/NWACS MICE/GA output ",Sys.Date())
 dir.runs <- list.dirs(dir.out, recursive=F)
+dir.ga_results <- file.path(dir.main,'ga_results')
 dir.obsmaps <- file.path(dir.main,'obs spatial data')
 
-file.console <- "C:/Program Files/EcoSpace Console 1.4.3.1 64-bit/EwEClientConsole.exe"
+file.console <- "C:/Program Files/EcoSpace Console 1.4.4.0 64-bit/EwEClientConsole.exe"
+file.obsts <- paste0(dir.ewe,"/ts1_1985_2023_annual_effort forcing.csv")
 
-#file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_30min.txt")
-file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_15min.txt")
-#file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_5min.txt")
+#30 min: start with base run pars
+file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-02-19_30min.rds")
+file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_30min.txt")
+file.basevul <- paste0(dir.ewe,"/NWACS MICE v3.3-Vulnerabilities_base.csv")
+file.basedisp <- paste0(dir.ewe,"/NWACS MICE v3.3-Dispersal_base.csv")
+file.envpars <- paste0(dir.ewe,"/NWACS MICE v3.3-Functional responses pars.csv")
+file.fleetdyn <- paste0(dir.ewe,"/NWACS MICE v3.3-Fleet dynamics_base.csv")
 
-file.basevul <- paste0(dir.ewe,"/NWACS MICE v3.3-Vulnerabilities.csv")
-#file.basevul <- paste0(dir.ewe,"/NWACS MICE v3.3-Vulnerabilities_gafit_30min.csv")
+
+#15 min: start with 30 min estimates
+# file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-02-04_15min.rds")
+# file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_15min.txt")
+# file.basevul <- paste0(dir.main,"/vuls_ga_final_20260203_182641_30min.csv")
+# file.basedisp <- paste0(dir.main,"/disp_ga_final_20260203_182641_30min.csv")
+
+# #5 min: start with 15 min estimates
+# file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-02-04_5min.rds")
+# file.cmdbase <- paste0(dir.main,"/NWACS MICE CommandFile_template_5min.txt")
+# file.basevul <- paste0(dir.main,"/vuls_ga_final_20260204_132813_15min.csv")
+# file.basedisp <- paste0(dir.main,"/disp_ga_final_20260204_132813_15min.csv")
+
+
 #file.basevul <- paste0(dir.ewe,"/NWACS MICE v3.3-Vulnerabilities_gafit_15min.csv")
 #file.basevul <- paste0(dir.main,"/vuls_ga_final_20260115_182355_30min.csv")
-#file.basevul <- paste0(dir.main,"/vuls_ga_final_20260116_084256_15min.csv")
-
-
-file.basedisp <- paste0(dir.ewe,"/NWACS MICE v3.3-Dispersal.csv")
-#file.basedisp <- paste0(dir.ewe,"/NWACS MICE v3.3-Dispersal_gafit_30min.csv")
 #file.basedisp <- paste0(dir.ewe,"/NWACS MICE v3.3-Dispersal_gafit_15min.csv")
 #file.basedisp <- paste0(dir.main,"/disp_ga_final_20260115_182355_30min.csv")
-#file.basedisp <- paste0(dir.main,"/disp_ga_final_20260116_084256_15min.csv")
 
-#file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-01-09_30min.rds")
-file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-01-14_15min.rds")
-#file.parsens <- paste0(dir.ewe,"/sensitivity/runlistLL 2026-01-14_5min.rds")
-
-file.obsts <- paste0(dir.ewe,"/ts1_1985_2023_annual_effort forcing.csv")
 
 #clear contents of output folders
 del.oldout <- F  #deletes output from previous days' runs.
@@ -70,8 +76,12 @@ styear <- 1985
 enyear <- 2023
 nyrs <- enyear - styear + 1
 
-##n most parameters to estimate----
+##n parameters to estimate----
 n_parsens = 34
+
+##types of parameters to estimate----
+est_par_types <- c('vul','disp','med','env','flt')
+est_par_types <- est_par_types[c(1,5)]
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #PROCESSING---------------------------------------------------------------------
@@ -118,16 +128,39 @@ preprey <- fn.longvuls(vuls.base)
 # predprey$basevul = NULL
 # predprey = predprey[,2:1]
 
-##get most sensitive pars
-if(n_parsens>0){
-runlist.LL = readRDS(file.parsens)
-#runlist.LL[,c(1:3,5,which(names(runlist.LL)=='LL.total'):ncol(runlist.LL))] = lapply(runlist.LL[,c(3:6,9,which(names(runlist.LL)=='LL.total'):ncol(runlist.LL))],as.numeric)
-runlist.LL$delta.LL = abs(runlist.LL$LL.total-runlist.LL$LL.total[runlist.LL$run.num==0])
-runlist.LL = runlist.LL[order(-runlist.LL$delta.LL),]
-runlist.LL$dup = duplicated(runlist.LL[,c('prey','pred')])
-if(length(which(runlist.LL$dup))>0) runlist.LL = runlist.LL[-which(runlist.LL$dup),]
-parsens.topN = unique(runlist.LL[1:n_parsens,c('prey','pred','base.val','run.num','tag.type','LL.total','delta.LL')])#c(4,5,1:3)])
-}
+#fleet dynamics
+fleetdyn.base <- read.csv(file.fleetdyn)
+names(fleetdyn.base) <- c('fleet.idx','fleet','effective.power','effort.mult')
+
+#environmental response pars
+envpars.base <- read.csv(file.envpars, row.names=1)
+envpars.base$shape.idx <- ifelse(envpars.base$shape=='linear',1,
+                          ifelse(envpars.base$shape=='sigmoid_legacy',2,
+                          ifelse(envpars.base$shape=='hyperbolic',3,
+                          ifelse(envpars.base$shape=='exponential',4,
+                          ifelse(envpars.base$shape=='betapdf',5,
+                          ifelse(envpars.base$shape=='normal',6,
+                          ifelse(envpars.base$shape=='rightshoulder',7,
+                          ifelse(envpars.base$shape=='leftshoulder',8,
+                          ifelse(envpars.base$shape=='trapezoid',9,
+                          ifelse(envpars.base$shape=='sigmoid',10,
+                          ifelse(envpars.base$shape=='logistic4params',11,0)))))))))))
+
+
+# ##get most sensitive pars
+# names(runlist.LL)
+# if(n_parsens>0){
+# runlist.LL = readRDS(file.parsens)
+# names(runlist.LL)[which(names(runlist.LL)=='type')] <- 'shape'
+# runlist.LL$shape.idx = 9
+# #runlist.LL[,c(1:3,5,which(names(runlist.LL)=='LL.total'):ncol(runlist.LL))] = lapply(runlist.LL[,c(3:6,9,which(names(runlist.LL)=='LL.total'):ncol(runlist.LL))],as.numeric)
+# runlist.LL$delta.LL = abs(runlist.LL$LL.total-runlist.LL$LL.total[runlist.LL$run.num==0])
+# runlist.LL = runlist.LL[order(-runlist.LL$delta.LL),]
+# names(runlist.LL)
+# runlist.LL$dup = duplicated(runlist.LL[,c('prey','pred','tag.type','fleet.idx','resp.idx')])
+# if(length(which(runlist.LL$dup))>0) runlist.LL = runlist.LL[-which(runlist.LL$dup),]
+# parsens.topN = unique(runlist.LL[1:n_parsens,c('run.num','tag.type','prey','pred','fleet.idx','resp.idx','resp.name','shape','shape.idx','base.val','par1','par2','par3','par4','LL.total','delta.LL')])#c(4,5,1:3)])
+# }
 
 
 ##load reference data-----
@@ -137,20 +170,20 @@ obs.ts$obsB.head$weight[obs.ts$obsB.head$weight==10] = 1
 obs.ts$obsC.head$weight[obs.ts$obsC.head$weight==10] = 1
 
 #read observed raster stacks
-files.rasters = gsub(".gri","",list.files(dir.obsmaps, pattern='.gri$', full.names=T, recursive=F))
-obs.maps <- stack(files.rasters)
-names(obs.maps)
-names(obs.maps) <- paste0(names(obs.maps),"_",rep(c(12,5,8,6,3,10),2))
-
-strsplit(names(obs.maps),split="_")
-season = matrix(unlist(strsplit(names(obs.maps),split="_")),ncol=3,byrow=T)[,2]
-grpnum = matrix(unlist(strsplit(names(obs.maps),split="_")),ncol=3,byrow=T)[,3]
-
-obs.maps.meta <- data.frame(layername = names(obs.maps),
-                            source = basename(files.rasters),
-                            yr.start = ifelse(basename(files.rasters)=='NEFSC sdm rasters', 2010 ,NA),
-                            yr.end = ifelse(basename(files.rasters)=='NEFSC sdm rasters', 2019 ,NA),
-                            mo.start = ifelse(season=='FALL',9,ifelse(season=='SPRING',3,NA)),
-                            mo.end = ifelse(season=='FALL',11,ifelse(season=='SPRING',5,NA)),
-                            grp.num = grpnum)
+# files.rasters = gsub(".gri","",list.files(dir.obsmaps, pattern='.gri$', full.names=T, recursive=F))
+# obs.maps <- stack(files.rasters)
+# names(obs.maps)
+# names(obs.maps) <- paste0(names(obs.maps),"_",rep(c(12,5,8,6,3,10),2))
+# 
+# strsplit(names(obs.maps),split="_")
+# season = matrix(unlist(strsplit(names(obs.maps),split="_")),ncol=3,byrow=T)[,2]
+# grpnum = matrix(unlist(strsplit(names(obs.maps),split="_")),ncol=3,byrow=T)[,3]
+# 
+# obs.maps.meta <- data.frame(layername = names(obs.maps),
+#                             source = basename(files.rasters),
+#                             yr.start = ifelse(basename(files.rasters)=='NEFSC sdm rasters', 2010 ,NA),
+#                             yr.end = ifelse(basename(files.rasters)=='NEFSC sdm rasters', 2019 ,NA),
+#                             mo.start = ifelse(season=='FALL',9,ifelse(season=='SPRING',3,NA)),
+#                             mo.end = ifelse(season=='FALL',11,ifelse(season=='SPRING',5,NA)),
+#                             grp.num = grpnum)
 

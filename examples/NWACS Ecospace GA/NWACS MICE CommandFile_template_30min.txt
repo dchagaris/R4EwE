@@ -41,13 +41,13 @@ End Enum
 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 -----Inputs model and spatail temporal config-----
-<EWE_MODEL_FILE>, C:\Users\dchagaris\OneDrive - University of Florida\Atlantic menhaden\NWACS-MICE\Ecospace\NWACS MICE v3.3 67019.eweaccdb, System.String
-<SPATIAL_CONFIG_FILE>, C:\Users\dchagaris\OneDrive - University of Florida\Atlantic menhaden\NWACS-MICE\Ecospace\ST drivers\15min\NWACS MICE 15min ST config.xml, System.String
+<EWE_MODEL_FILE>, C:\Users\dchagaris\OneDrive - University of Florida\Atlantic menhaden\NWACS-MICE\Ecospace\NWACS MICE v3.3 67020.eweaccdb, System.String
+<SPATIAL_CONFIG_FILE>, C:\Users\dchagaris\OneDrive - University of Florida\Atlantic menhaden\NWACS-MICE\Ecospace\ST drivers\30min\NWACS MICE 30min ST config.xml, System.String
 
 -----Scenarios and Ecospace run type-----
 <MODEL_RUN_TYPE>, 1, System.Int32, Type of run 1 is a normal Ecospace Run, 2 is NGOMEX scenarios, 3 is Ecospace MonteCarlo
 <ECOSIM_SCENARIO_INDEX>, 1, System.Int32
-<ECOSPACE_SCENARIO_INDEX>, 2, System.Int32
+<ECOSPACE_SCENARIO_INDEX>, 1, System.Int32
 <SPATIAL_ENABLED>, True, System.Boolean, Use the spatial temporal framework
 <ECOSPACE_USE_IBM>, False, System.Boolean
 <ECOSPACE_USE_MULTISTANZA>, True, System.Boolean
