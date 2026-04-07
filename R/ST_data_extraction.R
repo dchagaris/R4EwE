@@ -50,9 +50,11 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
   time.range = as.Date(as.POSIXct(time.millisec/1000, origin=basetime, tz="UTC"))
   
   ##query the data----
-  if(as.Date(startdate)<time.range[2]){
-    startdate1 = max(as.Date(startdate),time.range[1])
-    enddate1 = min(as.Date(enddate),time.range[2])
+  startdate.d <- startdate[which(names(startdate)==datid.phy)]
+  enddate.d <- enddate[which(names(enddate)==datid.phy)]
+  if(as.Date(startdate.d)<time.range[2]){
+    startdate1 = max(as.Date(startdate.d),time.range[1])
+    enddate1 = min(as.Date(enddate.d),time.range[2])
     command <- paste(
       shQuote(path.copernicusmarine),
       "subset",
@@ -87,10 +89,13 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
   time.millisec = range(json.data$products$datasets[[1]]$versions[[1]]$parts[[1]]$services[[1]]$variables[[1]]$coordinates[[1]]$values[[1]])
   time.range = as.Date(as.POSIXct(time.millisec/1000, origin=basetime, tz="UTC"))
   time.range
+  
   ##query the data----
-  if(as.Date(startdate)<time.range[2]){
-    startdate1 = max(as.Date(startdate),time.range[1])
-    enddate1 = min(as.Date(enddate),time.range[2])
+  startdate.d <- startdate[which(names(startdate)==datid.bgc)]
+  enddate.d <- enddate[which(names(enddate)==datid.bgc)]
+  if(as.Date(startdate.d)<time.range[2]){
+    startdate1 = max(as.Date(startdate.d),time.range[1])
+    enddate1 = min(as.Date(enddate.d),time.range[2])
     
     command <- paste(
       shQuote(path.copernicusmarine),
@@ -159,7 +164,170 @@ fn.pull_glorys <- function(dir.out=dir.glorys,
   system(command)
 }
 }
-#Process Netcdf files-----------------------------------------------------------
+
+
+
+#' Append two CMEMS GLORYS monthly NetCDF files along time
+#'
+#' @description
+#' Appends a newer CMEMS GLORYS monthly NetCDF file to an older one along the
+#' \code{time} dimension and writes out a single merged NetCDF file.
+#'
+#' The two input files are assumed to be identical in structure (variables,
+#' dimensions, metadata) and to differ only in their time coverage.
+#'
+#' All data variables are appended automatically; coordinate variables
+#' (longitude, latitude, depth, time) are preserved from the original file.
+#'
+#' @param old_file Character string giving the file path to the older NetCDF file.
+#' @param new_file Character string giving the file path to the newer NetCDF file.
+#'
+#' @details
+#' The function performs basic compatibility checks on variable and dimension names.
+#' Data are appended along the time dimension, which is assumed to be the last
+#' dimension for all variables (as is standard for CMEMS GLORYS monthly products).
+#'
+#' Variables are processed one at a time to limit memory usage.
+#'
+#' @return
+#' Invisibly returns the path to the output file (\code{out_file}).
+#'
+#' @seealso
+#' \code{\link[ncdf4]{nc_open}}, \code{\link[ncdf4]{nc_create}},
+#' \code{\link[abind]{abind}}
+#'
+#' @examples
+#' \dontrun{
+#' append_glorys_monthly_nc(
+#'   old_file = "glorys_monthly_1993_2015.nc",
+#'   new_file = "glorys_monthly_2016_2024.nc",
+#'   out_file = "glorys_monthly_1993_2024.nc"
+#' )
+#' }
+#'
+#' @export
+fn.append_netcdf_glorys <- function(old_file, new_file) {
+  
+  #old_file <- file.path(dir.glorys,inventory$file[1])
+  #new_file <- file.path(dir.glorys,files.nc[2])
+  out_file <- file.path(dirname(old_file),
+                        paste0(substr(basename(old_file),1,nchar(basename(old_file))-13),
+                               substr(basename(new_file),nchar(basename(new_file))-12,nchar(basename(new_file)))))
+  
+  stopifnot(file.exists(old_file), file.exists(new_file))
+  
+  library(ncdf4)
+  library(abind)
+  
+  # Open files----
+  nc_old <- nc_open(old_file)
+  nc_new <- nc_open(new_file)
+  
+  on.exit({
+    try(nc_close(nc_old), silent = TRUE)
+    try(nc_close(nc_new), silent = TRUE)
+  })
+  
+  # Basic compatibility checks----
+  if (!identical(names(nc_old$var), names(nc_new$var))) {
+    stop("Variable names do not match between NetCDF files.")
+  }
+  
+  if (!identical(names(nc_old$dim), names(nc_new$dim))) {
+    stop("Dimension names do not match between NetCDF files.")
+  }
+  
+  # Time----
+  time_old <- ncvar_get(nc_old, "time")
+  time_new <- ncvar_get(nc_new, "time")
+  
+  if (min(time_new) <= max(time_old)) {
+    warning("New file time overlaps old file time.")
+  }
+  
+  time_all <- c(time_old, time_new)
+  
+  # Define dimensions (copied from OLD file)----
+  dims_old <- nc_old$dim
+  
+  dim_defs <- vector("list", length(dims_old))
+  names(dim_defs) <- names(dims_old)
+  
+  for (d in names(dims_old)) {
+    if (d == "time") {
+      dim_defs[[d]] <- ncdim_def(
+        "time",
+        dims_old$time$units,
+        time_all,
+        unlim = TRUE
+      )
+    } else {
+      dim_defs[[d]] <- ncdim_def(
+        d,
+        dims_old[[d]]$units,
+        dims_old[[d]]$vals
+      )
+    }
+  }
+  
+  # Define variables----
+  coord_vars <- names(dim_defs)
+  var_names  <- setdiff(names(nc_old$var), coord_vars)
+  
+  var_defs <- vector("list", length(var_names))
+  names(var_defs) <- var_names
+  
+  for (v in var_names) {
+    vinfo <- nc_old$var[[v]]
+    
+    dims <- lapply(vinfo$dimids + 1, function(i) {
+      dim_defs[[ names(dims_old)[i] ]]
+    })
+    
+    var_defs[[v]] <- ncvar_def(
+      name    = v,
+      units   = vinfo$units,
+      dim     = dims,
+      missval = vinfo$missval,
+      prec    = ifelse(vinfo$prec == "double", "double", "float")
+    )
+  }
+  
+  # Create output file----
+  nc_out <- nc_create(out_file, var_defs)
+  
+  # Append variables----
+  for (v in var_names) {
+    message("Appending variable: ", v)
+    
+    v_old <- ncvar_get(nc_old, v)
+    v_new <- ncvar_get(nc_new, v)
+    
+    # append along TIME (assumed last dimension)
+    time_dim <- length(dim(v_old))
+    v_all <- abind(v_old, v_new, along = time_dim)
+    
+    ncvar_put(nc_out, v, v_all)
+  }
+  
+  nc_close(nc_out)
+  
+  invisible(out_file)
+  
+  
+  rm(nc_old, nc_new, nc_out)
+  gc()
+  
+  
+  dir.archive <- file.path(dirname(old_file),'archive')
+  dir.create(dir.archive)
+  file.copy(from=old_file, to=dir.archive, overwrite=T)
+  #file.copy(from=new_file, to=dir.archive, overwrite=T)
+  file.remove(old_file)
+  file.remove(new_file)
+} #eof
+
+
 #' @title Fill missing cells
 #' @description Iteratively applies 3x3 nearest neighbor means to NA cells until all water cells 
 #' have data.  Typically used to fill areas near the coastlilne with grids don't align perfectly.
@@ -207,7 +375,10 @@ fill_coastal_cells <- function(r, w = 3, max_iter = 50, mask=depth) {
 #'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min'))}
 #' @export
 fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$",full.names=T), 
-                                   dir.stdriver=dir.stdriver, depth=depth, make.monthly=TRUE, make.static=TRUE){
+                                   dir.stdriver=dir.stdriver, depth=depth, scalePP=TRUE,do.vars=NULL,
+                                   make.monthly=TRUE, make.static=TRUE, make.climatology=TRUE){
+  library('terra')
+  library('raster')
   # dir.in=dir.glorys
   # dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min')
   # depth = depth.15min
@@ -218,20 +389,24 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   #nc.files <- nc.files[which(!grepl("static",basename(nc.files)))]
   if(make.monthly){
   for(i in 1:length(nc.files)){  
-    #i=3
+    #i=2
     nc = nc_open(nc.files[i])
     nc.vars = names(nc$var)
-    print(nc.vars)
+    #print(nc.vars)
     nc$dim$time
-    if(i %in% c(1,3)) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='hours')
-    if(i %in% c(2,4)) nc.times = as.POSIXct('1950-01-01 00:00')+as.difftime(nc$dim$time$vals,units='secs')
+    time_units = nc$dim$time$units
+    time_refdate = as.POSIXct(paste0(gsub("[a-zA-Z ]", "", time_units)," 00:00"))
+    time_stepsize = ifelse(grepl("hours",time_units),"hours",ifelse(grepl("sec",time_units),'secs',ifelse(grepl("day",time_units),'days',NA)))
+    nc.times = time_refdate+as.difftime(nc$dim$time$vals,units=time_stepsize)
     zthickness <- nc$dim$depth$vals
     
     st.existing <- list.dirs(dir.stdriver,full.names=F,recursive=F)
     st.existing <- st.existing[which(!st.existing %in% c('hoard','plots','static'))]
     
     for(v in 1:length(nc.vars)){
-      #v=1
+      #v=2
+      if(!is.null(do.vars) & !nc.vars[v] %in% do.vars) next
+      
       nc.v = ncvar_get(nc,nc.vars[v])
       ndims = length(dim(nc.v))
       
@@ -256,16 +431,16 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         names(out.v) <- paste0("X",format(nc.times,"%Y%m"))
         
         #write ascii
-        dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_glorys'))
+        dir.out = file.path(dir.stdriver,nc.vars[v])
         if(!dir.exists(dir.out)) dir.create(dir.out)
-        writeRaster(out.v,file.path(dir.out,paste0(nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+        writeRaster(out.v,file.path(dir.out,gsub("_glorys","",nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
         rm(out.v);gc()
       }
       
       if(ndims==4){
         ntimes = dim(nc.v)[4]
         dimnames(nc.v)[[4]] <- gsub("-","_",substr(nc.times,1,10))
-        out.surf = out.mean = out.bott = out.sum = stack() 
+        out.surf = out.mean = out.bott = out.sum = chlos.zint = out.surf.norm = out.sum.norm = chlos.zint.norm = stack() 
         
         #the next 2 lines transpose the array
         dim(nc.v)
@@ -363,57 +538,97 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           chlos.zint <- raster::calc(chlos.zint,function(x) {ifelse(x < 1.0,
                                                                     38.0 * x^0.425,  # Eq 2b
                                                                     40.2 * x^0.507)})  # Eq 2c
+        }
+        
+        #normalize PP to mean of first year
+        if(nc.vars[v] %in% c('chl','nppv','phyc') & scalePP){
+          message("Normalizing PP drivers to mean=1 in first year of data")
+          surf.yr1mean <- calc(out.surf[[1:12]],mean,na.rm=T)
+          sum.yr1mean <-  calc(out.sum[[1:12]],mean,na.rm=T) 
           
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_zint_glorys'))
-          if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(nc.vars[v],'_zint')),bylayer=T,suffix=format(nc.times,"%Y%m"),
-                      format='ascii',overwrite=T)
+          out.surf.norm <- out.surf/surf.yr1mean
+          out.sum.norm <- out.sum/sum.yr1mean
+          
+          if(nc.vars[v]=='chl') {
+            zint.yr1mean <- calc(chlos.zint[[1:12]],mean,na.rm=T)
+            chlos.zint.norm <- chlos.zint/zint.yr1mean
+          }
         }
         
         #write ascii------------------------------------------------------------
         if(nlayers(out.surf)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_surf_glorys"))
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_surf"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(out.surf,4),file.path(dir.out,nc.vars[v]),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.surf,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_surf')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.surf);gc()
         }
         
         if(nlayers(out.bott)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_bott_glorys"))
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_bott"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(out.bott,4),file.path(dir.out,gsub('_glor','_bott',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.bott,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_bott')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.bott);gc()
         }
         
         if(nlayers(out.mean)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],"_mean_glorys"))
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_mean"))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(out.mean,4),file.path(dir.out,gsub('_glor','_mean',nc.vars[v])),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          writeRaster(round(out.mean,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_mean')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
           rm(out.mean);gc()
         }
         
         if(nlayers(out.sum)>0){
-          dir.out = file.path(dir.stdriver,paste0(nc.vars[v],'_sum_glorys'))
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_sum'))
           if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(out.sum,4),file.path(dir.out,paste0(nc.vars[v],"_sum")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          writeRaster(round(out.sum,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_sum")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
           rm(out.sum); gc()
+        }
+        
+        if(nlayers(chlos.zint)>0){
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint"))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+          rm(chlos.zint);gc()
+        }
+        
+        if(nlayers(out.sum.norm)>0 & scalePP){
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_sum_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(out.sum.norm,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_sum_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(out.sum.norm); gc()
+        }
+        
+        if(nlayers(out.surf.norm)>0 & scalePP){
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_surf_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(out.surf.norm,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_surf_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(out.surf.norm); gc()
+        }
+        
+        if(nlayers(chlos.zint.norm)>0 & scalePP){
+          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(chlos.zint.norm,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(chlos.zint.norm); gc()
         }
       }
     }
   }
   }
   #make static maps----
-  if(make.static){
-  print("Making static maps");flush.console()
+  if(make.static | make.climatology){
+  message("Making static and monthly climatology maps")
   dirs.stvars = list.dirs(path=dir.stdriver,recursive=F)
   dir.static = file.path(dir.stdriver,"static")
   if(!dir.exists(dir.static)) dir.create(dir.static)
   dirs.stvars = dirs.stvars[-c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))]
-  
+  basename(dirs.stvars)
   for(i in 1:length(dirs.stvars)){
-    #i=1
-    stname = paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
-    print(paste0("now making ",i," of ",length(dirs.stvars),": ",stname)); flush.console()
+    #i=16
+    stvar.i <- unlist(strsplit(basename(dirs.stvars[i]),"_"))[1]
+    if(!is.null(do.vars) & !stvar.i %in% c(do.vars,gsub("_glor","",do.vars))) next
+    stname = basename(dirs.stvars[i]) #paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
+    message(paste0("now making ",i," of ",length(dirs.stvars),": ",stname))
     
     #read output--------------------------------------------------------------------
     #list ecospace output ascii files
@@ -425,18 +640,33 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
     names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
     
-    #create average map
-    st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
+    #create static map s
     st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
-    st.mean_allyrs = mean(rast(st.stack),na.rm=T)
-    st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
+    st.mean_allyrs = mean(st.stack,na.rm=T)
+    #st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
+    #st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
     
-    #plot(st.mean_allyrs, colNA='black')
-    #plot(st.mean_yr1, colNA='black')
     
     #save static map
-    writeRaster(raster(st.mean_allyrs),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_allyrs")),format='ascii',overwrite=T)
-    writeRaster(raster(st.mean_yr1),file.path(dir.static,paste0(gsub("_GLORYS","",stname),"_avg_yr1")),format='ascii',overwrite=T)
+    writeRaster(st.mean_allyrs,file.path(dir.static,paste0(stname,"_avg_allyrs")),format='ascii',overwrite=T)
+    writeRaster(st.mean_yr1,file.path(dir.static,paste0(stname,"_avg_yr1")),format='ascii',overwrite=T)
+    
+    #no need to normalize, since the monthly maps were already normalized and in their own folder.
+    # if(substr(basename(stname),1,3) %in% c('chl','npp','phy')){
+    #   st.mean_yr1.norm = st.mean_yr1/cellStats(st.mean_yr1,mean,na.rm=T)
+    #   st.mean_allyrs.norm = st.mean_allyrs/cellStats(st.mean_allyrs,mean,na.rm=T)
+    #   
+    #   writeRaster(st.mean_allyrs.norm,file.path(dir.static,paste0(stname,"_avg_allyrs_norm")),format='ascii',overwrite=T)
+    #   writeRaster(st.mean_yr1.norm,file.path(dir.static,paste0(stname,"_avg_yr1_norm")),format='ascii',overwrite=T)
+    # }
+    
+    #monthly climatology
+    month_indices <- match(substr(names(st.stack),1,3),month.abb)
+    monthly_averages <- stackApply(st.stack, indices = month_indices, fun = mean, na.rm = TRUE)
+
+    writeRaster(monthly_averages,file.path(dirs.stvars[i],paste0(basename(dirs.stvars[i]),'_0000')),
+                suffix=formatC(1:12,width=2,flag=0), format='ascii',overwrite=T, bylayer=T)
+    
     rm(st.stack); gc()
   }
   }
@@ -798,6 +1028,431 @@ var.stack
   }
   
 } #eof
+
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#' Download and Process ESA CCI Ocean Data
+#'
+#' Downloads and processes Ocean Colour, Sea Surface Temperature, and Sea Surface Salinity
+#' data from ESA Climate Change Initiative (CCI) datasets. Creates spatially and temporally
+#' subsetted NetCDF files for use in ocean modeling applications.
+#'
+#' @param dir.out Character. Output directory path for downloaded netcdf files. Default: dir.esacci
+#' @param bbox Numeric vector of length 4. Bounding box as c(lon_min, lat_min, lon_max, lat_max)
+#' @param startdate Date. Start date for data extraction. Default: "1980-01-01"
+#' @param enddate Date. End date for data extraction. Default: current system date
+#' @param oc.url Character. Base URL for Ocean Colour CCI data via OPeNDAP
+#' @param cds_user Character. Copernicus Climate Data Store username
+#' @param cds_key Character. Copernicus Climate Data Store API key
+#' @param sst.output_file Character. Base filename for SST output (without extension)
+#' @param sss.url Character. Complete URL for Sea Surface Salinity CCI data via OPeNDAP
+#'
+#' @return Invisible NULL. Function creates NetCDF files as side effects
+#'
+#' @details
+#' This function processes three ESA CCI datasets:
+#' \itemize{
+#'   \item Ocean Colour: Monthly chlorophyll-a (1997-present)
+#'   \item Sea Surface Temperature: Monthly SST via Copernicus CDS (any years)
+#'   \item Sea Surface Salinity: Bi-monthly data aggregated to monthly (2010-2023)
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # Download data for Gulf of Mexico region
+#' bbox <- c(-98, 18, -80, 31)
+#' fn.pull_esacci(
+#'   bbox = bbox,
+#'   startdate = as.Date("2010-01-01"),
+#'   enddate = as.Date("2020-12-31")
+#' )
+#' }
+#'
+#' @export
+
+
+fn.pull_esacci <- function(dir.out = NULL,
+    bbox = NULL,
+    startdate = as.Date("1980-01-01"),
+    enddate = Sys.Date(),
+    oc.url = "https://www.oceancolour.org/thredds/dodsC/cci/v6.0-release/geographic/monthly/chlor_a/",
+    sss.url = "https://data.cci.ceda.ac.uk/thredds/dodsC/esacci.SEASURFACESALINITY.15-days.L4.SSS.multi-sensor.multi-platform.GLOBAL-MERGED_OI_Monthly_CENTRED_15Day_0-25deg.5-5.r1",
+    cds_user = NULL,
+    cds_key = NULL,
+    sst.output_file = 'esacci.SST.L4.combined.3_0.monthly',
+    chl.output_file = 'OC_CCI_chlora',
+    sss.output_file = 'esacci.SSS.L4.combined.5_5.monthly'){
+  # dir.out = dir.esacci
+  # bbox = bbox
+  # startdate = as.Date("1980-01-01")
+  # enddate = Sys.Date()
+  # oc.url = "https://www.oceancolour.org/thredds/dodsC/cci/v6.0-release/geographic/monthly/chlor_a/"
+  # cds_user = 'David Chagaris'
+  # cds_key = '1519c994-451b-4247-b0ba-44896a3d38a2'
+  # sst.output_file <- file.path(dir.out,'esacci.SST.L4.combined.3_0.monthly')
+  # sss.url = "https://data.cci.ceda.ac.uk/thredds/dodsC/esacci.SEASURFACESALINITY.15-days.L4.SSS.multi-sensor.multi-platform.GLOBAL-MERGED_OI_Monthly_CENTRED_15Day_0-25deg.5-5.r1"
+  
+  # Setup function for CDS credentials (call this once)
+  setup_cds_credentials(user = cds_user, key = cds_key)
+  
+  # Create output directory if it doesn't exist
+  if (!dir.exists(dir.out)) dir.create(dir.out)
+  
+  ##OC-CCI-----------------------------------------------------
+  # Initialize storage
+  all_data <- list()
+  
+  year_start <- max(year(startdate),1997)
+  year_end <- year(enddate)
+  
+  ###Download data year, month loop----
+  for(year in year_start:year_end){
+    for(month in 1:12){
+      #year=1997;month=09
+      month_str <- sprintf("%02d",month)
+      
+      filename <- sprintf("ESACCI-OC-L3S-CHLOR_A-MERGED-1M_MONTHLY_4km_GEO_PML_OCx-%d%s-fv6.0.nc",year,month_str)  
+      file_url <- paste0(oc.url,year,"/",filename)
+      tryCatch({
+        cat("  Downloading:", filename, "\n")
+        
+        # Open NetCDF via OPeNDAP
+        nc <- nc_open(file_url)
+        
+        # Get coordinates (only once)
+        if (length(all_data) == 0) {
+          lon <- ncvar_get(nc, "lon")
+          lat <- ncvar_get(nc, "lat")
+          
+          # Find spatial indices for bbox
+          lon_idx <- which(lon >= bbox[1] & lon <= bbox[2])
+          lat_idx <- which(lat >= bbox[3] & lat <= bbox[4])
+          
+          cat("  Spatial subset: lon", range(lon[lon_idx]), "lat", range(lat[lat_idx]), "\n")
+        }
+        
+        # Get time
+        time <- ncvar_get(nc, "time")
+        
+        # Extract chlorophyll-a data for spatial subset
+        chlor_a <- ncvar_get(nc, "chlor_a", 
+                             start = c(min(lon_idx), min(lat_idx), 1),
+                             count = c(length(lon_idx), length(lat_idx), 1))
+        
+        # Store data
+        time_key <- paste(year, month_str, sep = "-")
+        all_data[[time_key]] <- list(
+          chlor_a = chlor_a,
+          time = time,
+          year = year,
+          month = month
+        )
+        nc_close(nc)
+        
+      }, error = function(e) {
+        cat("  Error with", filename, ":", e$message, "\n")
+      })
+      
+    } #end month loop
+  } #end year loop
+  
+  ###save netcdf----
+  if (length(all_data) > 0) {
+    # Create combined NetCDF file
+    output_file <- file.path(dir.out,paste0(chl.output_file, sprintf("_%s_%s_subset.nc", names(all_data)[1], names(all_data)[length(all_data)])))
+    
+    # Prepare data arrays
+    n_times <- length(all_data)
+    subset_lon <- lon[lon_idx]
+    subset_lat <- lat[lat_idx]
+    
+    # Combined data array
+    combined_chlora <- array(NA, dim = c(length(subset_lat), length(subset_lon), n_times))
+    time_values <- numeric(n_times)
+    
+    for (i in seq_along(all_data)) {
+      #i=1
+      combined_chlora[,,i] <- t(all_data[[i]]$chlor_a)
+      time_values[i] <- all_data[[i]]$time
+    }
+    
+    # Create NetCDF file
+    lon_dim <- ncdim_def("longitude", "degrees_east", subset_lon)
+    lat_dim <- ncdim_def("latitude", "degrees_north", subset_lat)
+    time_dim <- ncdim_def("time", "days since 1970-01-01", time_values)
+    
+    chlor_var <- ncvar_def("chlor_a", "mg m^-3", 
+                           list(lon_dim, lat_dim, time_dim), 
+                           -999,
+                           longname = "Chlorophyll-a concentration")
+    
+    nc_out <- nc_create(output_file, list(chlor_var))
+    ncvar_put(nc_out, chlor_var, combined_chlora)
+    
+    # Add attributes
+    ncatt_put(nc_out, "chlor_a", "long_name", "Chlorophyll-a concentration")
+    ncatt_put(nc_out, "chlor_a", "standard_name", "mass_concentration_of_chlorophyll_a_in_sea_water")
+    ncatt_put(nc_out, 0, "title", "Ocean Colour CCI Chlorophyll-a Monthly Data")
+    ncatt_put(nc_out, 0, "source", "ESA Ocean Colour Climate Change Initiative")
+    ncatt_put(nc_out, 0, "bbox", paste(bbox, collapse = ","))
+    ncatt_put(nc_out, 0, "creation_date", as.character(Sys.time()))
+    
+    nc_close(nc_out)
+    
+    cat("Combined file saved:", output_file, "\n")
+  } else {
+    cat("No OC data downloaded\n")
+    return(NULL)
+  }
+  
+#SST-CCI--------------------------------------------------------------------------------------------
+  #monthly SST data from CCI are provided by compernicus climate data store
+  start_year <- year(startdate)
+  end_year <- year(enddate)
+  ###Authenticate user----
+  #Set up CDS API credentials if provided
+  if (!is.null(cds_user) && !is.null(cds_key)) {
+    wf_set_key(user = cds_user, key = cds_key)
+  }
+  
+  # Check if credentials are set
+  if (is.null(wf_get_key(user=cds_user))) {
+    stop("CDS API credentials not found. Please set them using wf_set_key() or provide cds_user and cds_key arguments.")
+  }
+  ###Download data
+  # Format years and months as character vectors
+  years <- as.character(start_year:end_year)
+  months <- 1:12
+  months_formatted <- sprintf("%02d", months)
+  
+  #setup temporary folder to hold single month netcdf files
+  temp_folder <- file.path(dir.esacci,'sst_temp')
+  #temp_folder <- "C:\\sst_temp"
+  if(!dir.exists(temp_folder)) dir.create(temp_folder)
+  
+  ### Download monthly netcdf in 1-year chunks----
+  #loop through years
+  for(y in 1:length(years)){
+    #y=1
+    # Define the request using the correct dataset and parameters
+    request <- list(
+      dataset_short_name = "satellite-sea-surface-temperature",
+      variable = "sst",
+      processinglevel = "level_4",
+      sensor_on_satellite = "combined_product",
+      version = "3_0",
+      temporal_resolution = "monthly",
+      year = years[y],
+      month = months_formatted,
+      area = c(bbox[4],bbox[1],bbox[3],bbox[2]),
+      target = basename(output_file)
+    )
+    # Submit and download the request
+    cat("Submitting request to CDS API...\n")
+    cat("Dataset: satellite-sea-surface-temperature\n")
+    cat("Years:", paste(range(years), collapse = " to "), "\n")
+    cat("Months:", paste(months_formatted, collapse = ", "), "\n")
+    
+    result <- wf_request(
+      request = request,
+      user = cds_user,
+      transfer = TRUE,
+      path = dirname(output_file)
+    )
+    
+    unzip(result, exdir=temp_folder)
+    unlink(result)
+    if(y %in% seq(10,length(years),10)) Sys.sleep(20)
+  } #end year loop
+  
+  ### combine and save single netcdf----
+  # Get list of NetCDF files
+  nc_files <- list.files(temp_folder, pattern = "\\.nc$", full.names = TRUE)
+  nc_files <- sort(nc_files)  # Sort to ensure chronological order
+  cat("Found", length(nc_files), "NetCDF files\n")
+  
+  # Initialize storage
+  all_sst <- list()
+  all_times <- c()
+  
+  # Process each file
+  for (i in seq_along(nc_files)) {
+    cat("Processing file", i, "of", length(nc_files), "\n")
+    nc <- nc_open(nc_files[i])
+    
+    # Get coordinates from first file
+    if (i == 1) {
+      lon <- ncvar_get(nc, "lon")
+      lat <- ncvar_get(nc, "lat")
+      
+      # Get variable info
+      var_names <- names(nc$var)
+      sst_var <- var_names[grepl("sst|temperature", var_names, ignore.case = TRUE)][1]
+      if (is.na(sst_var)) sst_var <- "analysed_sst"  # fallback
+      
+      cat("Using SST variable:", sst_var, "\n")
+    }
+    
+    # Extract SST data
+    sst_data <- ncvar_get(nc, sst_var)
+    
+    # Get time
+    time_var <- ncvar_get(nc, "time")
+    time_units <- ncatt_get(nc, "time", "units")$value
+    
+    # Store data
+    all_sst[[i]] <- t(sst_data)[dim(sst_data)[2]:1,] - 273.15 #conver to degC, rotate for proper orientation
+    all_times[i] <- time_var
+    
+    nc_close(nc)
+  }
+  
+  # Combine into 3D array (lon, lat, time)
+  dims <- dim(all_sst[[1]])
+  combined_sst <- array(NA, dim = c(dims[1], dims[2], length(all_sst)))
+  for (i in seq_along(all_sst)) {
+    combined_sst[,,i] <- all_sst[[i]]
+  }
+  
+  # Create output NetCDF file
+  # Define dimensions
+  lon_dim <- ncdim_def("longitude", "degrees_east", lon)
+  lat_dim <- ncdim_def("latitude", "degrees_north", lat)
+  time_dim <- ncdim_def("time", time_units, all_times)
+  
+  # Define variable
+  sst_var_def <- ncvar_def("sst", "celsius", 
+                           list(lon_dim, lat_dim, time_dim), 
+                           -999,
+                           longname = "Sea Surface Temperature")
+  
+  # Create file
+  outfile <- paste0(sst.output_file,"_",substr(basename(nc_files)[1],1,6),"_",substr(basename(nc_files)[length(nc_files)],1,6),".nc")
+  nc_out <- nc_create(outfile, list(sst_var_def))
+  
+  # Write data
+  ncvar_put(nc_out, sst_var_def, combined_sst)
+  
+  # Add attributes
+  ncatt_put(nc_out, "sst", "long_name", "Sea Surface Temperature")
+  ncatt_put(nc_out, "sst", "standard_name", "sea_surface_temperature")
+  ncatt_put(nc_out, 0, "title", "ESA CCI SST Monthly Data")
+  ncatt_put(nc_out, 0, "source", "ESA Climate Change Initiative")
+  ncatt_put(nc_out, 0, "creation_date", as.character(Sys.time()))
+  
+  nc_close(nc_out)
+  
+  # Clean up
+  unlink(temp_folder, recursive = TRUE, force=T)
+  
+  cat("Combined NetCDF file saved to:", outfile, "\n")
+  
+  
+  # Optional: return some basic info about the downloaded file
+  if (file.exists(outfile)) {
+    nc <- nc_open(outfile)
+    cat("File dimensions:\n")
+    for (dim_name in names(nc$dim)) {
+      cat("  ", dim_name, ":", nc$dim[[dim_name]]$len, "\n")
+    }
+    cat("Variables:\n")
+    for (var_name in names(nc$var)) {
+      cat("  ", var_name, "\n")
+    }
+    nc_close(nc)
+  }
+  #SSS-CCI--------------------------------------------------------------------------------------------
+  
+  startyear <- max(year(startdate),2010)
+  endyear <- min(year(enddate), 2023)
+  
+  # OPeNDAP URL
+  #base_url <- paste0(sss.url,"?lat[0:1:719],lon[0:1:1439],time[0:1:334],sss[0:1:334][0:1:719][0:1:1439]")
+  ### get coordinate data----
+  base_url <- paste0(sss.url,"?lat,lon,time,sss")
+  
+  # Open the NetCDF file
+  nc <- nc_open(base_url)
+  
+  # Get coordinate variables
+  lons <- ncvar_get(nc, "lon")
+  lats <- ncvar_get(nc, "lat")
+  times <- ncvar_get(nc, "time")
+  time_units <- ncatt_get(nc, "time", "units")$value
+  
+  # Convert time to dates
+  time_origin <- as.Date(sub("days since ", "", time_units))
+  dates <- time_origin + times
+  
+  # Find spatial indices
+  lon_idx <- which(lons >= bbox[1] & lons <= bbox[2])
+  lat_idx <- which(lats >= bbox[3] & lats <= bbox[4])
+  
+  lon_vals <- lons[lon_idx]
+  lat_vals <- lats[lat_idx]
+  
+  # Find temporal indices for the specified years
+  start_date <- as.Date(paste0(startyear, "-01-01"))
+  end_date <- as.Date(paste0(endyear, "-12-31"))
+  time_idx <- which(dates >= start_date & dates <= end_date)
+  date_vals <- dates[time_idx]
+  
+  
+  ### Extract salinity data----
+  cat("Extracting salinity data...\n")
+  sss_data <- ncvar_get(nc, "sss", 
+                        start = c(min(lon_idx), min(lat_idx), min(time_idx)),
+                        count = c(length(lon_idx), length(lat_idx), length(time_idx)))
+  
+  sss_data <- aperm(sss_data,c(2,1,3))
+  sss_data <- sss_data[dim(sss_data)[1]:1,,]
+  dimnames(sss_data) <- list(lats[lat_idx],lons[lon_idx],as.character(dates[time_idx]))
+  
+  # average by month
+  month.grps <- sort((substr(dimnames(sss_data)[[3]],1,7)))
+  sss_mon <- apply(sss_data, c(1,2), function(x) tapply(x, month.grps, mean, na.rm=TRUE))
+  sss_mon <- aperm(sss_mon,c(2,3,1))
+  
+  # Close NetCDF connection
+  nc_close(nc)
+  
+  ###save as netcdf----
+  # Create dimensions
+  month_vals <- dimnames(sss_mon)[[3]]
+  
+  # Convert time strings to numeric (days since origin)
+  month_dates <- as.Date(paste0(month_vals, "-15"))  # Use 15th of each month
+  time_numeric <- as.numeric(month_dates - as.Date("1970-01-01"))
+  
+  # Define dimensions
+  lat_dim <- ncdim_def("lat", "degrees_north", lat_vals)
+  lon_dim <- ncdim_def("lon", "degrees_east", lon_vals)
+  time_dim <- ncdim_def("time", "days since 1970-01-01 00:00:00 UTC", time_numeric, unlim=TRUE)
+  
+  # Define the SSS variable
+  sss_var <- ncvar_def("sss", "pss", list(lat_dim, lon_dim, time_dim), 
+                       missval = -999,
+                       longname = "Sea Surface Salinity",
+                       prec = "float")
+  
+  # Create the NetCDF file
+  output_file <- file.path(dir.out,paste0(sss.output_file,".",month_vals[1],"-",month_vals[length(month_vals)],'.nc'))
+  nc_out <- nc_create(output_file, list(sss_var), force_v4=TRUE)
+  
+  # Write the data (need to transpose back to lon,lat,time order)
+  #sss_out <- aperm(sss_mon, c(2,1,3))
+  ncvar_put(nc_out, sss_var, sss_mon)
+  
+  # Add global attributes
+  ncatt_put(nc_out, 0, "title", "Monthly Sea Surface Salinity from ESA CCI")
+  ncatt_put(nc_out, 0, "source", "ESA CCI Sea Surface Salinity v5.5")
+  ncatt_put(nc_out, 0, "created", as.character(Sys.time()))
+  
+  # Close the file
+  nc_close(nc_out)
+  
+  cat("Saved monthly SSS data to", output_file, "\n")
+}#eof
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Make static maps from monthly ST files.
