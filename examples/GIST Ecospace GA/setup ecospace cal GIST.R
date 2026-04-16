@@ -120,7 +120,7 @@ sens_predprey <- read.csv("./predprey_pairs.csv")
 predprey <- predprey[paste(predprey$pred, predprey$prey) %in% 
                        paste(sens_predprey$pred, sens_predprey$prey), ]
 
-predprey <- read.csv("pred_pairs.csv") #For by predator searching only
+#predprey <- read.csv("pred_pairs.csv") #For by predator searching only
 
 #predprey <- read.csv("pred_pairs.csv") #For just predator-specific runs
 ##load reference data-----
