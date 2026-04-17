@@ -341,6 +341,7 @@ safe_make_run_dir_tempfile <- function(base_dir,
                                        idx = idx,
                                        prefix = "run",
                                        random_len = 8) {
+
   
   # Create a compact, reproducible tag for the parameter vector
   # Use a hash to avoid very long names; include gen/idx if provided
@@ -374,8 +375,8 @@ safe_make_run_dir_tempfile <- function(base_dir,
   
   # Sanitize (just in case)
   folder_name <- gsub("[^A-Za-z0-9_.-]", "_", folder_name)
-  raw_path <- file.path(base_dir, folder_name)
-  run_path <<- normalizePath(raw_path, winslash = "\\", mustWork = FALSE)
+  
+  run_path <- file.path(base_dir, folder_name)
   
   # Create (retry if rare collision)
   if (!dir.exists(run_path)) {
@@ -511,77 +512,14 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 
 #' @keywords internal
 #' @noRd
-safe_runEwE <- function(cmdfile, do.obj,bug=F) {
-    if (!bug){
-    on.exit(gc(), add = TRUE)
-    #out <- tryCatch({
-      # example: quiet system call
-      # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
-    out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-    #}, error = function(e) NA_real_)
-    if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
-    } else {
-      on.exit(gc(), add = TRUE)
-      run_dir <- dirname(cmdfile)
-      
-      # Ensure clean slate for output detection
-      target_file <- file.path(run_dir, "Ecospace_Annual_Average_Biomass.csv")
-      if(file.exists(target_file)) file.remove(target_file)
-      
-      # Normalize paths and handle spaces in "King Mackerel" via PowerShell triple-quotes
-      console_path <- normalizePath(file.console, winslash = "\\", mustWork = TRUE)
-      cmd_path     <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
-      
-      # PowerShell command construction [cite: 1]
-      ps_cmd <- paste0("powershell -Command \"Start-Process -FilePath '", console_path, 
-                       "' -ArgumentList '\"\"", cmd_path, "\"\"' -PassThru | Select-Object -ExpandProperty Id\"")
-      
-      # Jitter to prevent concurrent Access DB collisions [cite: 6]
-      Sys.sleep(runif(1, 0.1, 5.0)) 
-      
-      # Launch and capture PID
-      pid <- tryCatch(suppressWarnings(system(ps_cmd, intern = TRUE)), error = function(e) NA)
-      
-      start_time <- Sys.time()
-      model_finished <- FALSE
-      
-      # Monitoring loop with 20-minute timeout [cite: 6]
-      while(difftime(Sys.time(), start_time, units="mins") < 20) {
-        Sys.sleep(5) 
-        if(file.exists(target_file)) {
-          if(file.info(target_file)$size > 100) {
-            Sys.sleep(2) # Buffer for disk writing
-            model_finished <- TRUE
-            break
-          }
-        }
-      }
-      
-      # Force kill the specific PID to release file locks 
-      if(!is.na(pid)) {
-        try(system(paste0("taskkill /F /PID ", pid), show.output.on.console = FALSE), silent = TRUE)
-      }
-      
-      if(model_finished) {
-        out <- tryCatch({
-          # Pass obs.ts explicitly from the worker's environment 
-          res <- fn.objfxn1(dir.pred = run_dir, obs.ts = obs.ts)
-          # Save results to local text file in the run directory
-          write.table(t(res), file = file.path(run_dir, "obj_results.txt"), 
-                      sep = ",", row.names = FALSE, col.names = TRUE)
-          
-          res # Return the full vector for the logic below
-        }, error = function(e) {
-          # Log the error to a file if objective function fails
-          writeLines(as.character(e), file.path(run_dir, "obj_error.txt"))
-          return(NA_real_)
-        })
-        
-        # Return the total likelihood (first element) to the GA 
-        if(is.numeric(out) && length(out) >= 1) return(out[1])
-      }
-      return(NA_real_)
-    }
+safe_runEwE <- function(cmdfile, do.obj) {
+  on.exit(gc(), add = TRUE)
+  #out <- tryCatch({
+    # example: quiet system call
+    # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
+  out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
+  #}, error = function(e) NA_real_)
+  if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
 }#eof
 
 
@@ -635,8 +573,7 @@ fn.runEwE.gapop <-  function(
     files.cmd, 
     obj.fxn=1, 
     delete.output=T,
-    max_tries=5,
-    bug=F
+    max_tries=5
 ){
   #source(file.setup)
 
@@ -651,7 +588,7 @@ fn.runEwE.gapop <-  function(
   runLL.out <- foreach(i = seq_along(files.cmd), .errorhandling = 'pass') %dopar% { #, .options.snow = opts
     #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
     #i=1
-    safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn,bug=bug)
+    safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
     #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
   }
   runLL <- unlist(runLL.out)
@@ -674,7 +611,7 @@ fn.runEwE.gapop <-  function(
     #opts <- list(progress=prog)
     
     runLL.err.out <- foreach(i=1:length(erruns),.errorhandling='pass') %dopar% {#,.options.snow=opts
-      safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn,bug=bug)
+      safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
       #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
     }
     runLL.err <- unlist(runLL.err.out)
