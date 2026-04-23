@@ -512,6 +512,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 
 #' @keywords internal
 #' @noRd
+
 safe_runEwE <- function(cmdfile, do.obj) {
   on.exit(gc(), add = TRUE)
   #out <- tryCatch({
@@ -520,7 +521,101 @@ safe_runEwE <- function(cmdfile, do.obj) {
   out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
   #}, error = function(e) NA_real_)
   if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
-}#eof
+
+# safe_runEwE <- function(cmdfile, do.obj, bug=F) {
+#   if (!bug){
+#     on.exit({
+#       gc()
+#       # Aggressively kill any lingering EwE console processes spawned by this worker
+#       # This prevents zombies if the timeout is triggered
+#       try(system("taskkill /F /IM EwE.exe /T", show.output.on.console = FALSE), silent = TRUE)
+#       try(system("taskkill /F /IM Ecospace.exe /T", show.output.on.console = FALSE), silent = TRUE)
+#     }, add = TRUE)
+#     
+#     out <- tryCatch({
+#       # Wrap the original function in a strict timeout (e.g., 20 minutes / 1200 seconds)
+#       if (requireNamespace("R.utils", quietly = TRUE)) {
+#         R.utils::withTimeout({
+#           fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
+#         }, timeout = 1200, onTimeout = "error") # throw error on timeout to trigger NA_real_
+#       } else {
+#         # Fallback if R.utils isn't installed
+#         fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
+#       }
+#     }, error = function(e) {
+#       # If it times out or fails, return NA to let the GA know this run failed
+#       return(NA_real_)
+#     })
+#     
+#     if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) {
+#       return(out[1]) 
+#     } else {
+#       return(NA_real_)
+#     }
+#   } else {
+#     on.exit(gc(), add = TRUE)
+#     run_dir <- dirname(cmdfile)
+#     
+#     # Ensure clean slate for output detection
+#     target_file <- file.path(run_dir, "Ecospace_Annual_Average_Biomass.csv")
+#     if(file.exists(target_file)) file.remove(target_file)
+#     
+#     # Normalize paths and handle spaces in "King Mackerel" via PowerShell triple-quotes
+#     console_path <- normalizePath(file.console, winslash = "\\", mustWork = TRUE)
+#     cmd_path     <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
+#     
+#     # PowerShell command construction
+#     ps_cmd <- paste0("powershell -Command \"Start-Process -FilePath '", console_path, 
+#                      "' -ArgumentList '\"\"", cmd_path, "\"\"' -PassThru | Select-Object -ExpandProperty Id\"")
+#     
+#     # Jitter to prevent concurrent Access DB collisions
+#     Sys.sleep(runif(1, 0.1, 5.0)) 
+#     
+#     # Launch and capture PID, trimming whitespace/newlines to prevent taskkill failure
+#     raw_pid <- tryCatch(suppressWarnings(system(ps_cmd, intern = TRUE)), error = function(e) NA)
+#     pid <- if(is.character(raw_pid) && length(raw_pid) > 0) trimws(raw_pid[1]) else NA
+#     
+#     start_time <- Sys.time()
+#     model_finished <- FALSE
+#     
+#     # Monitoring loop with 20-minute timeout
+#     while(difftime(Sys.time(), start_time, units="mins") < 20) {
+#       Sys.sleep(5) 
+#       if(file.exists(target_file)) {
+#         if(file.info(target_file)$size > 100) {
+#           Sys.sleep(2) # Buffer for disk writing
+#           model_finished <- TRUE
+#           break
+#         }
+#       }
+#     }
+#     
+#     # Force kill the specific PID and its child tree (/T) to release file locks
+#     if(!is.na(pid) && pid != "") {
+#       try(system(paste0("taskkill /T /F /PID ", pid), show.output.on.console = FALSE), silent = TRUE)
+#     }
+#     
+#     if(model_finished) {
+#       out <- tryCatch({
+#         # Pass obs.ts explicitly from the worker's environment 
+#         res <- fn.objfxn1(dir.pred = run_dir, obs.ts = obs.ts)
+#         # Save results to local text file in the run directory
+#         write.table(t(res), file = file.path(run_dir, "obj_results.txt"), 
+#                     sep = ",", row.names = FALSE, col.names = TRUE)
+#         
+#         res # Return the full vector for the logic below
+#       }, error = function(e) {
+#         # Log the error to a file if objective function fails
+#         writeLines(as.character(e), file.path(run_dir, "obj_error.txt"))
+#         return(NA_real_)
+#       })
+#       
+#       # Return the total likelihood (first element) to the GA 
+#       if(is.numeric(out) && length(out) >= 1) return(out[1])
+#     }
+#     return(NA_real_)
+#   }
+# }#eof
 
 
 # safe_runEwE <- function(cmdfile, do.obj, timeout_sec = 1) {

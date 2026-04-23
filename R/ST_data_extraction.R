@@ -389,7 +389,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   #nc.files <- nc.files[which(!grepl("static",basename(nc.files)))]
   if(make.monthly){
   for(i in 1:length(nc.files)){  
-    #i=2
+    #i=1
     nc = nc_open(nc.files[i])
     nc.vars = names(nc$var)
     #print(nc.vars)
@@ -404,7 +404,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     st.existing <- st.existing[which(!st.existing %in% c('hoard','plots','static'))]
     
     for(v in 1:length(nc.vars)){
-      #v=2
+      #v=1
       if(!is.null(do.vars) & !nc.vars[v] %in% do.vars) next
       
       nc.v = ncvar_get(nc,nc.vars[v])
@@ -450,7 +450,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         #loop over timesteps----
         for(t in 1:ntimes){  #big monthly loop takes time, need to parallel
           #t=1
-          print(paste0(nc.vars[v],"--month ",t," of ",ntimes));flush.console()
+          message(paste0(nc.vars[v],"--month ",t," of ",ntimes));flush.console()
           brick1 = brick(nc.tmp[,,,t],crs=crs(depth))
           extent(brick1) = extent(depth)
           
@@ -489,16 +489,20 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           }
           
           #sum over water column----
+          plot(out.surf)
           if(nc.vars[v] %in% c('chl','no3','nppv','phyc')){
             #ras.sum = sum(rast(brick1),na.rm=T)
+            zthickness50 <- zthickness
+            zthickness50[floor(zthickness/10)>5] <- 0
             ras.sum <- app(rast(brick1), fun = 
                              function(v) {
                                if (all(is.na(v))) {
                                  NA               # keep land as NA
                                } else {
-                                 sum(v * zthickness, na.rm = TRUE)
+                                 sum(v * zthickness50, na.rm = TRUE)
                                }
                              })
+            #plot(ras.sum)
             ras.sum = resample(ras.sum, rast(depth))
             ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
             ras.sum <- mask(ras.sum.filled, rast(depth))
@@ -624,7 +628,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
   dirs.stvars = dirs.stvars[-c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))]
   basename(dirs.stvars)
   for(i in 1:length(dirs.stvars)){
-    #i=16
+    #i=1
     stvar.i <- unlist(strsplit(basename(dirs.stvars[i]),"_"))[1]
     if(!is.null(do.vars) & !stvar.i %in% c(do.vars,gsub("_glor","",do.vars))) next
     stname = basename(dirs.stvars[i]) #paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
@@ -643,9 +647,8 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     #create static map s
     st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
     st.mean_allyrs = mean(st.stack,na.rm=T)
-    #st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
     #st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
-    
+    #st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
     
     #save static map
     writeRaster(st.mean_allyrs,file.path(dir.static,paste0(stname,"_avg_allyrs")),format='ascii',overwrite=T)
