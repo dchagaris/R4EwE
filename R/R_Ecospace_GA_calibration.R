@@ -516,6 +516,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 
 #' @keywords internal
 #' @noRd
+
 # safe_runEwE <- function(cmdfile, do.obj,bug=F) {
 #     if (!bug){
 #     on.exit(gc(), add = TRUE)
@@ -588,6 +589,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 #       return(NA_real_)
 #     }
 # }#eof
+
 
 
 # safe_runEwE <- function(cmdfile, do.obj, timeout_sec = 1) {
