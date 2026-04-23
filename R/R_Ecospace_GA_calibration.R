@@ -29,7 +29,7 @@ fn.makeparvec <- function(
   vul_pars = predprey_pars,
   vul.min = 1.01,
   vul.max = 1e6,
-  vul.cv = 0.3,
+  vul.cv = 0.4,
   
   do.env = FALSE, 
   env_pars = NULL,
@@ -39,7 +39,7 @@ fn.makeparvec <- function(
   
   do.disp = TRUE,
   disp_pars = disp_pars,
-  disp.cv=0.1,
+  disp.cv=0.2,
   disp.min=3,
   disp.max=3000,
   
@@ -53,11 +53,11 @@ fn.makeparvec <- function(
   fltdyn.max=5,
   fltdyn.cv=0.2){
   
-  # do.vuls=TRUE; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4;
-  # do.env=TRUE; env_pars=env_pars; env.min=0.1; env.max=2; env.cv=0.2;
-  # do.disp=TRUE; disp_pars=disp_pars; disp.cv=0.2;
-  # do.med = FALSE; med_pars = NULL; med.xbase.cv = .1;
-  # do.fltdyn = TRUE; fltdyn_pars=fltdyn_pars; fltdyn.min=0; fltdyn.max=5; fltdyn.cv=0.2
+  # do.vuls=fit.vuls; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4; 
+  # do.env=fit.env; env_pars=env_pars; env.min=0.1; env.max=2; env.cv=0.3;
+  # do.disp=fit.disp; disp_pars=disp_pars; disp.cv=0.2;
+  # do.med = fit.med; med_pars=NULL; med.xbase.cv = .1;
+  # do.fltdyn = fit.fltdyn; fltdyn_pars=fltdyn_pars; fltdyn.min=0.1; fltdyn.max=5; fltdyn.cv=0.3
   
   #validate setup----
   if(do.vuls){
@@ -153,7 +153,7 @@ fn.makeparvec <- function(
     par.idx = c(par.idx,rep('fleetdyn',length(fleet_vec)))
     tag.short = ifelse(fltdyn_pars$tag.type=='effective power','pow','mult')
     par.labels = c(par.labels,paste('flt',fltdyn_pars$fleet.idx,tag.short,sep="_"))
-    par.groups = c(par.groups,paste('flt',fltdyn_pars$fleet.idx,sep="_"))
+    par.groups = c(par.groups,paste('flt',fltdyn_pars$fleet.idx,tag.short,sep="_"))
     #log.par.idx <- c(log.par.idx,rep(TRUE,length(log_disp_vec)))
   }
   
@@ -185,12 +185,14 @@ fn.makeparvec <- function(
   # set parameter bounds--------------------------------------------------------
   ##vulnerabilities - do these on the log scale
   lower.vuls <- upper.vuls <- numeric()
+  if(do.vuls){
   lower.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.05))
   lower.vuls <- ifelse(lower.vuls<=1.0,1.01,lower.vuls)
   upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))
-  
+  }
   ##environmental shapes - TBD
   lower.env <- upper.env <- numeric()
+  if(do.env){
   if(n_env>0){
     for(i in 1:length(env_vec)){
       #i=1
@@ -208,21 +210,23 @@ fn.makeparvec <- function(
       upper.env <- c(upper.env,upper.i)
     } #end i loop
   } #end if env
-
+  }
   
   ##dispersal
   lower.disp <- upper.disp <- numeric()
+  if(do.dispersal)
   lower.disp <- disp_vec-2*disp.cv*disp_vec
   upper.disp <- disp_vec+2*disp.cv*disp_vec
   
   ##fleet dynamics
   lower.flt <- upper.flt <- numeric()
+  if(do.fltdyn){
   lower.flt <- rep(fltdyn.min,length(fleet_vec))
   upper.flt <- rep(fltdyn.max,length(fleet_vec))
-  
+  }
   ##mediation
   lower.med <- upper.med <- numeric()  
-  if(n_med>0){
+  if(do.med){
   med.cv = numeric()  
   for(i in 1:length(med_vec)){
     #i=1
@@ -453,7 +457,8 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
         pref.i <- pref.base*par_set.i[2]
         LT.i <- round(pmax(0,mid.i-pref.i/2),2)
         RT.i <- round(mid.i+pref.i/2,2)
-        LB.i <- round(pmax(0,LT.i-(LT.base-LB.base)*par_set.i[2]),2)
+        LB.i <- round(LT.i-(LT.base-LB.base)*par_set.i[2],2)
+        #LB.i <- round(pmax(0,LT.i-(LT.base-LB.base)*par_set.i[2]),2)
         RB.i <- round(RT.i+(RB.base-RT.base)*par_set.i[2],2)
         par.string.i <- paste(type.i, LB.i, LT.i, RT.i, RB.i, sep=" ")
         tag.i <- paste0("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",shape.i,"), ",par.string.i,", Indexed.Single[]")
@@ -513,6 +518,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 #' @keywords internal
 #' @noRd
 
+
 safe_runEwE <- function(cmdfile, do.obj) {
   on.exit(gc(), add = TRUE)
   #out <- tryCatch({
@@ -522,100 +528,80 @@ safe_runEwE <- function(cmdfile, do.obj) {
   #}, error = function(e) NA_real_)
   if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
 
-# safe_runEwE <- function(cmdfile, do.obj, bug=F) {
-#   if (!bug){
-#     on.exit({
-#       gc()
-#       # Aggressively kill any lingering EwE console processes spawned by this worker
-#       # This prevents zombies if the timeout is triggered
-#       try(system("taskkill /F /IM EwE.exe /T", show.output.on.console = FALSE), silent = TRUE)
-#       try(system("taskkill /F /IM Ecospace.exe /T", show.output.on.console = FALSE), silent = TRUE)
-#     }, add = TRUE)
-#     
-#     out <- tryCatch({
-#       # Wrap the original function in a strict timeout (e.g., 20 minutes / 1200 seconds)
-#       if (requireNamespace("R.utils", quietly = TRUE)) {
-#         R.utils::withTimeout({
-#           fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-#         }, timeout = 1200, onTimeout = "error") # throw error on timeout to trigger NA_real_
-#       } else {
-#         # Fallback if R.utils isn't installed
-#         fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-#       }
-#     }, error = function(e) {
-#       # If it times out or fails, return NA to let the GA know this run failed
-#       return(NA_real_)
-#     })
-#     
-#     if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) {
-#       return(out[1]) 
-#     } else {
-#       return(NA_real_)
-#     }
-#   } else {
+# safe_runEwE <- function(cmdfile, do.obj,bug=F) {
+#     if (!bug){
 #     on.exit(gc(), add = TRUE)
-#     run_dir <- dirname(cmdfile)
-#     
-#     # Ensure clean slate for output detection
-#     target_file <- file.path(run_dir, "Ecospace_Annual_Average_Biomass.csv")
-#     if(file.exists(target_file)) file.remove(target_file)
-#     
-#     # Normalize paths and handle spaces in "King Mackerel" via PowerShell triple-quotes
-#     console_path <- normalizePath(file.console, winslash = "\\", mustWork = TRUE)
-#     cmd_path     <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
-#     
-#     # PowerShell command construction
-#     ps_cmd <- paste0("powershell -Command \"Start-Process -FilePath '", console_path, 
-#                      "' -ArgumentList '\"\"", cmd_path, "\"\"' -PassThru | Select-Object -ExpandProperty Id\"")
-#     
-#     # Jitter to prevent concurrent Access DB collisions
-#     Sys.sleep(runif(1, 0.1, 5.0)) 
-#     
-#     # Launch and capture PID, trimming whitespace/newlines to prevent taskkill failure
-#     raw_pid <- tryCatch(suppressWarnings(system(ps_cmd, intern = TRUE)), error = function(e) NA)
-#     pid <- if(is.character(raw_pid) && length(raw_pid) > 0) trimws(raw_pid[1]) else NA
-#     
-#     start_time <- Sys.time()
-#     model_finished <- FALSE
-#     
-#     # Monitoring loop with 20-minute timeout
-#     while(difftime(Sys.time(), start_time, units="mins") < 20) {
-#       Sys.sleep(5) 
-#       if(file.exists(target_file)) {
-#         if(file.info(target_file)$size > 100) {
-#           Sys.sleep(2) # Buffer for disk writing
-#           model_finished <- TRUE
-#           break
+#     #out <- tryCatch({
+#       # example: quiet system call
+#       # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
+#     out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
+#     #}, error = function(e) NA_real_)
+#     if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
+#     } else {
+#       on.exit(gc(), add = TRUE)
+#       run_dir <- dirname(cmdfile)
+#       
+#       # Ensure clean slate for output detection
+#       target_file <- file.path(run_dir, "Ecospace_Annual_Average_Biomass.csv")
+#       if(file.exists(target_file)) file.remove(target_file)
+#       
+#       # Normalize paths and handle spaces in "King Mackerel" via PowerShell triple-quotes
+#       console_path <- normalizePath(file.console, winslash = "\\", mustWork = TRUE)
+#       cmd_path     <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
+#       
+#       # PowerShell command construction [cite: 1]
+#       ps_cmd <- paste0("powershell -Command \"Start-Process -FilePath '", console_path, 
+#                        "' -ArgumentList '\"\"", cmd_path, "\"\"' -PassThru | Select-Object -ExpandProperty Id\"")
+#       
+#       # Jitter to prevent concurrent Access DB collisions [cite: 6]
+#       Sys.sleep(runif(1, 0.1, 5.0)) 
+#       
+#       # Launch and capture PID
+#       pid <- tryCatch(suppressWarnings(system(ps_cmd, intern = TRUE)), error = function(e) NA)
+#       
+#       start_time <- Sys.time()
+#       model_finished <- FALSE
+#       
+#       # Monitoring loop with 20-minute timeout [cite: 6]
+#       while(difftime(Sys.time(), start_time, units="mins") < 20) {
+#         Sys.sleep(5) 
+#         if(file.exists(target_file)) {
+#           if(file.info(target_file)$size > 100) {
+#             Sys.sleep(2) # Buffer for disk writing
+#             model_finished <- TRUE
+#             break
+#           }
 #         }
 #       }
-#     }
-#     
-#     # Force kill the specific PID and its child tree (/T) to release file locks
-#     if(!is.na(pid) && pid != "") {
-#       try(system(paste0("taskkill /T /F /PID ", pid), show.output.on.console = FALSE), silent = TRUE)
-#     }
-#     
-#     if(model_finished) {
-#       out <- tryCatch({
-#         # Pass obs.ts explicitly from the worker's environment 
-#         res <- fn.objfxn1(dir.pred = run_dir, obs.ts = obs.ts)
-#         # Save results to local text file in the run directory
-#         write.table(t(res), file = file.path(run_dir, "obj_results.txt"), 
-#                     sep = ",", row.names = FALSE, col.names = TRUE)
-#         
-#         res # Return the full vector for the logic below
-#       }, error = function(e) {
-#         # Log the error to a file if objective function fails
-#         writeLines(as.character(e), file.path(run_dir, "obj_error.txt"))
-#         return(NA_real_)
-#       })
 #       
-#       # Return the total likelihood (first element) to the GA 
-#       if(is.numeric(out) && length(out) >= 1) return(out[1])
+#       # Force kill the specific PID to release file locks 
+#       if(!is.na(pid)) {
+#         try(system(paste0("taskkill /F /PID ", pid), show.output.on.console = FALSE), silent = TRUE)
+#       }
+#       
+#       if(model_finished) {
+#         out <- tryCatch({
+#           # Pass obs.ts explicitly from the worker's environment 
+#           res <- fn.objfxn1(dir.pred = run_dir, obs.ts = obs.ts)
+#           # Save results to local text file in the run directory
+#           write.table(t(res), file = file.path(run_dir, "obj_results.txt"), 
+#                       sep = ",", row.names = FALSE, col.names = TRUE)
+#           
+#           res # Return the full vector for the logic below
+#         }, error = function(e) {
+#           # Log the error to a file if objective function fails
+#           writeLines(as.character(e), file.path(run_dir, "obj_error.txt"))
+#           return(NA_real_)
+#         })
+#         
+#         # Return the total likelihood (first element) to the GA 
+#         if(is.numeric(out) && length(out) >= 1) return(out[1])
+#       }
+#       return(NA_real_)
 #     }
-#     return(NA_real_)
-#   }
 # }#eof
+
+
 
 
 # safe_runEwE <- function(cmdfile, do.obj, timeout_sec = 1) {
@@ -630,17 +616,17 @@ safe_runEwE <- function(cmdfile, do.obj) {
 # }#eof
 
 
-# safe_runEwE <- function(cmdfile, do.obj) {
-#   on.exit(gc(), add = TRUE)   # ensure cleanup
-#   out <- tryCatch(
-#     fn.runEwE(cmdfile = cmdfile, do.obj = do.obj),
-#     error = function(e) NA_real_)
-#     if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
-#       out[1]
-#     } else {
-#       NA_real_
-#     }
-# }#eof
+safe_runEwE <- function(cmdfile, do.obj) {
+  on.exit(gc(), add = TRUE)   # ensure cleanup
+  out <- tryCatch(
+    fn.runEwE(cmdfile = cmdfile, do.obj = do.obj),
+    error = function(e) NA_real_)
+    if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
+      out[1]
+    } else {
+      NA_real_
+    }
+}#eof
 
 
 #run the population of models----
@@ -668,9 +654,9 @@ fn.runEwE.gapop <-  function(
     files.cmd, 
     obj.fxn=1, 
     delete.output=T,
-    max_tries=5
+    max_tries=50
 ){
-  #source(file.setup)
+
 
   #clusterExport(cl,append(cl.export,c("file.console", "fn.runEwE", "safe_runEwE","fn.objfxn1", "fn.objfxn2","styear","enyear","group.names","df.names","fn.ecospace_predB_ts2array","fn.ecospace_predC_ts2array")))
 
@@ -681,8 +667,7 @@ fn.runEwE.gapop <-  function(
   #print(paste('Running',length(files.cmd),'Ecospace simulations'))
   t1 <- Sys.time()
   runLL.out <- foreach(i = seq_along(files.cmd), .errorhandling = 'pass') %dopar% { #, .options.snow = opts
-    #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
-    #i=1
+    #i=5
     safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
     #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
   }
@@ -695,6 +680,7 @@ fn.runEwE.gapop <-  function(
   #runLL[11:15] <- NA_real_ 
   erruns <- which(is.na(runLL))
   #filecheck <- sapply(dirname(files.cmd),FUN=function(x)length(list.files(x)))
+  unlink(dirname(files.cmd[erruns]), recursive=T)
   #erruns <- which(filecheck<=1)  
   tries <- 0
   while(length(erruns)>=1 && tries<max_tries){
@@ -705,8 +691,13 @@ fn.runEwE.gapop <-  function(
     #prog <- function(n) setWinProgressBar(pbar,(n/length(erruns)*100),label=paste("Simulation Run", n,"of", length(erruns),"Completed"))
     #opts <- list(progress=prog)
     
+    gapop.err <- fn.GApop(pardist=gapop.pardist,vuldist=gapop.vuldist)
+    files.cmd.err <- lapply(erruns,function(i) fn.parvec2cmd(par_vec=gapop.err[i,], g=0, idx=i)) 
+    files.cmd.err <- unlist(files.cmd.err, use.names=F)
+    
+    
     runLL.err.out <- foreach(i=1:length(erruns),.errorhandling='pass') %dopar% {#,.options.snow=opts
-      safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
+      safe_runEwE(cmdfile=files.cmd.err[i], do.obj = obj.fxn)
       #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
     }
     runLL.err <- unlist(runLL.err.out)
@@ -719,6 +710,8 @@ fn.runEwE.gapop <-  function(
     #erruns <- which(filecheck<=1)  #if there are many missing runs, then need to do this in parallel
     #runLL[16] <- NA_real_
     erruns <- which(is.na(runLL))
+    files.cmd <- list.files(path=run_dir, pattern="cmd.txt", full.names=T, recursive=T)
+    if(length(erruns)>0) unlink(dirname(files.cmd[erruns]), recursive=T)
   }
   
   

@@ -492,17 +492,40 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           plot(out.surf)
           if(nc.vars[v] %in% c('chl','no3','nppv','phyc')){
             #ras.sum = sum(rast(brick1),na.rm=T)
-            zthickness50 <- zthickness
-            zthickness50[floor(zthickness/10)>5] <- 0
-            ras.sum <- app(rast(brick1), fun = 
-                             function(v) {
-                               if (all(is.na(v))) {
-                                 NA               # keep land as NA
-                               } else {
-                                 sum(v * zthickness50, na.rm = TRUE)
-                               }
-                             })
+ 
+            # zthickness50 <- zthickness
+            # zthickness50[floor(zthickness/10)>5] <- 0
+            # ras.sum <- app(rast(brick1), fun = 
+            #                  function(v) {
+            #                    if (all(is.na(v))) {
+            #                      NA               # keep land as NA
+            #                    } else {
+            #                      sum(v * zthickness50, na.rm = TRUE)
+            #                    }
+            #                  })
             #plot(ras.sum)
+            ras.sum <- app(rast(brick1), fun = function(v) {
+               if (all(is.na(v))) {
+                 NA               # keep land as NA
+               } else {
+                 #sum(v * zthickness, na.rm = TRUE) #old way, entire watercolumn
+                 # Calculate cumulative depth for each layer
+                 cumul_depth <- cumsum(zthickness)
+                 # Find layers within first 50m
+                 within_50m <- cumul_depth <= 50
+                 # For layers that partially extend beyond 50m, 
+                 # adjust thickness to only include the portion within 50m
+                 adjusted_thickness <- zthickness
+                 if(any(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)) {
+                   partial_layer <- which(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)
+                   adjusted_thickness[partial_layer] <- 50 - c(0, cumul_depth[-length(cumul_depth)])[partial_layer]
+                 }
+                 
+                 # Sum only the layers within 50m
+                 sum(v[within_50m] * adjusted_thickness[within_50m], na.rm = TRUE)
+               }
+             })
+
             ras.sum = resample(ras.sum, rast(depth))
             ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
             ras.sum <- mask(ras.sum.filled, rast(depth))
@@ -535,28 +558,15 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
         if(nlayers(out.mean)>0) names(out.mean) <- paste0("X",format(nc.times,"%Y%m"))
         if(nlayers(out.sum)>0) names(out.sum) <- paste0("X",format(nc.times,"%Y%m"))
         
-        #depth integration of surface chlorophyll-------------------------------------------------------
-        if(nc.vars[v]=='chl'){
-          message("Creating depth integrated chl from surface chl using Morel and Berthon (1989) equations 2b and 2c")
-          chlos.zint <- out.surf
-          chlos.zint <- raster::calc(chlos.zint,function(x) {ifelse(x < 1.0,
-                                                                    38.0 * x^0.425,  # Eq 2b
-                                                                    40.2 * x^0.507)})  # Eq 2c
-        }
-        
-        #normalize PP to mean of first year
+
+        #normalize PP to mean of first year----
         if(nc.vars[v] %in% c('chl','nppv','phyc') & scalePP){
           message("Normalizing PP drivers to mean=1 in first year of data")
           surf.yr1mean <- calc(out.surf[[1:12]],mean,na.rm=T)
           sum.yr1mean <-  calc(out.sum[[1:12]],mean,na.rm=T) 
           
-          out.surf.norm <- out.surf/surf.yr1mean
-          out.sum.norm <- out.sum/sum.yr1mean
-          
-          if(nc.vars[v]=='chl') {
-            zint.yr1mean <- calc(chlos.zint[[1:12]],mean,na.rm=T)
-            chlos.zint.norm <- chlos.zint/zint.yr1mean
-          }
+          out.surf.norm <- out.surf/cellStats(surf.yr1mean,mean,na.rm=T)
+          out.sum.norm <- out.sum/cellStats(sum.yr1mean,mean,na.rm=T)
         }
         
         #write ascii------------------------------------------------------------
@@ -637,6 +647,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     #read output--------------------------------------------------------------------
     #list ecospace output ascii files
     files.st = list.files(dirs.stvars[i],full.names = T,recursive=T)#[-c(1:6)]
+    files.st = files.st[!grepl("_0000_",basename(files.st))]
     
     #read them into raster stack
     st.stack = stack(files.st)
@@ -871,166 +882,275 @@ fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg=
 #'                       dir.stdriver=file.path(dirname(getwd()),'ST drivers','5min'))}
 #' @export
 
-fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth.5min,
-                                 dir.stdriver=dir.stdriver, make.monthly=TRUE, make.static=FALSE){
-  # nc.files = files.nc
-  # depth=depth.15min
-  # dir.stdriver=file.path(dirname(getwd()),'ST drivers','15min')
-  # make.monthly=TRUE
-  # make.static=TRUE
+fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth,
+                                 dir.stdriver=dir.stdriver, scalePP=TRUE, do.vars=NULL, 
+                                 make.monthly=TRUE, make.static=TRUE, make.climatology=TRUE){
   
   if(make.monthly){
   for(i in 1:length(nc.files)){
-    #i=1
+    #i=4
     nc <- nc_open(nc.files[i])
-    on.exit(nc_close(nc), add = TRUE)
     nc.vars = names(nc$var)
     message(nc.vars)
     ndims = nc$ndims
     message("- Processing variable ",i," of ",length(nc.files),": ",nc.vars)
-    nc.sub <- ncvar_get(nc, var=nc.vars)
-    dim(nc.sub)
-    message("-- Variable read into memory.")
-    
-    #get timestamps----
-    refdate = as.Date(substr(nc$dim$time$units,nchar(nc$dim$time$units)-9,nchar(nc$dim$time$units)))
-    nc.times = seq(refdate, by='month', length.out=length(nc$dim$time$vals))
-    ntime   <- length(nc.times)
     
     #Get coordinate variables----
     lon <- ncvar_get(nc, "lon")
     lat <- ncvar_get(nc, "lat")
     zvals <- nc$dim$z_l$vals
-    
-    # Define lat/lon----
-    lat_bounds <- extent(depth)[3:4]
-    lon_bounds <- extent(depth)[1:2]
-    
-    # Find lat/lon indices for subsetting
-    lon_idx <- which(lon >= lon_bounds[1] & lon <= lon_bounds[2])
-    lat_idx <- which(lat >= lat_bounds[1] & lat <= lat_bounds[2])
-    
-    #sub arrays for centers
-    lon_sub <- lon[lon_idx]
-    lat_sub <- lat[lat_idx]
-    
-    # Compute center spacings; if descending, use abs
-    dx <- abs(mean(diff(lon_sub)))
-    dy <- abs(mean(diff(lat_sub)))
-    
-    # Extent from centers (pad by half a cell)
-    ext_nc <- extent(min(lon_sub) - dx/2, max(lon_sub) + dx/2,
-                     min(lat_sub) - dy/2, max(lat_sub) + dy/2)
-    
-    nrow_nc <- length(lat_idx)  # rows -> lat
-    ncol_nc <- length(lon_idx)  # cols -> lon
+    zthickness <- zvals
+    time <- ncvar_get(nc,'time')
+    ntime <- length(time)
+    refdate <- as.Date(gsub("[A-Za-z ]", "",nc$dim$time$units))
+    nc.times <- seq.Date(from=refdate,by='month',length.out=ntime)
+    # Find spatial indices for bbox
+    lon_idx <- which(lon >= bbox[1] & lon <= bbox[2])
+    lat_idx <- which(lat >= bbox[3] & lat <= bbox[4])
+    cat("  Spatial subset: lon", range(lon[lon_idx]), "lat", range(lat[lat_idx]), "\n")
 
-    # ---- build stack on native grid ----
-    message("-- Building stack on native grid...")
-    var.stack = stack()
-    for (t in 1:ntime) {
-      #t=1
-      mat <- nc.sub[lon_idx, lat_idx,t] #subset for lat lon
-      mat <- t(t(mat[, dim(mat)[2]:1]))  # assumes [lat, lon] matrix, need to flip x-axis (lon) and transpose
-      r_k <- raster(nrows = nrow_nc, ncols = ncol_nc,
-                    ext = ext_nc, crs = crs(depth))
-      # raster fills values column-wise; t() keeps spatial layout
-      values(r_k) <- as.vector((mat))
-      #plot(r_k)
-      
-      var.stack <- addLayer(var.stack, r_k)
+    # Extract data for spatial subset
+    if(ndims==4){
+    nc.v <- ncvar_get(nc, nc.vars, 
+                         start = c(min(lon_idx), min(lat_idx), 1,1),
+                         count = c(length(lon_idx), length(lat_idx), -1,-1))
+    nc.v <- aperm(nc.v,c(2,1,3,4))
+    
+    } else{
+    nc.v <- ncvar_get(nc, nc.vars, 
+                         start = c(min(lon_idx), min(lat_idx), 1),
+                         count = c(length(lon_idx), length(lat_idx), -1))
+    nc.v <- aperm(nc.v,c(2,1,3))
     }
-    names(var.stack) <- nc.times
-var.stack
-    # ---- Regrid to depth (sq 1/12°) ----
-    # Project CRS if needed
-    message("-- Regridding to depth...")
-    depth_proj <- depth
-    if (!compareCRS(depth_proj, var.stack)) {
-      depth_proj <- projectRaster(depth_proj, crs = crs(var.stack), method = "bilinear")
-    }
+    nc_close(nc)
     
-    # Resample the stack to the depth grid (now square cells)
-    var_on_depth <- resample(var.stack, depth_proj, method = "bilinear")
-    
-    # Crop & mask by depth coverage
-    var_crop   <- crop(var_on_depth, extent(depth_proj))
-    var_masked <- mask(var_crop, !is.na(depth_proj))
-    var.regrid <- readAll(var_masked)
-    
-    # ---- quick checks ----
-    message("-- Native res: ", paste(round(res(var.stack),4), collapse = ", "),
-            " | Native grid: ", paste(dim(var.stack)[1:2],collapse="x"),
-            " | Depth res: ", paste(round(res(depth_proj),4), collapse = ", "),
-            " | Depth grid: ", paste(dim(depth)[1:2],collapse="x"),
-            " | Resampled res: ", paste(round(res(var.regrid),4), collapse = ", "),
-            " | Resampled grid: ", paste(dim(var.regrid)[1:2],collapse="x"))
-    
-    
-    #---- fill NA water cells----
-    message('-- Filling water cells...')
-    var.out = stack()
-    for(s in 1:nlayers(var.regrid)){
-      #s=1
-      message("----",s," of ",nlayers(var.regrid))
-      ras.s = rast(var.regrid[[s]])
-      ras.s = resample(ras.s,rast(depth)) #resample to output resolution
-      ras.s.filled <- fill_coastal_cells(ras.s, mask='depth') #fill missing cells iteratively
-      ras.s <- mask(ras.s.filled, rast(depth))  #mask the land
-      #plot(ras.s, colNA='black',main=paste(nc.vars,var_units))
-      var.out = addLayer(var.out,raster(ras.s)) #add to stack
-      rm(ras.s, ras.s.filled);gc()
-    }  
-    
-    #----unit conversions----
-    #convert units of NPP from mol N m-2 s-1 to gC m-2 month-1
-    if(nc.vars=='wc_vert_int_npp'){
-      message("Converting units of NPP from mol N m-2 s-1 to gC m-2 month-1")
-      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
-      var.out <- var.out*6.625*12*30.5*24*60*60
-    }
-    
-    #convert units of chlos from kg m-3 to mg m-3
-    if(nc.vars=='chlos'){
-      message("Converting units of chlos from kg m-3 to mg m-3")
-      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
-      var.out <- var.out*1e6
-    }
-    
-    #convert units of oxygen from mol kg-1 to  mmol m-3
-    if(nc.vars=='btm_o2'){
-      message("Converting units of btm_o2 from mol kg-1 to  mmol m-3")
-      #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
-      var.out <- var.out*1000*1025
-    }
-    
-    #----depth integration of surface chlorophyll----
-    if(nc.vars=='chlos'){
-      message("Creating depth integrated chl from surface chl using Morel and Berthon (1989) equations 2b and 2c")
-      chlos.zint <- var.out
-      chlos.zint <- raster::calc(chlos.zint,function(x) {ifelse(x < 1.0,
-                            38.0 * x^0.425,  # Eq 2b
-                            40.2 * x^0.507)})  # Eq 2c
-      
-      dir.out = file.path(dir.stdriver,paste0(nc.vars,'_zint_cefi'))
-      if(!dir.exists(dir.out)) dir.create(dir.out)
-      writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(nc.vars,'_zint')),bylayer=T,suffix=format(nc.times,"%Y%m"),
-                                       format='ascii',overwrite=T)
-    }
-
-    #write ascii------------------------------------------------------------------------------------
-    message("-- Writing ascii files...")
-    if(nlayers(var.out)>0){
-      dir.out = file.path(dir.stdriver,paste0(nc.vars,'_cefi'))
-      if(!dir.exists(dir.out)) dir.create(dir.out)
-      writeRaster(round(var.out,4),file.path(dir.out,nc.vars),bylayer=T,suffix=format(nc.times,"%Y%m"),
-                  format='ascii',overwrite=T)
-      rm(var.out);gc()
-    }
-  }
-  }
+    if(make.monthly){
+      ndims = length(dim(nc.v))
   
-} #eof
+      if(ndims==3){  #bottom temp is the only variable with just 3 dimensions
+        ntimes = dim(nc.v)[3]
+        dimnames(nc.v)[[3]] <- gsub("-","_",substr(nc.times,1,10))
+        #nc.tmp = aperm(nc.v,c(2,1,3))
+        nc.tmp = nc.v[dim(nc.v)[1]:1,,]
+        brick1 = brick(nc.tmp, crs=crs(depth))
+        extent(brick1) = extent(depth)
+        ras.v <- resample(rast(brick1),rast(depth))
+        plot(ras.v)
+        out.v = stack()
+        for(t in 1:nlyr(ras.v)){
+          #t=1
+          message(paste0(nc.vars,"--month ",t," of ",ntimes))
+          ras.t.filled <- fill_coastal_cells(ras.v[[t]])
+          ras.t <- mask(ras.t.filled,rast(depth))
+          out.v <- addLayer(out.v, raster(ras.t))
+          rm(ras.t, ras.t.filled); gc()
+        }
+        names(out.v) <- paste0("X",format(nc.times,"%Y%m"))[1:dim(out.v)[3]]
+        
+        #----unit conversions----
+        #convert units of NPP from mol N m-2 s-1 to gC m-2 month-1
+        if(nc.vars=='wc_vert_int_npp'){
+          message("Converting units of NPP from mol N m-2 s-1 to gC m-2 month-1")
+          #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+          out.v <- out.v*6.625*12*30.5*24*60*60
+        }
+        
+        #convert units of chlos from kg m-3 to mg m-3
+        if(nc.vars=='chlos'){
+          message("Converting units of chlos from kg m-3 to mg m-3")
+          #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+          out.v <- out.v*1e6
+        }
+        
+        #convert units of chlo from ug/kg to mg m-3
+        if(nc.vars=='chl'){
+          message("Converting units of chl from ug kg-1 to mg m-3")
+          #multiply by seawater density 1.025 kg/L
+          out.v <- out.v*1.025
+        }
+        
+        #convert units of oxygen from mol kg-1 to  mmol m-3
+        if(nc.vars=='btm_o2'){
+          message("Converting units of btm_o2 from mol kg-1 to  mmol m-3")
+          #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+          out.v <- out.v*1000*1025
+        }
+        
+        if(nlayers(out.v)>0) out.v <- round(out.v,4)
+        if(nlayers(out.v)>0) names(out.v) <- paste0("X",format(nc.times,"%Y%m"))[1:dim(out.v)[3]]
+        
+        #normalize PP to mean of first year
+        if(nc.vars %in% c('chlos') & scalePP){
+          message("Normalizing PP drivers to mean=1 in first year of data")
+          class(out.v)
+          dim(out.v)
+          names(out.v)
+          surf.yr1mean <-  calc(out.v[[1:12]],mean,na.rm=T) 
+          out.v.norm <- out.v/cellStats(surf.yr1mean,mean,na.rm=T)
+
+          dir.out = file.path(dir.stdriver,paste0(nc.vars,'_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(out.v.norm,4),file.path(dir.out,paste0(nc.vars,"_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(out.v.norm); gc()
+          
+        }
+        
+        
+        #write ascii
+        dir.out = file.path(dir.stdriver,nc.vars)
+        if(!dir.exists(dir.out)) dir.create(dir.out)
+        writeRaster(out.v,file.path(dir.out,nc.vars),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+        rm(out.v);gc()
+      }
+      
+      if(ndims==4){
+        ntimes = dim(nc.v)[4]
+        dimnames(nc.v)[[4]] <- gsub("-","_",substr(nc.times,1,10))
+        out.sum = out.sum.norm = stack() 
+        
+        #loop over timesteps----
+        for(t in 1:ntimes){  #big monthly loop takes time, need to parallel
+          #t=1
+          print(paste0(nc.vars,"--month ",t," of ",ntimes));flush.console()
+          brick1 = brick(nc.v[,,,t],crs=crs(depth))
+          dim(brick1)
+          extent(brick1) = extent(depth)
+          brick1 <- flip(brick1, direction='y')
+          nlayers(brick1)
+  
+          #sum over water column----
+          if(nc.vars %in% c('chl')){
+            #ras.sum = sum(rast(brick1),na.rm=T)
+            ras.sum <- app(rast(brick1), fun = function(v) {
+                           if (all(is.na(v))) {
+                             NA               # keep land as NA
+                           } else {
+                             #sum(v * zthickness, na.rm = TRUE) #old way, entire watercolumn
+                             # Calculate cumulative depth for each layer
+                             cumul_depth <- cumsum(zthickness)
+                             # Find layers within first 50m
+                             within_50m <- cumul_depth <= 50
+                             # For layers that partially extend beyond 50m, 
+                             # adjust thickness to only include the portion within 50m
+                             adjusted_thickness <- zthickness
+                             if(any(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)) {
+                               partial_layer <- which(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)
+                               adjusted_thickness[partial_layer] <- 50 - c(0, cumul_depth[-length(cumul_depth)])[partial_layer]
+                             }
+                             
+                             # Sum only the layers within 50m
+                             sum(v[within_50m] * adjusted_thickness[within_50m], na.rm = TRUE)
+                           }
+                         })
+            ras.sum = resample(ras.sum, rast(depth))
+            ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
+            ras.sum <- mask(ras.sum.filled, rast(depth))
+            out.sum <- addLayer(out.sum, raster(ras.sum))
+            rm(ras.sum, ras.sum.filled); gc()
+          }
+        }
+        rm(brick1);gc()
+        
+        #----unit conversions----
+        #convert units of chl from ug/kg to mg m-3
+        if(nc.vars=='chl'){
+          message("Converting units of chl from ug kg-1 to mg m-3")
+          #multiply by seawater density 1.025 kg/L
+          out.sum <- out.sum*1.025
+        }
+        
+        if(nlayers(out.sum)>0) out.sum <- round(out.sum,4)
+        if(nlayers(out.sum)>0) names(out.sum) <- paste0("X",format(nc.times,"%Y%m"))
+        
+        #normalize PP to mean of first year
+        if(nc.vars %in% c('chl') & scalePP){
+          message("Normalizing PP drivers to mean=1 in first year of data")
+          sum.yr1mean <-  calc(out.sum[[1:12]],mean,na.rm=T) 
+          out.sum.norm <- out.sum/cellStats(sum.yr1mean,mean,na.rm=T)
+        }
+        
+        #write ascii------------------------------------------------------------
+        if(nlayers(out.sum)>0){
+          dir.out = file.path(dir.stdriver,paste0(nc.vars,'_sum'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(out.sum,4),file.path(dir.out,paste0(nc.vars,"_sum")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(out.sum); gc()
+        }
+ 
+        if(nlayers(out.sum.norm)>0 & scalePP){
+          dir.out = file.path(dir.stdriver,paste0(nc.vars,'_sum_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out)
+          writeRaster(round(out.sum.norm,4),file.path(dir.out,paste0(nc.vars,"_sum_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+          rm(out.sum.norm); gc()
+        }
+      }
+          }
+        }
+      }
+      #make static maps----
+      if(make.static | make.climatology){
+        message("Making static and monthly climatology maps")
+        dirs.stvars = list.dirs(path=dir.stdriver,recursive=F)
+        dir.static = file.path(dir.stdriver,"static")
+        if(!dir.exists(dir.static)) dir.create(dir.static)
+        if(length(c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))>0)){
+        dirs.stvars = dirs.stvars[-c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))]
+        }
+        basename(dirs.stvars)
+        for(i in 1:length(dirs.stvars)){
+          #i=16
+          stvar.i <- unlist(strsplit(basename(dirs.stvars[i]),"_"))[1]
+          if(!is.null(do.vars) & !stvar.i %in% c(do.vars,gsub("_glor","",do.vars))) next
+          stname = basename(dirs.stvars[i]) #paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
+          message(paste0("now making ",i," of ",length(dirs.stvars),": ",stname))
+          
+          #read output--------------------------------------------------------------------
+          #list ecospace output ascii files
+          files.st = list.files(dirs.stvars[i],full.names = T,recursive=T)#[-c(1:6)]
+          files.st = files.st[!grepl("_0000_",basename(files.st))]
+          
+          #read them into raster stack
+          st.stack = stack(files.st)
+          #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
+          yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
+          names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+          
+          #create static map s
+          st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
+          st.mean_allyrs = mean(st.stack,na.rm=T)
+          #st.mean_yr1 = mean(rast(st.stack[[1:12]]), na.rm=T)
+          #st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
+          
+          
+          #save static map
+          writeRaster(st.mean_allyrs,file.path(dir.static,paste0(stname,"_avg_allyrs")),format='ascii',overwrite=T)
+          writeRaster(st.mean_yr1,file.path(dir.static,paste0(stname,"_avg_yr1")),format='ascii',overwrite=T)
+          
+          #no need to normalize, since the monthly maps were already normalized and in their own folder.
+          # if(substr(basename(stname),1,3) %in% c('chl','npp','phy')){
+          #   st.mean_yr1.norm = st.mean_yr1/cellStats(st.mean_yr1,mean,na.rm=T)
+          #   st.mean_allyrs.norm = st.mean_allyrs/cellStats(st.mean_allyrs,mean,na.rm=T)
+          #   
+          #   writeRaster(st.mean_allyrs.norm,file.path(dir.static,paste0(stname,"_avg_allyrs_norm")),format='ascii',overwrite=T)
+          #   writeRaster(st.mean_yr1.norm,file.path(dir.static,paste0(stname,"_avg_yr1_norm")),format='ascii',overwrite=T)
+          # }
+          
+          #monthly climatology
+          month_indices <- match(substr(names(st.stack),1,3),month.abb)
+          monthly_averages <- stackApply(st.stack, indices = month_indices, fun = mean, na.rm = TRUE)
+          
+          writeRaster(monthly_averages,file.path(dirs.stvars[i],paste0(basename(dirs.stvars[i]),'_0000')),
+                      suffix=formatC(1:12,width=2,flag=0), format='ascii',overwrite=T, bylayer=T)
+          
+          rm(st.stack); gc()
+        }
+      }
+}#eof
+    
+    
+    
+    
+
 
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

@@ -42,7 +42,7 @@ fn.GA <- function(myconfig){
   #small test change here
   
   #create results file
-  file.ga.results <- file.path(dir.results, paste0('ga_results_',timestamp,'.csv'))
+  file.ga.results <- file.path(dir.results.ga, paste0('ga_results_',timestamp,'.csv'))
   myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
   write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
   write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
@@ -50,13 +50,13 @@ fn.GA <- function(myconfig){
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
   write.table(myconfig.string,file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(t(c("gen_num","min_fitness","mean_fitness",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
+  write.table(t(c("gen","min_LL","max_LL","mean_LL","median_LL","sd_LL","NA_count",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
   #base run
   files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
   message('Running the base model')
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1)  
-  
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1,delete.output=T)  
+
   #pipe output
   g=-1
   best_fit = min(fitness[1], na.rm=T)
@@ -64,10 +64,11 @@ fn.GA <- function(myconfig){
   sd_fit = sd(fitness[1], na.rm=T)
   max_fit = max(fitness[1], na.rm=T)
   median_fit = median(fitness[1], na.rm=T)
-  best_pars = est_par_vec 
-  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  cat(sprintf("%-10s %-15s %-15s %-15s %-15s %-15s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","time end"))
-  cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
+  na_count = sum(is.na(fitness))
+  best_pars = est_par_vec
+  write.table(t(c(g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+  cat(sprintf("%-5s %-10s %-10s %-10s %-10s %-10s %-6s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","NA_count","time end"))
+  cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
   
   #initial population.................................
   #message('Running the initial population')
@@ -75,8 +76,8 @@ fn.GA <- function(myconfig){
   gapop[1,] <- est_par_vec  #include base run in initial population
   write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
-  pdf(file.path(dir.ga_results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
-  #graphics.off();rm(.SavedPlots);windows(record=T)
+  pdf(file.path(dir.results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
+  graphics.off();rm(.SavedPlots);windows(record=T)
   par(mfrow=c(3,3))
   for(i in 1:ncol(gapop)){
     hist(gapop[,i],breaks=100,main=colnames(gapop)[i],xlab='value')
@@ -84,10 +85,9 @@ fn.GA <- function(myconfig){
   }
   dev.off()
 
-  #files.cmd <- apply(gapop,1,function(x) fn.parvec2cmd(log_par_vec=x, g=0, idx=0)) 
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
   files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=F)
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=T)
 
   #calculate penalty for parameter bounds violations
   if(do.penalty){
@@ -109,9 +109,10 @@ fn.GA <- function(myconfig){
   sd_fit = sd(fitness, na.rm=T)
   max_fit = max(fitness, na.rm=T)
   median_fit = median(fitness, na.rm=T)
+  na_count = sum(is.na(fitness))
   best_pars = round(gapop[which.min(fitness),],4)
-  write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
+  write.table(t(c(g,best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+  cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
   #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
   #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
   
@@ -120,6 +121,7 @@ fn.GA <- function(myconfig){
     if(gen==1) unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
     
     #reset workers after every 5 generations - this didn't help but we'll keep it jic
+    if(n_generations>5){
     if(gen %in% seq(6,n_generations,5)){
       try(silent = TRUE, stopCluster(cl))
       rm(cl); gc()
@@ -132,7 +134,7 @@ fn.GA <- function(myconfig){
                           "fn.ecospace_predB_ts2array","fn.ecospace_predC_ts2array",
                           "styear","enyear","group.names","df.names","obs.ts"))
     }
-    
+    }
     # Elitism - keep the top n runs
     elite_idx <- order(fitness, decreasing=F)[1:elitism]
     elite <- gapop[elite_idx, ]
@@ -149,6 +151,7 @@ fn.GA <- function(myconfig){
     #   hist(offspring[,i],breaks=100,main=colnames(offspring)[i],xlab='value')
     #   abline(v=est_par_vec[i],col='blue',lty=2)
     # }
+
     
     # Evaluate new population
     ensure_cluster()  # optional but recommended
@@ -174,6 +177,20 @@ fn.GA <- function(myconfig){
     gapop   <- rbind(elite, offspring[-worst_offspring_idx, ])
     fitness <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
     
+    #plot and save final generation
+    if(gen==n_generations){
+      pdf(file.path(dir.results,paste0('final_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
+      graphics.off();rm(.SavedPlots);windows(record=T)
+      par(mfrow=c(3,3))
+      for(i in 1:ncol(gapop)){
+        hist(gapop[,i],breaks=100,main=colnames(gapop)[i],xlab='value')
+        abline(v=est_par_vec[i],col='blue',lty=2)
+      }
+      dev.off()
+      write.csv(gapop,file.path(dir.results,paste0('final_ga_pop',timestamp,'.csv')))
+    }
+    
+    
     # Combine elite + offspring, drop worst offspring and replace with elites
     # offspring.rank = rank(-new_fitness, ties.method='random')
     # drop.idx = which(offspring.rank<=elitism)
@@ -187,9 +204,11 @@ fn.GA <- function(myconfig){
     sd_fit = sd(fitness, na.rm=T)
     max_fit = max(fitness, na.rm=T)
     median_fit = median(fitness, na.rm=T)
+    na_count = sum(is.na(fitness))
     best_pars = round(gapop[which.min(fitness),],4)
-    write.table(t(c(g,best_fit,mean_fit,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-    cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
+    write.table(t(c(g,best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+    cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
+    #cat(sprintf("%-10d %-15.2f %-15.2f %-15.2f %-15.2f %-15.2f | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, Sys.time()))
     #message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
     #unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
     rm(parents,offspring,files.cmd);gc()
