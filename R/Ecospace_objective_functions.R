@@ -41,6 +41,7 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){
     obs.sd = sqrt(log(1+(obs.cv/obs.wt)^2))
     
     lk.dat = data.frame(pred=predB[,grpnum], obs=obs.ts.biomass[,j])
+    #lk.dat$pred <- ifelse(is.na(lk.dat$pred),1e-6,lk.dat$pred)
     lk.dat$obs = ifelse(lk.dat$obs==0,NA,lk.dat$obs)
     rownames(lk.dat) <- rownames(predB)
     if(obs.ts.head$type[j]==0){
@@ -78,6 +79,7 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){
     obs.sd = sqrt(log(1+(obs.cv/obs.wt)^2))
     if(length(idx_group)==1) lk.dat = data.frame(pred=predC[,idx_group], obs=obs.ts.catch[,j])
     if(length(idx_group)>1) lk.dat = data.frame(pred=rowSums(predC[,idx_group]), obs=obs.ts.catch[,j])
+    #lk.dat$pred <- ifelse(is.na(lk.dat$pred),1e-6,lk.dat$pred)
     lk.dat$obs[lk.dat$obs <=0] <- NA
     rownames(lk.dat) <- rownames(predC)
     

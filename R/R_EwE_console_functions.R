@@ -281,7 +281,7 @@ fn_fleetdyn_testval_tags <- function(fleetdyn.base, pct.change=0.5){
   mult = rbind(mult.low[,c('fleet','effort.mult')],mult.hi[,c('fleet','effort.mult')])
   mult = mult[order(mult$fleet),]
   mult$effort.mult = round(mult$effort.mult,2)
-  tags.mult <- paste0("<ECOSPACE_FLEET_EFFORTMULT_INDEXED>(",mult$fleet,"), ",mult$effort.mult,", Indexed.Single")
+  tags.mult <- paste0("<ECOSPACE_FLEET_TOTAL_EFFORTMULT_INDEXED>(",mult$fleet,"), ",mult$effort.mult,", Indexed.Single")
   
   tags <- c(tags.pow,tags.mult)
   return(tags)
@@ -430,19 +430,20 @@ fn.make_cmd_files = function(runlist=runlist,nyrs=nyrs){
     #set output directory
     param = "<ECOSPACE_OUTPUT_DIR>"
     update = paste0(runlist$dir.out[i])
-    n = which(substr(cmd_i[,1],1,nchar(param))==param)
-    cmd_i[n,1]= paste(param, update, "System.String, Updated", sep = ", ")
+    n = which(substr(cmd_i,1,nchar(param))==param)
+    cmd_i[n]= paste(param, update, "System.String, Updated", sep = ", ")
 
     #set run length
     param = "<N_ECOSPACE_YEARS>"
     update = nyrs
-    n = which(substr(cmd_i[,1],1,nchar(param))==param)
-    cmd_i[n,1]= paste(param, update, "System.Int32, Updated", sep = ", ")
+    n = which(substr(cmd_i,1,nchar(param))==param)
+    cmd_i[n]= paste(param, update, "System.Int32, Updated", sep = ", ")
     
     #add taglines
-    cmd_i = rbind(cmd_i,runlist$tag[i])
+    #cmd_i = rbind(cmd_i,runlist$tag[i])
+    cmd_i = c(cmd_i,runlist$tag[i])
     
     #save command file to run folder
     write.table(cmd_i, runlist$cmd_file[i],  row.names = FALSE, col.names = FALSE, quote = FALSE)
   }
-}
+}#eof
