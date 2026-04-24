@@ -398,7 +398,8 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     time_refdate = as.POSIXct(paste0(gsub("[a-zA-Z ]", "", time_units)," 00:00"))
     time_stepsize = ifelse(grepl("hours",time_units),"hours",ifelse(grepl("sec",time_units),'secs',ifelse(grepl("day",time_units),'days',NA)))
     nc.times = time_refdate+as.difftime(nc$dim$time$vals,units=time_stepsize)
-    zthickness <- nc$dim$depth$vals
+    zvals <- nc$dim$depth$vals
+    zthickness <- c(diff(zvals-zvals[1]),tail(diff(zvals-zvals[1]),1))
     
     st.existing <- list.dirs(dir.stdriver,full.names=F,recursive=F)
     st.existing <- st.existing[which(!st.existing %in% c('hoard','plots','static'))]
@@ -489,7 +490,7 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           }
           
           #sum over water column----
-          plot(out.surf)
+          #plot(out.surf)
           if(nc.vars[v] %in% c('chl','no3','nppv','phyc')){
             #ras.sum = sum(rast(brick1),na.rm=T)
  
@@ -503,28 +504,28 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
             #                      sum(v * zthickness50, na.rm = TRUE)
             #                    }
             #                  })
-            #plot(ras.sum)
             ras.sum <- app(rast(brick1), fun = function(v) {
                if (all(is.na(v))) {
                  NA               # keep land as NA
                } else {
                  #sum(v * zthickness, na.rm = TRUE) #old way, entire watercolumn
                  # Calculate cumulative depth for each layer
-                 cumul_depth <- cumsum(zthickness)
                  # Find layers within first 50m
-                 within_50m <- cumul_depth <= 50
+                 within_50m <- zvals <= 50
                  # For layers that partially extend beyond 50m, 
                  # adjust thickness to only include the portion within 50m
                  adjusted_thickness <- zthickness
-                 if(any(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)) {
-                   partial_layer <- which(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)
-                   adjusted_thickness[partial_layer] <- 50 - c(0, cumul_depth[-length(cumul_depth)])[partial_layer]
+                 if(any(zvals > 50 & c(0, zvals[-length(zvals)]) < 50)) {
+                   partial_layer <- which(zvals > 50 & c(0, zvals[-length(zvals)]) < 50)
+                   adjusted_thickness[partial_layer] <- 50 - c(0, zvals[-length(zvals)])[partial_layer]
                  }
+                 cbind(zvals,zthickness,adjusted_thickness)
                  
                  # Sum only the layers within 50m
                  sum(v[within_50m] * adjusted_thickness[within_50m], na.rm = TRUE)
                }
              })
+            #plot(ras.sum)
 
             ras.sum = resample(ras.sum, rast(depth))
             ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
@@ -598,12 +599,12 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           rm(out.sum); gc()
         }
         
-        if(nlayers(chlos.zint)>0){
-          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint"))
-          if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
-          rm(chlos.zint);gc()
-        }
+        # if(nlayers(chlos.zint)>0){
+        #   dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint"))
+        #   if(!dir.exists(dir.out)) dir.create(dir.out)
+        #   writeRaster(round(chlos.zint,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+        #   rm(chlos.zint);gc()
+        # }
         
         if(nlayers(out.sum.norm)>0 & scalePP){
           dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_sum_norm'))
@@ -619,12 +620,12 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
           rm(out.surf.norm); gc()
         }
         
-        if(nlayers(chlos.zint.norm)>0 & scalePP){
-          dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint_norm'))
-          if(!dir.exists(dir.out)) dir.create(dir.out)
-          writeRaster(round(chlos.zint.norm,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
-          rm(chlos.zint.norm); gc()
-        }
+        # if(nlayers(chlos.zint.norm)>0 & scalePP){
+        #   dir.out = file.path(dir.stdriver,paste0(gsub("_glorys","",nc.vars[v]),'_surf_Zint_norm'))
+        #   if(!dir.exists(dir.out)) dir.create(dir.out)
+        #   writeRaster(round(chlos.zint.norm,4),file.path(dir.out,paste0(gsub("_glorys","",nc.vars[v]),"_surf_Zint_norm")),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T, options = c("DECIMAL_PRECISION=4"))
+        #   rm(chlos.zint.norm); gc()
+        # }
       }
     }
   }
@@ -888,7 +889,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
   
   if(make.monthly){
   for(i in 1:length(nc.files)){
-    #i=4
+    #i=3
     nc <- nc_open(nc.files[i])
     nc.vars = names(nc$var)
     message(nc.vars)
@@ -899,7 +900,9 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     lon <- ncvar_get(nc, "lon")
     lat <- ncvar_get(nc, "lat")
     zvals <- nc$dim$z_l$vals
-    zthickness <- zvals
+    zthickness <- c(diff(zvals-zvals[1]),tail(diff(zvals-zvals[1]),1))
+    #zthickness <- diff(zvals-zvals[1])
+    #zthickness <- zvals
     time <- ncvar_get(nc,'time')
     ntime <- length(time)
     refdate <- as.Date(gsub("[A-Za-z ]", "",nc$dim$time$units))
@@ -927,7 +930,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
     if(make.monthly){
       ndims = length(dim(nc.v))
   
-      if(ndims==3){  #bottom temp is the only variable with just 3 dimensions
+      if(ndims==3){ 
         ntimes = dim(nc.v)[3]
         dimnames(nc.v)[[3]] <- gsub("-","_",substr(nc.times,1,10))
         #nc.tmp = aperm(nc.v,c(2,1,3))
@@ -980,11 +983,8 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
         if(nlayers(out.v)>0) names(out.v) <- paste0("X",format(nc.times,"%Y%m"))[1:dim(out.v)[3]]
         
         #normalize PP to mean of first year
-        if(nc.vars %in% c('chlos') & scalePP){
+        if(nc.vars %in% c('chlos','wc_vert_int_npp') & scalePP){
           message("Normalizing PP drivers to mean=1 in first year of data")
-          class(out.v)
-          dim(out.v)
-          names(out.v)
           surf.yr1mean <-  calc(out.v[[1:12]],mean,na.rm=T) 
           out.v.norm <- out.v/cellStats(surf.yr1mean,mean,na.rm=T)
 
@@ -1027,21 +1027,22 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
                            } else {
                              #sum(v * zthickness, na.rm = TRUE) #old way, entire watercolumn
                              # Calculate cumulative depth for each layer
-                             cumul_depth <- cumsum(zthickness)
+                             #cumul_depth <- cumsum(zthickness)
                              # Find layers within first 50m
-                             within_50m <- cumul_depth <= 50
+                             within_50m <- zvals <= 50
                              # For layers that partially extend beyond 50m, 
                              # adjust thickness to only include the portion within 50m
                              adjusted_thickness <- zthickness
-                             if(any(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)) {
-                               partial_layer <- which(cumul_depth > 50 & c(0, cumul_depth[-length(cumul_depth)]) < 50)
-                               adjusted_thickness[partial_layer] <- 50 - c(0, cumul_depth[-length(cumul_depth)])[partial_layer]
+                             if(any(zvals > 50 & c(0, zvals[-length(zvals)]) < 50)) {
+                               partial_layer <- which(zvals > 50 & c(0, zvals[-length(zvals)]) < 50)
+                               adjusted_thickness[partial_layer] <- 50 - c(0, zvals[-length(zvals)])[partial_layer]
                              }
                              
                              # Sum only the layers within 50m
                              sum(v[within_50m] * adjusted_thickness[within_50m], na.rm = TRUE)
                            }
                          })
+            #plot(ras.sum)
             ras.sum = resample(ras.sum, rast(depth))
             ras.sum.filled <- fill_coastal_cells(ras.sum, mask=depth)
             ras.sum <- mask(ras.sum.filled, rast(depth))
