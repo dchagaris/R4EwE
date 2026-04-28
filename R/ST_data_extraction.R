@@ -938,7 +938,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
         brick1 = brick(nc.tmp, crs=crs(depth))
         extent(brick1) = extent(depth)
         ras.v <- resample(rast(brick1),rast(depth))
-        plot(ras.v)
+        #plot(ras.v)
         out.v = stack()
         for(t in 1:nlyr(ras.v)){
           #t=1
