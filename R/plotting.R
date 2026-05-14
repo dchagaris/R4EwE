@@ -454,6 +454,375 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   list(dead = group_dead, surv = group_surv)
 }
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Internal helpers for fn.ecospace_plot_fits ------------------------------------------------------
+
+#' @keywords internal
+#' @noRd
+.detect_ecospace_regions <- function(dir.out, timestep){
+  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
+  files <- unique(unlist(lapply(dir.out, function(d){
+    list.files(d, pattern = paste0("^", prefix, "\\d+_Biomass\\.csv$"),
+               recursive = TRUE)
+  })))
+  if(length(files) == 0) return(integer(0))
+  m <- regmatches(basename(files), regexec("Region_(\\d+)_", basename(files)))
+  regs <- as.integer(vapply(m, `[`, character(1), 2))
+  sort(unique(regs))
+}
+
+#' @keywords internal
+#' @noRd
+.read_pred_ecospace_wide <- function(dir.out, varname, timestep, regions, styear,
+                                     aggregate_by_group = FALSE){
+  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
+
+  # Collect data: [[run_key]][[region_id]] = data frame (years x groups [x fleet pre-agg])
+  collected <- list()
+  for(d in dir.out){
+    for(r in regions){
+      pat <- paste0("^", prefix, r, "_", varname, "\\.csv$")
+      files <- list.files(d, pattern = pat, recursive = TRUE, full.names = TRUE)
+      for(f in files){
+        run_key <- basename(dirname(f))
+        nskip <- .find_year_skip(f, timestep)
+        if(length(nskip) == 0 || is.na(nskip)) next
+        dt <- utils::read.csv(f, skip = nskip, row.names = 1, check.names = FALSE)
+        if(aggregate_by_group && any(grepl("\\|", names(dt)))){
+          grp_names <- vapply(strsplit(names(dt), "\\|"), function(x) tail(x, 1), character(1))
+          uniq_grps <- unique(grp_names)
+          agg <- matrix(0, nrow = nrow(dt), ncol = length(uniq_grps),
+                        dimnames = list(rownames(dt), uniq_grps))
+          for(g in uniq_grps){
+            cg <- which(grp_names == g)
+            agg[, g] <- if(length(cg) == 1) dt[, cg] else rowSums(dt[, cg, drop = FALSE], na.rm = TRUE)
+          }
+          dt <- as.data.frame(agg, check.names = FALSE)
+        }
+        if(is.null(collected[[run_key]])) collected[[run_key]] <- list()
+        collected[[run_key]][[as.character(r)]] <- dt
+      }
+    }
+  }
+  if(length(collected) == 0) return(NULL)
+
+  # Union of group columns across all run/region data frames
+  all_groups <- unique(unlist(lapply(collected, function(rl)
+    unique(unlist(lapply(rl, names))))))
+  template <- collected[[1]][[which(!vapply(collected[[1]], is.null, logical(1)))[1]]]
+  n_years <- nrow(template)
+  runs <- names(collected)
+
+  arr <- array(NA_real_,
+               dim = c(n_years, length(all_groups), length(regions), length(runs)),
+               dimnames = list(seq_len(n_years), all_groups, paste0("R", regions), runs))
+  for(r_idx in seq_along(runs)){
+    for(reg_idx in seq_along(regions)){
+      dt <- collected[[runs[r_idx]]][[as.character(regions[reg_idx])]]
+      if(is.null(dt)) next
+      arr[seq_len(nrow(dt)), names(dt), reg_idx, r_idx] <- as.matrix(dt)
+    }
+  }
+  dimnames(arr)[[1]] <- as.character(styear + seq_len(n_years) - 1L)
+  arr
+}
+
+#' @keywords internal
+#' @noRd
+.align_by_group <- function(a, b){
+  common <- intersect(dimnames(a)[[2]], dimnames(b)[[2]])
+  if(length(common) == 0) return(NULL)
+  list(a = a[, common, , , drop = FALSE], b = b[, common, , , drop = FALSE])
+}
+
+#' @keywords internal
+#' @noRd
+.read_pred_ecospace_discards <- function(dir.out, timestep, regions, styear){
+  catch <- .read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
+  land  <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+  if(is.null(catch) || is.null(land)) return(NULL)
+  al <- .align_by_group(catch, land); if(is.null(al)) return(NULL)
+  d <- al$a - al$b
+  d[d < 0] <- 0
+  d
+}
+
+#' @keywords internal
+#' @noRd
+.read_pred_ecospace_F <- function(dir.out, timestep, regions, styear){
+  catch <- .read_pred_ecospace_wide(dir.out, "Catch",   timestep, regions, styear, aggregate_by_group = TRUE)
+  bio   <- .read_pred_ecospace_wide(dir.out, "Biomass", timestep, regions, styear, aggregate_by_group = FALSE)
+  if(is.null(catch) || is.null(bio)) return(NULL)
+  al <- .align_by_group(catch, bio); if(is.null(al)) return(NULL)
+  f <- al$a / al$b
+  f[!is.finite(f)] <- 0
+  f
+}
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' @title Multipanel Ecospace prediction-vs-observation plots, single combined PDF.
+#' @description Reads predicted biomass, catch, landings, discards (catch - landings), and an
+#'   approximate fishing mortality (catch / biomass) from one or more Ecospace run folders for each
+#'   region present, overlays matching observed timeseries from
+#'   \code{\link{fn.read_ecosim_timeseries}} on a per-region basis (using the Region row in the obs
+#'   header to assign each obs series to a region), and writes all panels to a single combined PDF.
+#'   Each panel shows one group with one predicted line per region; observed points are colored to
+#'   match the prediction line of the region the obs is labeled with. For relative (non-absolute)
+#'   series, obs are scaled to the prediction of their own region by
+#'   \code{q = mean(obs[overlap]) / mean(pred[overlap, obs.region])}.
+#' @param dir.out Path to an Ecospace run folder containing the
+#'   \code{Ecospace_Annual_Average_Region_<n>_<Var>.csv} (or \code{Ecospace_Average_*} for monthly)
+#'   outputs, or a parent folder containing multiple run subfolders. May be a vector of folders.
+#' @param obs.ts Output of \code{\link{fn.read_ecosim_timeseries}}. Must include the optional
+#'   \code{Region} column (auto-populated as \code{NA} when the ts file has no Region header row);
+#'   obs series without a matching region are dropped from the overlays.
+#' @param vars Which panels to draw. Any subset of
+#'   \code{c("biomass","catch","landings","discards","F")}. Default is all five. \code{discards} is
+#'   computed as \code{catch - landings}; \code{F} is \code{catch / biomass} per region.
+#' @param timestep \code{"annual"} or \code{"monthly"}.
+#' @param regions Integer vector of region IDs to plot. \code{NULL} (default) auto-detects all
+#'   \code{Region_<n>_Biomass.csv} files found under \code{dir.out}.
+#' @param groups One of \code{"with_obs"} (default), \code{"all"}, or an integer vector of group
+#'   pool codes.
+#' @param styear Calendar start year. \code{NULL} (default) uses the earliest year in
+#'   \code{rownames(obs.ts$ts)}.
+#' @param scale2run For multi-run output (\code{dir.out} is a parent of multiple Ecospace run
+#'   subfolders), which run column is the scaling baseline / sole pred displayed. Default 1.
+#' @param plt.dims Panel grid \code{c(rows, cols)}.
+#' @param region.colors Vector of line/point colors per region (in detected-region order). Default
+#'   \code{seq_along(regions)}.
+#' @param region.names Optional character vector parallel to detected regions (sorted by region ID)
+#'   used in the bottom-of-page legend. Default \code{"Region <n>"}.
+#' @param sim.labels Multi-run labels. Default = run subfolder basenames.
+#' @param group.names Character vector indexed by group pool code. Required to map obs (which uses
+#'   pool codes) to Ecospace output columns (which use group names). If \code{NULL}, obs overlay is
+#'   skipped (predictions still plotted).
+#' @param plot2pdf Logical. If TRUE, writes \code{file.path(dir.plts, "ecospace fits_<run.label>.pdf")}.
+#' @param dir.plts Directory to write the PDF.
+#' @param run.label String appended to the PDF filename. Defaults to today's date.
+#' @return Invisibly returns the list of prediction arrays used (each is
+#'   \code{[years, groups, regions, runs]}).
+#' @examples
+#' \dontrun{
+#' ts <- fn.read_ecosim_timeseries("ts_mice_v4_discards_ecospace_regions.csv")
+#' fn.ecospace_plot_fits(dir.out = "sp00_5min_init", obs.ts = ts,
+#'                       group.names = mygroupnames, plot2pdf = TRUE)
+#' }
+#' @export
+fn.ecospace_plot_fits <- function(dir.out, obs.ts,
+                                  vars          = c("biomass", "catch", "landings", "discards", "F"),
+                                  timestep      = "annual",
+                                  regions       = NULL,
+                                  groups        = "with_obs",
+                                  styear        = NULL,
+                                  scale2run     = 1,
+                                  plt.dims      = c(3, 3),
+                                  region.colors = NULL,
+                                  region.names  = NULL,
+                                  sim.labels    = NULL,
+                                  group.names   = NULL,
+                                  plot2pdf      = FALSE,
+                                  dir.plts      = dir.out[1],
+                                  run.label     = Sys.Date()){
+
+  vars <- tolower(vars)
+
+  # 1. detect regions and styear -------------------------------------------------------------
+  if(is.null(regions)) regions <- .detect_ecospace_regions(dir.out, timestep)
+  if(length(regions) == 0)
+    stop("No Ecospace per-region output files found under: ", paste(dir.out, collapse = ", "))
+  if(is.null(styear)){
+    yrs_obs <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    styear  <- min(yrs_obs[is.finite(yrs_obs)])
+    if(!is.finite(styear)) stop("Could not infer styear from obs.ts; please pass styear = <year>.")
+  }
+
+  # 2. read prediction arrays ----------------------------------------------------------------
+  pred <- list()
+  if("biomass"  %in% vars) pred$biomass  <- .read_pred_ecospace_wide   (dir.out, "Biomass",  timestep, regions, styear, aggregate_by_group = FALSE)
+  if("catch"    %in% vars) pred$catch    <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
+  if("landings" %in% vars) pred$landings <- .read_pred_ecospace_wide   (dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+  if("discards" %in% vars) pred$discards <- .read_pred_ecospace_discards(dir.out,            timestep, regions, styear)
+  if("f"        %in% vars) pred$fmort    <- .read_pred_ecospace_F      (dir.out,            timestep, regions, styear)
+
+  pred <- pred[!vapply(pred, is.null, logical(1))]
+  if(length(pred) == 0)
+    stop("No prediction files found under: ", paste(dir.out, collapse = ", "))
+
+  # 3. defaults -------------------------------------------------------------------------------
+  nruns <- dim(pred[[1]])[4]
+  if(is.null(region.colors)) region.colors <- seq_along(regions)
+  if(is.null(region.names))  region.names  <- paste0("Region ", regions)
+  if(is.null(sim.labels))    sim.labels    <- dimnames(pred[[1]])[[4]]
+
+  # group name -> pool code lookup
+  norm_name <- function(x) gsub("\\s+", "_", trimws(gsub('"', "", as.character(x))))
+  norm_gn <- if(!is.null(group.names)) norm_name(group.names) else character(0)
+
+  # 4. open combined PDF ----------------------------------------------------------------------
+  if(plot2pdf){
+    grDevices::pdf(file.path(dir.plts, paste0("ecospace fits_", run.label, ".pdf")),
+                   onefile = TRUE, width = 11, height = 8.5)
+    on.exit(grDevices::dev.off(), add = TRUE)
+  }
+  n_per_page <- prod(plt.dims)
+
+  .pad_page <- function(n_drawn){
+    rem <- (n_per_page - (n_drawn %% n_per_page)) %% n_per_page
+    if(rem > 0) for(k in seq_len(rem)) graphics::plot.new()
+  }
+
+  # 5. per-variable panel routine -------------------------------------------------------------
+  panel_by_group_regions <- function(arr, var_label, obs_type_codes, y_lab,
+                                     obs_group_via = "Poolcode"){
+    if(is.null(arr)) return(invisible(NULL))
+    graphics::par(mfrow = plt.dims, mar = c(2, 4, 2, 1), oma = c(4, 0, 2, 1), xpd = FALSE)
+
+    xtime         <- as.numeric(dimnames(arr)[[1]])
+    eco_grp_names <- dimnames(arr)[[2]]
+    region_labels <- dimnames(arr)[[3]]
+    region_ids    <- as.integer(sub("R", "", region_labels))
+
+    # map each Ecospace column to its pool code (NA if group.names not provided / no match)
+    col_to_pc <- if(length(norm_gn))
+                   match(norm_name(eco_grp_names), norm_gn)
+                 else
+                   rep(NA_integer_, length(eco_grp_names))
+
+    obs_match_mask <- obs.ts$ts.head$Type %in% obs_type_codes
+    obs_groups_col <- if(obs_group_via == "Poolcode2") obs.ts$ts.head$Poolcode2 else obs.ts$ts.head$Poolcode
+
+    # determine columns to plot
+    arr_cols <- seq_along(eco_grp_names)
+    plot_cols <-
+      if(identical(groups, "all")) arr_cols
+      else if(identical(groups, "with_obs")){
+        if(all(is.na(col_to_pc))) integer(0)  # no mapping, no obs
+        else arr_cols[!is.na(col_to_pc) & col_to_pc %in% unique(obs_groups_col[obs_match_mask])]
+      } else arr_cols[!is.na(col_to_pc) & col_to_pc %in% as.integer(groups)]
+
+    if(length(plot_cols) == 0){
+      graphics::plot.new()
+      graphics::title(main = paste("No groups with obs for", var_label))
+      .pad_page(1); return(invisible(NULL))
+    }
+
+    obs_yrs <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    common_idx <- match(obs_yrs, xtime)
+
+    for(idx in seq_along(plot_cols)){
+      col <- plot_cols[idx]
+      pc  <- col_to_pc[col]
+
+      # pred matrix: rows = years, cols = regions (single run via scale2run)
+      pred_g <- arr[, col, , scale2run, drop = FALSE]
+      pred_g <- matrix(pred_g, nrow = length(xtime), ncol = length(region_ids),
+                       dimnames = list(dimnames(arr)[[1]], region_labels))
+
+      ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
+      obs_per_region <- vector("list", length(region_ids))
+      obs_labels_per_region <- vector("list", length(region_ids))
+      has_obs_any <- FALSE
+
+      if(!is.na(pc)){
+        for(reg_idx in seq_along(region_ids)){
+          r <- region_ids[reg_idx]
+          obs_rows <- which(obs_match_mask & obs_groups_col == pc &
+                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+          if(length(obs_rows) == 0) next
+
+          if(obs_group_via == "Poolcode2" && length(obs_rows) > 1){
+            om <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); om[om < 0] <- NA
+            row_any <- apply(!is.na(om), 1, any)
+            osum <- rowSums(om, na.rm = TRUE); osum[!row_any] <- NA
+            obs_s <- matrix(osum, ncol = 1,
+                            dimnames = list(NULL, paste0("obs_grp", pc, "_R", r)))
+            abs_vec <- all(obs.ts$ts.head$Absolute[obs_rows], na.rm = TRUE)
+          } else {
+            obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+            colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+            abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
+          }
+
+          pred_r <- pred_g[, reg_idx]
+          obs_scaled <- obs_s
+          for(j in seq_len(ncol(obs_s))){
+            q <- 1
+            if(!isTRUE(abs_vec[j])){
+              obs_nonna <- !is.na(obs_s[, j])
+              pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
+              if(length(pi) > 0){
+                mo <- mean(obs_s[obs_nonna, j], na.rm = TRUE)
+                mp <- mean(pred_r[pi], na.rm = TRUE)
+                if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+              }
+            }
+            obs_scaled[, j] <- obs_s[, j] / q
+          }
+          ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+          obs_per_region[[reg_idx]]        <- obs_scaled
+          obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
+          has_obs_any <- TRUE
+        }
+      }
+      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+      g_name <- if(!is.null(group.names) && !is.na(pc) && pc <= length(group.names))
+                  group.names[pc] else eco_grp_names[col]
+
+      graphics::par(xpd = FALSE)
+      graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                        ylim = c(0, ylim_top), main = g_name,
+                        col = region.colors, xlab = "", ylab = y_lab)
+
+      if(has_obs_any){
+        filled_pch <- c(21, 22, 23, 24, 25)  # circle, square, diamond, tri-up, tri-down — all with fill via bg
+        topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
+        for(reg_idx in seq_along(region_ids)){
+          if(is.null(obs_per_region[[reg_idx]])) next
+          obs_scaled <- obs_per_region[[reg_idx]]
+          col_reg <- region.colors[reg_idx]
+          for(j in seq_len(ncol(obs_scaled))){
+            sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
+            graphics::points(obs_yrs, obs_scaled[, j], pch = sym,
+                             col = "black", bg = col_reg, cex = 1.1, lwd = 0.5)
+            topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
+            topleft_pch    <- c(topleft_pch, sym)
+            topleft_col    <- c(topleft_col, col_reg)
+          }
+        }
+        if(length(topleft_labels))
+          graphics::legend("topleft", legend = topleft_labels,
+                           pch = topleft_pch, pt.bg = topleft_col, col = "black",
+                           pt.cex = 1.0, cex = 0.65, bty = "n")
+      }
+
+      if(idx == 1 || ((idx - 1) %% n_per_page == 0))
+        graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE, cex = 1.2, font = 2)
+
+      if(idx %% n_per_page == 0 || idx == length(plot_cols)){
+        graphics::par(xpd = NA)
+        x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
+        y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
+        graphics::legend(x = x_dev, y = y_dev, legend = region.names, lty = 1, lwd = 2,
+                         col = region.colors, bty = "n", xpd = NA,
+                         xjust = 0.5, yjust = 0, ncol = min(4, length(region.names)))
+      }
+    }
+    .pad_page(length(plot_cols))
+  }
+
+  # 6. draw each requested variable ----------------------------------------------------------
+  if("biomass"  %in% vars) panel_by_group_regions(pred$biomass,  "Biomass",                        c(0, 1),    "biomass")
+  if("catch"    %in% vars) panel_by_group_regions(pred$catch,    "Catch",                          c(6, 61, -6), "catch")
+  if("landings" %in% vars) panel_by_group_regions(pred$landings, "Landings (group, fleets summed)", c(12),     "landings", obs_group_via = "Poolcode2")
+  if("discards" %in% vars) panel_by_group_regions(pred$discards, "Discards (group)",               c(19, 20),  "discards")
+  if("f"        %in% vars) panel_by_group_regions(pred$fmort,    "Fishing mortality (catch/biomass)", c(4, 104), "F")
+
+  invisible(pred)
+}#eof
+
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #' @title Multipanel Ecosim prediction-vs-observation plots, single combined PDF.

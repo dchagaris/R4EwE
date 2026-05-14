@@ -37,9 +37,11 @@ retain the legacy 4-column layout (Title, Weight, Poolcode, Type) so existing ca
 }
 \description{
 Reads an Ecosim timeseries CSV and parses every series type defined in the type-code
-lookup (see \code{\link{fn.get_ts_type_table}}). Handles both 4-row headers (Title, Weight,
-Pool code, Type) and 5-row headers (Title, Weight, Pool code 1, Pool code 2, Type) by
-auto-detecting the "Type" row.
+lookup (see \code{\link{fn.get_ts_type_table}}). Handles 4-row headers (Title, Weight, Pool
+code, Type), 5-row headers (with Pool code 1 / Pool code 2), and the extended 6-row header
+used for Ecospace runs (adds a "Region" row identifying the Ecospace region per series). The
+"Type" and optional "Region" rows are auto-detected; the data block is taken to start after
+the last header row found.
 }
 \examples{
 \dontrun{

@@ -42,9 +42,11 @@ fn.get_ts_type_table <- function(){
 #Ecosim observed timeseries---------------------------------------------------------------------------------------
 #' @title Read an Ecosim timeseries file.
 #' @description Reads an Ecosim timeseries CSV and parses every series type defined in the type-code
-#'   lookup (see \code{\link{fn.get_ts_type_table}}). Handles both 4-row headers (Title, Weight,
-#'   Pool code, Type) and 5-row headers (Title, Weight, Pool code 1, Pool code 2, Type) by
-#'   auto-detecting the "Type" row.
+#'   lookup (see \code{\link{fn.get_ts_type_table}}). Handles 4-row headers (Title, Weight, Pool
+#'   code, Type), 5-row headers (with Pool code 1 / Pool code 2), and the extended 6-row header
+#'   used for Ecospace runs (adds a "Region" row identifying the Ecospace region per series). The
+#'   "Type" and optional "Region" rows are auto-detected; the data block is taken to start after
+#'   the last header row found.
 #' @param filename Path to the Ecosim timeseries CSV.
 #' @param types Optional subset filter. Either a numeric vector of type codes (e.g. \code{c(0, 1, 6)})
 #'   or a character vector of canonical type names (e.g. \code{c("BiomassRel", "Catches")}). Two
@@ -78,7 +80,7 @@ fn.get_ts_type_table <- function(){
 #' @export
 fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
 
-  # ---- 1. detect number of header rows by finding the row whose first cell is "Type" ----
+  # ---- 1. detect number of header rows by finding the "Type" row and (optional) "Region" row ----
   raw_lines <- readLines(filename, n = 20L)
   first_cell <- vapply(strsplit(raw_lines, ","), function(x){
     if(length(x) == 0) "" else gsub('"', '', trimws(x[1]))
@@ -86,7 +88,10 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
   type_row <- which(tolower(first_cell) %in% c("type", "type code", "typecode"))
   if(length(type_row) == 0)
     stop("Could not locate the 'Type' header row in: ", filename)
-  nhead <- type_row[1]
+  type_row   <- type_row[1]
+  region_row <- which(tolower(first_cell) == "region")
+  region_row <- if(length(region_row) > 0) region_row[1] else NA_integer_
+  nhead <- max(type_row, region_row, na.rm = TRUE)
 
   # ---- 2. read header block, transpose so each row = one series ----
   hdr.raw <- utils::read.csv(filename, header = FALSE, nrows = nhead, stringsAsFactors = FALSE)
@@ -109,6 +114,7 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
     hdr[[j]] <- suppressWarnings(as.numeric(hdr[[j]]))
   }
   if(!"Poolcode2" %in% names(hdr)) hdr$Poolcode2 <- NA_real_
+  if(!"Region"    %in% names(hdr)) hdr$Region    <- NA_integer_
 
   # ---- 3. read data block ----
   dat <- utils::read.csv(filename, header = FALSE, skip = nhead, stringsAsFactors = FALSE)
@@ -195,6 +201,7 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
         Type      = sh$Type.name[j],
         Poolcode  = sh$Poolcode[j],
         Poolcode2 = sh$Poolcode2[j],
+        Region    = sh$Region[j],
         Weight    = sh$Weight[j],
         Absolute  = sh$Absolute[j],
         Reference = sh$Reference[j],
