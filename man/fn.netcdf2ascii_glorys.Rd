@@ -8,8 +8,11 @@ fn.netcdf2ascii_glorys(
   nc.files = list.files(dir.glorys, pattern = ".nc$", full.names = T),
   dir.stdriver = dir.stdriver,
   depth = depth,
+  scalePP = TRUE,
+  do.vars = NULL,
   make.monthly = TRUE,
-  make.static = TRUE
+  make.static = TRUE,
+  make.climatology = TRUE
 )
 }
 \arguments{

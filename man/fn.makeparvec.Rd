@@ -9,7 +9,7 @@ fn.makeparvec(
   vul_pars = predprey_pars,
   vul.min = 1.01,
   vul.max = 1e+06,
-  vul.cv = 0.3,
+  vul.cv = 0.4,
   do.env = FALSE,
   env_pars = NULL,
   env.min = 0.25,
@@ -17,12 +17,17 @@ fn.makeparvec(
   env.cv = 0.2,
   do.disp = TRUE,
   disp_pars = disp_pars,
+  disp.cv = 0.2,
   disp.min = 3,
   disp.max = 3000,
-  disp.cv = 0.1,
-  do.med = TRUE,
-  med_pars = med_pars,
-  med.xbase.cv = 0.1
+  do.med = FALSE,
+  med_pars = NULL,
+  med.xbase.cv = 0.1,
+  do.fltdyn = FALSE,
+  fltdyn_pars = NULL,
+  fltdyn.min = 0,
+  fltdyn.max = 5,
+  fltdyn.cv = 0.2
 )
 }
 \arguments{
@@ -50,11 +55,11 @@ fn.makeparvec(
 
 \item{disp_pars}{Data frame of dispersal parameters.}
 
+\item{disp.cv}{Coefficient of variation for dispersal parameters.}
+
 \item{disp.min}{Minimum dispersal (unused placeholder).}
 
 \item{disp.max}{Maximum dispersal (unused placeholder).}
-
-\item{disp.cv}{Coefficient of variation for dispersal parameters.}
 
 \item{do.med}{Logical; include mediation parameters.}
 

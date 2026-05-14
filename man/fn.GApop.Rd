@@ -4,20 +4,23 @@
 \alias{fn.GApop}
 \title{Generate an initial GA population matrix}
 \usage{
-fn.GApop(run_config = myconfig, usedist = "unif")
+fn.GApop(run_config = myconfig, pardist = "uniform", vuldist = "uniform")
 }
 \arguments{
 \item{run_config}{List containing GA settings; must include \code{popSize}.}
 
-\item{usedist}{Character string; distribution type, either"unif" (uniform between bounds) or
-"normln" (log/normal hybrid). Default "unif".}
+\item{pardist}{Character string; distribution type, either"uniform" (uniform between bounds) or
+"normal" (normal/gamma hybrid). Default "uniform"}
+
+\item{vuldist}{Character string; distribution type for vulnerability parameters, either"uniform" (uniform between bounds) or
+"gamma" withc shape=2 and rate=shape/par. Default "uniform"}
 }
 \value{
 A numeric matrix of dimension run_config$popSize x n_pars.
 }
 \description{
 Creates the initial population for a genetic algorithm using either
-uniform draws within parameter bounds or (optionally) lognormal/normal
+uniform draws within parameter bounds or (optionally) normal/gamma
 draws centered on existing parameter estimates. Uses several global
 objects created elsewhere.
 }

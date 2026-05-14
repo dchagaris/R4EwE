@@ -1,34 +1,216 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-#Ecosim observed timeseries---------------------------------------------------------------------------------------
-#' @title Read an ecosim timeseries file.
-#' @description Reads an ecosim timeseries file and parses out the observed (non-forcing) components
-#' @param filename The location of the Ecosim timeseries file.
-#' @return A list containing an 4 dataframes, one each for observed biomass and catch timeseries and 
-#' one each for observed biomass and catch header information.
-#' #examples
-#' #example code:
-#' fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)
+#Ecosim timeseries type-code lookup--------------------------------------------------------------------------------
+#' @title Load the Ecosim timeseries type-code lookup table.
+#' @description Returns a data frame describing every Ecosim timeseries type code (biomass, catch,
+#'   mortality, effort, discards, prices, forcing series, etc.), the pool-code role required by each
+#'   type, and flags indicating whether the series is in absolute units and whether it is a reference
+#'   (calibration) series. The lookup CSV ships with the package at
+#'   \code{inst/extdata/time_series_codes.csv}.
+#' @return A data frame with columns: \code{code} (integer type code), \code{name} (canonical type
+#'   name, e.g. "BiomassRel"), \code{absolute} (logical), \code{reference} (logical), and
+#'   \code{pool_role} (text describing what the pool code(s) refer to).
 #' @export
+fn.get_ts_type_table <- function(){
+  f <- system.file("extdata", "time_series_codes.csv", package = "R4EwE")
+  if(!nzchar(f) || !file.exists(f)){
+    # devtools::load_all fallback: look under the package source tree
+    pkg <- tryCatch(find.package("R4EwE"), error = function(e) NULL)
+    if(!is.null(pkg)) f <- file.path(pkg, "inst", "extdata", "time_series_codes.csv")
+  }
+  if(!file.exists(f)) stop("Could not locate time_series_codes.csv lookup file.")
+  raw <- utils::read.csv(f, stringsAsFactors = FALSE)  # default check.names dedupes "Type" -> "Type.1"
+  # Required columns in the CSV (after read.csv name-cleaning):
+  #   Title, Weight, Pool.code, Pool.code.2, Type (text like "-18 or FixedCostRel"),
+  #   Type.code (numeric), Type.1 (canonical name e.g. "FixedCostRel"), absolute, reference
+  out <- data.frame(
+    code      = suppressWarnings(as.integer(raw$Type.code)),
+    name      = trimws(raw$Type.1),
+    absolute  = toupper(trimws(as.character(raw$absolute)))  == "TRUE",
+    reference = toupper(trimws(as.character(raw$reference))) == "TRUE",
+    pool1     = trimws(as.character(raw$Pool.code)),
+    pool2     = trimws(as.character(raw$Pool.code.2)),
+    stringsAsFactors = FALSE
+  )
+  out$pool_role <- ifelse(nzchar(out$pool2),
+                          paste(out$pool1, out$pool2, sep = " + "),
+                          out$pool1)
+  out <- out[!is.na(out$code), c("code", "name", "absolute", "reference", "pool_role")]
+  out
+}
 
-fn.read_ecosim_timeseries = function(filename){
-  #filename = file.obsts
-  fnm.obs_ts = filename
-  obs.ts.head = as.data.frame(t(read.csv(fnm.obs_ts,header=F,nrows=4)))
-  names(obs.ts.head) = obs.ts.head[1,]; obs.ts.head = obs.ts.head[-1,]
-  obs.ts.head[,2:4] = as.numeric(as.matrix(obs.ts.head[,2:4]))
-  obs.ts = read.csv(fnm.obs_ts,header=F,skip=4)
-  rownames(obs.ts) = obs.ts[,1]; obs.ts[,1] = NULL
-  if(nrow(obs.ts.head) != ncol(obs.ts)) print('HEADER AND TIMESERIES DIMENSION DO NOT MATCH!!!')
-  
-  obsB.head = obs.ts.head[obs.ts.head[,4] %in% c(0,1),]
-  obsB = obs.ts[,which(obs.ts.head[,4] %in% c(0,1))]
-  obsC.head = obs.ts.head[obs.ts.head[,4] %in% c(6,61,-6),]
-  obsC = obs.ts[,which(obs.ts.head[,4] %in% c(6,61,-6))]
-  names(obsB.head) = names(obsC.head) = gsub(" ","_",names(obsB.head))
-  ret = list(obsB.head,obsB,obsC.head,obsC)
-  names(ret) = c('obsB.head','obsB','obsC.head','obsC')
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#Ecosim observed timeseries---------------------------------------------------------------------------------------
+#' @title Read an Ecosim timeseries file.
+#' @description Reads an Ecosim timeseries CSV and parses every series type defined in the type-code
+#'   lookup (see \code{\link{fn.get_ts_type_table}}). Handles both 4-row headers (Title, Weight,
+#'   Pool code, Type) and 5-row headers (Title, Weight, Pool code 1, Pool code 2, Type) by
+#'   auto-detecting the "Type" row.
+#' @param filename Path to the Ecosim timeseries CSV.
+#' @param types Optional subset filter. Either a numeric vector of type codes (e.g. \code{c(0, 1, 6)})
+#'   or a character vector of canonical type names (e.g. \code{c("BiomassRel", "Catches")}). Two
+#'   shortcuts are also accepted: \code{"reference"} (only calibration/reference series) or
+#'   \code{"forcing"} (only forcing series). Default \code{NULL} returns everything.
+#' @param long Logical. If \code{TRUE}, the returned list also includes a tidy long-format data frame
+#'   \code{ts.long} with columns Year, Series, TypeCode, Type, Poolcode, Poolcode2, Weight, Absolute,
+#'   Reference, Value. Defaults to \code{FALSE}.
+#' @return A list with:
+#'   \itemize{
+#'     \item \code{ts.head} -- enriched header table for all (filtered) series, including the
+#'       canonical type name and absolute / reference flags.
+#'     \item \code{ts} -- wide data frame of values (rows = years, columns = series), with column
+#'       names set to the cleaned series titles.
+#'     \item \code{by.type} -- named list keyed by canonical type name; each entry is
+#'       \code{list(head = ..., data = ...)} containing only the series of that type present in the
+#'       file.
+#'     \item \code{obsB.head}, \code{obsB}, \code{obsC.head}, \code{obsC} -- backwards-compatible
+#'       biomass (codes 0, 1) and catch (codes 6, 61, -6) views. \code{obsB.head}/\code{obsC.head}
+#'       retain the legacy 4-column layout (Title, Weight, Poolcode, Type) so existing callers in
+#'       \code{plotting.R} and \code{Ecospace_objective_functions.R} keep working.
+#'     \item \code{ts.long} -- only if \code{long = TRUE}.
+#'   }
+#' @examples
+#' \dontrun{
+#' ts <- fn.read_ecosim_timeseries("ts_mice_v4_discards.csv")
+#' names(ts$by.type)
+#' ts$by.type$BiomassRel$data
+#' ts_ref <- fn.read_ecosim_timeseries("ts.csv", types = "reference", long = TRUE)
+#' }
+#' @export
+fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
+
+  # ---- 1. detect number of header rows by finding the row whose first cell is "Type" ----
+  raw_lines <- readLines(filename, n = 20L)
+  first_cell <- vapply(strsplit(raw_lines, ","), function(x){
+    if(length(x) == 0) "" else gsub('"', '', trimws(x[1]))
+  }, character(1))
+  type_row <- which(tolower(first_cell) %in% c("type", "type code", "typecode"))
+  if(length(type_row) == 0)
+    stop("Could not locate the 'Type' header row in: ", filename)
+  nhead <- type_row[1]
+
+  # ---- 2. read header block, transpose so each row = one series ----
+  hdr.raw <- utils::read.csv(filename, header = FALSE, nrows = nhead, stringsAsFactors = FALSE)
+  row_labels <- as.character(hdr.raw[, 1])
+  hdr <- as.data.frame(t(hdr.raw[, -1, drop = FALSE]), stringsAsFactors = FALSE)
+  names(hdr) <- row_labels
+  rownames(hdr) <- NULL
+
+  # standardize header column names so downstream code can rely on them
+  std_names <- vapply(names(hdr), function(x){
+    y <- gsub("\\s+", "", x)            # "Pool code 1" -> "Poolcode1", "Pool code" -> "Poolcode"
+    y <- sub("code1$", "code", y, ignore.case = TRUE)  # "Poolcode1" -> "Poolcode"
+    y <- sub("code2$", "code2", y, ignore.case = TRUE) # "Poolcode2" stays as "Poolcode2"
+    y
+  }, character(1))
+  names(hdr) <- std_names
+
+  # coerce non-Title columns to numeric
+  for(j in setdiff(names(hdr), "Title")){
+    hdr[[j]] <- suppressWarnings(as.numeric(hdr[[j]]))
+  }
+  if(!"Poolcode2" %in% names(hdr)) hdr$Poolcode2 <- NA_real_
+
+  # ---- 3. read data block ----
+  dat <- utils::read.csv(filename, header = FALSE, skip = nhead, stringsAsFactors = FALSE)
+  years <- dat[, 1]
+  dat <- dat[, -1, drop = FALSE]
+  rownames(dat) <- years
+  if(nrow(hdr) != ncol(dat))
+    warning("HEADER AND TIMESERIES DIMENSION DO NOT MATCH (header rows=", nrow(hdr),
+            ", data cols=", ncol(dat), ")")
+  colnames(dat) <- gsub(" ", "_", hdr$Title)
+
+  # ---- 4. enrich header with type-code lookup ----
+  codes <- fn.get_ts_type_table()
+  m <- match(hdr$Type, codes$code)
+  hdr$Type.name <- codes$name[m]
+  hdr$Absolute  <- codes$absolute[m]
+  hdr$Reference <- codes$reference[m]
+  hdr$PoolRole  <- codes$pool_role[m]
+  unknown <- which(is.na(m))
+  if(length(unknown))
+    warning("Unknown type code(s) encountered: ",
+            paste(unique(hdr$Type[unknown]), collapse = ", "),
+            " (series: ", paste(hdr$Title[unknown], collapse = "; "), ")")
+
+  # ---- 5. resolve types filter ----
+  keep <- seq_len(nrow(hdr))
+  if(!is.null(types)){
+    if(is.character(types) && length(types) == 1 && tolower(types) == "reference"){
+      keep <- which(isTRUE_vec(hdr$Reference))
+    } else if(is.character(types) && length(types) == 1 && tolower(types) == "forcing"){
+      keep <- which(!isTRUE_vec(hdr$Reference))
+    } else if(is.numeric(types)){
+      keep <- which(hdr$Type %in% types)
+    } else if(is.character(types)){
+      keep <- which(hdr$Type.name %in% types)
+    } else {
+      stop("'types' must be numeric (type codes) or character (type names or 'reference'/'forcing').")
+    }
+  }
+
+  # ---- 6. by.type list (one entry per type name present in the filtered selection) ----
+  by.type <- list()
+  for(tn in unique(stats::na.omit(hdr$Type.name[keep]))){
+    j <- intersect(keep, which(hdr$Type.name == tn))
+    by.type[[tn]] <- list(head = hdr[j, , drop = FALSE],
+                          data = dat[, j, drop = FALSE])
+  }
+
+  # ---- 7. backwards-compatible legacy views: obsB / obsC with 4-col head ----
+  legacy.head <- data.frame(
+    Title    = hdr$Title,
+    Weight   = hdr$Weight,
+    Poolcode = hdr$Poolcode,
+    Type     = hdr$Type,
+    stringsAsFactors = FALSE
+  )
+  bIdx <- which(hdr$Type %in% c(0, 1))
+  cIdx <- which(hdr$Type %in% c(6, 61, -6))
+  obsB.head <- legacy.head[bIdx, , drop = FALSE]
+  obsB      <- dat[, bIdx, drop = FALSE]
+  obsC.head <- legacy.head[cIdx, , drop = FALSE]
+  obsC      <- dat[, cIdx, drop = FALSE]
+  rownames(obsB.head) <- gsub(" ", "_", obsB.head$Title)
+  rownames(obsC.head) <- gsub(" ", "_", obsC.head$Title)
+
+  # ---- 8. assemble return ----
+  ret <- list(
+    ts.head   = hdr[keep, , drop = FALSE],
+    ts        = dat[, keep, drop = FALSE],
+    by.type   = by.type,
+    obsB.head = obsB.head, obsB = obsB,
+    obsC.head = obsC.head, obsC = obsC
+  )
+
+  if(long){
+    sh <- hdr[keep, , drop = FALSE]
+    sd <- dat[, keep, drop = FALSE]
+    yrs <- suppressWarnings(as.numeric(rownames(sd)))
+    ret$ts.long <- do.call(rbind, lapply(seq_len(ncol(sd)), function(j){
+      data.frame(
+        Year      = yrs,
+        Series    = sh$Title[j],
+        TypeCode  = sh$Type[j],
+        Type      = sh$Type.name[j],
+        Poolcode  = sh$Poolcode[j],
+        Poolcode2 = sh$Poolcode2[j],
+        Weight    = sh$Weight[j],
+        Absolute  = sh$Absolute[j],
+        Reference = sh$Reference[j],
+        Value     = sd[, j],
+        stringsAsFactors = FALSE
+      )
+    }))
+  }
+
   return(ret)
 }
+
+# small internal helper: TRUE for TRUE, FALSE for NA or FALSE
+#' @keywords internal
+#' @noRd
+isTRUE_vec <- function(x) !is.na(x) & x
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #Ecosim output to arrays---------------------------------------------------------------------------------  

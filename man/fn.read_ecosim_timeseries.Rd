@@ -2,20 +2,50 @@
 % Please edit documentation in R/input_output.R
 \name{fn.read_ecosim_timeseries}
 \alias{fn.read_ecosim_timeseries}
-\title{Read an ecosim timeseries file.}
+\title{Read an Ecosim timeseries file.}
 \usage{
-fn.read_ecosim_timeseries(filename)
+fn.read_ecosim_timeseries(filename, types = NULL, long = FALSE)
 }
 \arguments{
-\item{filename}{The location of the Ecosim timeseries file.}
+\item{filename}{Path to the Ecosim timeseries CSV.}
+
+\item{types}{Optional subset filter. Either a numeric vector of type codes (e.g. \code{c(0, 1, 6)})
+or a character vector of canonical type names (e.g. \code{c("BiomassRel", "Catches")}). Two
+shortcuts are also accepted: \code{"reference"} (only calibration/reference series) or
+\code{"forcing"} (only forcing series). Default \code{NULL} returns everything.}
+
+\item{long}{Logical. If \code{TRUE}, the returned list also includes a tidy long-format data frame
+\code{ts.long} with columns Year, Series, TypeCode, Type, Poolcode, Poolcode2, Weight, Absolute,
+Reference, Value. Defaults to \code{FALSE}.}
 }
 \value{
-A list containing an 4 dataframes, one each for observed biomass and catch timeseries and
-one each for observed biomass and catch header information.
-#examples
-#example code:
-fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)
+A list with:
+\itemize{
+\item \code{ts.head} -- enriched header table for all (filtered) series, including the
+canonical type name and absolute / reference flags.
+\item \code{ts} -- wide data frame of values (rows = years, columns = series), with column
+names set to the cleaned series titles.
+\item \code{by.type} -- named list keyed by canonical type name; each entry is
+\code{list(head = ..., data = ...)} containing only the series of that type present in the
+file.
+\item \code{obsB.head}, \code{obsB}, \code{obsC.head}, \code{obsC} -- backwards-compatible
+biomass (codes 0, 1) and catch (codes 6, 61, -6) views. \code{obsB.head}/\code{obsC.head}
+retain the legacy 4-column layout (Title, Weight, Poolcode, Type) so existing callers in
+\code{plotting.R} and \code{Ecospace_objective_functions.R} keep working.
+\item \code{ts.long} -- only if \code{long = TRUE}.
+}
 }
 \description{
-Reads an ecosim timeseries file and parses out the observed (non-forcing) components
+Reads an Ecosim timeseries CSV and parses every series type defined in the type-code
+lookup (see \code{\link{fn.get_ts_type_table}}). Handles both 4-row headers (Title, Weight,
+Pool code, Type) and 5-row headers (Title, Weight, Pool code 1, Pool code 2, Type) by
+auto-detecting the "Type" row.
+}
+\examples{
+\dontrun{
+ts <- fn.read_ecosim_timeseries("ts_mice_v4_discards.csv")
+names(ts$by.type)
+ts$by.type$BiomassRel$data
+ts_ref <- fn.read_ecosim_timeseries("ts.csv", types = "reference", long = TRUE)
+}
 }

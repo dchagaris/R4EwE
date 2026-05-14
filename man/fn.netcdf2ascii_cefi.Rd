@@ -6,10 +6,13 @@
 \usage{
 fn.netcdf2ascii_cefi(
   nc.files = list.files(path = dir.cefi, pattern = ".nc$", full.names = T),
-  depth = depth.5min,
+  depth = depth,
   dir.stdriver = dir.stdriver,
+  scalePP = TRUE,
+  do.vars = NULL,
   make.monthly = TRUE,
-  make.static = FALSE
+  make.static = TRUE,
+  make.climatology = TRUE
 )
 }
 \arguments{

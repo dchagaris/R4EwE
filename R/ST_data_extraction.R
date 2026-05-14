@@ -1099,7 +1099,7 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
         }
         basename(dirs.stvars)
         for(i in 1:length(dirs.stvars)){
-          #i=16
+          #i=1
           stvar.i <- unlist(strsplit(basename(dirs.stvars[i]),"_"))[1]
           if(!is.null(do.vars) & !stvar.i %in% c(do.vars,gsub("_glor","",do.vars))) next
           stname = basename(dirs.stvars[i]) #paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
@@ -1223,6 +1223,7 @@ fn.pull_esacci <- function(dir.out = NULL,
   if (!dir.exists(dir.out)) dir.create(dir.out)
   
   ##OC-CCI-----------------------------------------------------
+  if(!is.null(chl.output_file)){
   # Initialize storage
   all_data <- list()
   
@@ -1290,13 +1291,14 @@ fn.pull_esacci <- function(dir.out = NULL,
     subset_lon <- lon[lon_idx]
     subset_lat <- lat[lat_idx]
     
-    # Combined data array
-    combined_chlora <- array(NA, dim = c(length(subset_lat), length(subset_lon), n_times))
+    # Combined data array — shape MUST match the (lon, lat, time) order of the
+    # variable declared below; ncvar_put does not enforce shape and will silently
+    # blast the buffer in column-major order, scrambling the grid otherwise.
+    combined_chlora <- array(NA, dim = c(length(subset_lon), length(subset_lat), n_times))
     time_values <- numeric(n_times)
-    
+
     for (i in seq_along(all_data)) {
-      #i=1
-      combined_chlora[,,i] <- t(all_data[[i]]$chlor_a)
+      combined_chlora[,,i] <- all_data[[i]]$chlor_a   # ncvar_get already returned [lon, lat]
       time_values[i] <- all_data[[i]]$time
     }
     
@@ -1328,8 +1330,9 @@ fn.pull_esacci <- function(dir.out = NULL,
     cat("No OC data downloaded\n")
     return(NULL)
   }
-  
+  }
 #SST-CCI--------------------------------------------------------------------------------------------
+  if(!is.null(sst.output_file)){
   #monthly SST data from CCI are provided by compernicus climate data store
   start_year <- year(startdate)
   end_year <- year(enddate)
@@ -1369,21 +1372,21 @@ fn.pull_esacci <- function(dir.out = NULL,
       year = years[y],
       month = months_formatted,
       area = c(bbox[4],bbox[1],bbox[3],bbox[2]),
-      target = basename(output_file)
+      target = sst.output_file
     )
     # Submit and download the request
     cat("Submitting request to CDS API...\n")
     cat("Dataset: satellite-sea-surface-temperature\n")
-    cat("Years:", paste(range(years), collapse = " to "), "\n")
+    cat("Years:", paste(years[y], collapse = " to "), "\n")
     cat("Months:", paste(months_formatted, collapse = ", "), "\n")
     
     result <- wf_request(
       request = request,
       user = cds_user,
       transfer = TRUE,
-      path = dirname(output_file)
+      path = temp_folder
     )
-    
+
     unzip(result, exdir=temp_folder)
     unlink(result)
     if(y %in% seq(10,length(years),10)) Sys.sleep(20)
@@ -1424,15 +1427,18 @@ fn.pull_esacci <- function(dir.out = NULL,
     time_var <- ncvar_get(nc, "time")
     time_units <- ncatt_get(nc, "time", "units")$value
     
-    # Store data
-    all_sst[[i]] <- t(sst_data)[dim(sst_data)[2]:1,] - 273.15 #conver to degC, rotate for proper orientation
+    # Store data — keep source [lon, lat] orientation; lat coord saved below is
+    # in the same source order, so labels and pixels stay aligned.
+    all_sst[[i]] <- sst_data - 273.15  # convert K -> degC
     all_times[i] <- time_var
-    
+
     nc_close(nc)
   }
-  
-  # Combine into 3D array (lon, lat, time)
-  dims <- dim(all_sst[[1]])
+
+  # Combine into 3D array. Buffer shape MUST match the (lon, lat, time) order of
+  # the variable declared below; ncvar_put does not enforce shape and will
+  # silently blast the buffer in column-major order, scrambling the grid.
+  dims <- dim(all_sst[[1]])  # [lon, lat]
   combined_sst <- array(NA, dim = c(dims[1], dims[2], length(all_sst)))
   for (i in seq_along(all_sst)) {
     combined_sst[,,i] <- all_sst[[i]]
@@ -1485,8 +1491,9 @@ fn.pull_esacci <- function(dir.out = NULL,
     }
     nc_close(nc)
   }
+  }
   #SSS-CCI--------------------------------------------------------------------------------------------
-  
+  if(!is.null(sss.output_file)){
   startyear <- max(year(startdate),2010)
   endyear <- min(year(enddate), 2023)
   
@@ -1576,7 +1583,11 @@ fn.pull_esacci <- function(dir.out = NULL,
   nc_close(nc_out)
   
   cat("Saved monthly SSS data to", output_file, "\n")
+  }
 }#eof
+
+
+
 
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #' @title Make static maps from monthly ST files.

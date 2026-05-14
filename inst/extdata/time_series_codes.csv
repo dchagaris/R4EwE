@@ -1,0 +1,29 @@
+Title,Weight,Pool code,Pool code 2,Type,Type code,Type,absolute,reference
+name 1,,fleet no,,-18 or FixedCostRel,-18,FixedCostRel,FALSE,FALSE
+name 2,,fleet no,,-17 or SailCostRel,-17,SailCostRel,FALSE,FALSE
+name 3,,fleet no,,-16 or EffortCostRel,-16,EffortCostRel,FALSE,FALSE
+name 4,,fleet no,group no or 0 (all groups),-15 or OffVesselPriceRel,-15,OffVesselPriceRel,FALSE,FALSE
+name 5,,group no,,-6 or CatchesForcing,-6,CatchesForcing,TRUE,FALSE
+name 6,,group no,,-5 or ConstantTotalMortality,-5,ConstantTotalMortality,TRUE,FALSE
+name 7,,group no,,-1 or BiomassForcing,-1,BiomassForcing,TRUE,FALSE
+name 8,0 to 1,group no,,0 or BiomassRel,0,BiomassRel,FALSE,TRUE
+name 9,0 to 1,group no,,1 or BiomassAbs,1,BiomassAbs,TRUE,TRUE
+name 10,,fleet no,,2 or TimeForcing,2,TimeForcing,FALSE,FALSE
+name 11,,fleet no,,3 or FishingEffort,3,FishingEffort,FALSE,FALSE
+name 12,,group no,,4 or FishingMortality,4,FishingMortality,TRUE,FALSE
+name 13,0 to 1,group no,,5 or TotalMortality,5,TotalMortality,TRUE,TRUE
+name 14,0 to 1,group no,,6 or Catches,6,Catches,TRUE,TRUE
+name 15,0 to 1,group no,,7 or AverageWeight,7,AverageWeight,TRUE,TRUE
+name 16,,fleet no,group no or 0 (all groups),10 or DiscardProportion,10,DiscardProportion,TRUE,FALSE
+name 17,,fleet no,group no or 0 (all groups),11 or DiscardMortality,11,DiscardMortality,TRUE,FALSE
+name 18,0 to 1,fleet no,group no,12 or Landings,12,Landings,TRUE,TRUE
+name 19,0 to 1,fleet no,group no,13 or Discards,13,Discards,TRUE,TRUE
+name 20,,fleet no,group no,14 or Catchabilities,14,Catchabilities,TRUE,FALSE
+name 21,,fleet no,group no,15 or OffVesselPrice,15,OffVesselPrice,TRUE,FALSE
+name 22,,fleet no,,16 or EffortCost,16,EffortCost,TRUE,FALSE
+name 23,,fleet no,,17 or SailCost,17,SailCost,TRUE,FALSE
+name 24,,fleet no,,18 or FixedCost,18,FixedCost,TRUE,FALSE
+name 25,0 to 1,group no,,19 or DiscardsTotalAbs,19,DiscardsTotalAbs,TRUE,TRUE
+name 26,0 to 1,group no,,20 or DiscardsTotalRel,20,DiscardsTotalRel,FALSE,TRUE
+name 27,0 to 1,group no,,61 or CatchesRel,61,CatchesRel,FALSE,TRUE
+name 28,0 to 1,group no,,104 or FishingMortalityRef,104,FishingMortalityRef,TRUE,TRUE

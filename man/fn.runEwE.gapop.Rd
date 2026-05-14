@@ -4,7 +4,7 @@
 \alias{fn.runEwE.gapop}
 \title{Run Ecospace in parallel, for GA calibration.}
 \usage{
-fn.runEwE.gapop(files.cmd, obj.fxn = 1, delete.output = T, max_tries = 5)
+fn.runEwE.gapop(files.cmd, obj.fxn = 1, delete.output = T, max_tries = 50)
 }
 \arguments{
 \item{files.cmd}{Character vector of paths to Ecospace command files.}
