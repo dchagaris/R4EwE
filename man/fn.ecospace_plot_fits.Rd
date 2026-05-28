@@ -18,6 +18,8 @@ fn.ecospace_plot_fits(
   region.names = NULL,
   sim.labels = NULL,
   group.names = NULL,
+  fleet.names = NULL,
+  scale.abs = FALSE,
   plot2pdf = FALSE,
   dir.plts = dir.out[1],
   run.label = Sys.Date()
@@ -33,8 +35,24 @@ outputs, or a parent folder containing multiple run subfolders. May be a vector 
 obs series without a matching region are dropped from the overlays.}
 
 \item{vars}{Which panels to draw. Any subset of
-\code{c("biomass","catch","landings","discards","F")}. Default is all five. \code{discards} is
-computed as \code{catch - landings}; \code{F} is \code{catch / biomass} per region.}
+\code{c("biomass","catch","landings","discards","F")}. Default is all five. For
+\code{catch}, \code{landings}, and \code{discards} three views are produced: (1) a group-level
+section with one predicted line per region (obs overlaid per region), (2) an Ecosim-style
+stacked-bar section (one panel per group, fleets stacked, repeated per region, obs total
+overlaid), and (3) an individual fleet x group section (one panel per \code{fleet|group}
+column, one line per region, obs overlaid where the ts has a matching fleet+group series:
+type 12 for landings, type 13 for discards; absolute catch type 6/61 has no fleet dimension so
+those panels show predictions only). \code{discards}
+produces three group-level sections derived at fleet x group resolution and summed over fleets:
+\strong{dead} discards \code{DD = catch - landings} (in EwE the Catch output is landings + dead
+discards, so the difference is the dead portion), \strong{total} discards
+\code{DT = DD / Dmort} using the per-fleet type-11 DiscardMortality series from \code{obs.ts}
+(rule (a): a fleet with no type-11 entry uses Dmort = 1, i.e. DT = DD), and \strong{surviving}
+discards \code{DS = DT - DD}. Total discards are overlaid against the type-19/20 DiscardsTotal
+obs (apples-to-apples); dead and surviving have no obs overlay (predictions only, shown for the
+same groups). Requires \code{fleet.names} to map the Catch/Landings \code{fleet|group} columns
+to fleet pool codes; without it every fleet defaults to Dmort = 1. \code{F} is
+\code{catch / biomass} per region.}
 
 \item{timestep}{\code{"annual"} or \code{"monthly"}.}
 
@@ -63,6 +81,20 @@ used in the bottom-of-page legend. Default \code{"Region <n>"}.}
 \item{group.names}{Character vector indexed by group pool code. Required to map obs (which uses
 pool codes) to Ecospace output columns (which use group names). If \code{NULL}, obs overlay is
 skipped (predictions still plotted).}
+
+\item{fleet.names}{Character vector indexed by fleet pool code. Used by the \code{discards}
+sections to map the Catch/Landings \code{fleet|group} columns to fleet pool codes so the
+per-fleet type-11 DiscardMortality series can be applied. If \code{NULL}, every fleet defaults
+to Dmort = 1 (total discards collapse to dead discards).}
+
+\item{scale.abs}{Logical, default \code{FALSE}. Diagnostic toggle. When \code{FALSE}, absolute
+series (e.g. type 6 \code{Catches}, type 1 \code{BiomassAbs}) are plotted at their literal
+values (\code{q = 1}) while only relative series are rescaled to the prediction by
+\code{q = mean(obs[overlap]) / mean(pred[overlap, region])}. When \code{TRUE}, the same
+\code{q} rescaling is applied to \emph{every} series including absolute ones, so all obs are
+forced onto the prediction scale. Useful for separating a true scale/units mismatch (obs and
+pred disagree in magnitude but the rescaled shape matches) from a genuine dynamics error (shape
+still disagrees after rescaling).}
 
 \item{plot2pdf}{Logical. If TRUE, writes \code{file.path(dir.plts, "ecospace fits_<run.label>.pdf")}.}
 

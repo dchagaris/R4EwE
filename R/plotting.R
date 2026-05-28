@@ -254,10 +254,17 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #' @keywords internal
 #' @noRd
 .find_year_skip <- function(x, timestep){
-  L <- readLines(x, n = 30L)
-  if(timestep == "annual")  n <- which(tolower(substr(L, 1, 4)) == "year")[1] - 1
-  if(timestep == "monthly") n <- which(tolower(substr(L, 1, 8)) == "timestep")[1] - 1
-  n
+  key_fun <- if(timestep == "annual")
+               function(L) which(tolower(substr(L, 1, 4)) == "year")
+             else
+               function(L) which(tolower(substr(L, 1, 8)) == "timestep")
+  for(nread in c(30L, 100L, 500L, 5000L)){
+    L <- readLines(x, n = nread)
+    hit <- key_fun(L)
+    if(length(hit)) return(hit[1] - 1)
+    if(length(L) < nread) return(NA_integer_)  # EOF reached, no match
+  }
+  NA_integer_
 }
 
 #' @keywords internal
@@ -537,14 +544,118 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 
 #' @keywords internal
 #' @noRd
-.read_pred_ecospace_discards <- function(dir.out, timestep, regions, styear){
-  catch <- .read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
-  land  <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+# Per-fleet discard-mortality rate by year from the ts (type 11). Rule (a): a fleet with no
+# type-11 entry defaults to Dmort = 1 (i.e. DT = DD). NA years within an existing series are
+# filled with that fleet's mean rate.
+.ecospace_dmort_by_year <- function(obs.ts, fleet_poolcodes, years){
+  th       <- obs.ts$ts.head
+  ts_years <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+  out <- matrix(1, nrow = length(years), ncol = length(fleet_poolcodes))  # default Dmort = 1
+  for(j in seq_along(fleet_poolcodes)){
+    fc <- fleet_poolcodes[j]
+    if(is.na(fc)) next                                   # unmatched fleet -> Dmort = 1
+    rows <- which(th$Type == 11 & th$Poolcode == fc)
+    if(length(rows) == 0) next                           # rule (a): no entry -> Dmort = 1
+    series <- obs.ts$ts[, rows[1]]
+    series[series < 0] <- NA
+    fill <- mean(series, na.rm = TRUE)
+    v <- series[match(years, ts_years)]
+    v[is.na(v)] <- if(is.finite(fill)) fill else 1
+    out[, j] <- v
+  }
+  out
+}
+
+#' @keywords internal
+#' @noRd
+# Predicted dead / total / surviving discards by group, derived from per-region per-fleet-group
+# Catch and Landings CSVs. DD = Catch - Landings (dead discards), DT = DD / Dmort (total discards),
+# DS = DT - DD (surviving), computed at fleet x group resolution (where Dmort applies) then summed
+# over fleets to group level. Returns list(dead, total, surv), each [years, groups, regions, runs].
+.read_pred_ecospace_discards_split <- function(dir.out, timestep, regions, styear,
+                                               obs.ts, fleet.names){
+  catch <- .read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
+  land  <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
   if(is.null(catch) || is.null(land)) return(NULL)
-  al <- .align_by_group(catch, land); if(is.null(al)) return(NULL)
-  d <- al$a - al$b
-  d[d < 0] <- 0
-  d
+
+  # keep fleet|group columns common to both files
+  common <- intersect(dimnames(catch)[[2]], dimnames(land)[[2]])
+  common <- common[grepl("\\|", common)]
+  if(length(common) == 0) return(NULL)
+  catch <- catch[, common, , , drop = FALSE]
+  land  <- land [, common, , , drop = FALSE]
+
+  dd <- catch - land
+  dd[dd < 0] <- 0                                        # dead discards by fleet|group
+
+  years    <- as.numeric(dimnames(dd)[[1]])
+  parts    <- strsplit(common, "\\|")
+  fleet_nm <- vapply(parts, function(x) trimws(x[1]),        character(1))
+  group_nm <- vapply(parts, function(x) trimws(tail(x, 1)),  character(1))
+
+  # fleet name -> fleet pool code via fleet.names (NA -> rule (a) Dmort = 1)
+  norm  <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
+  fl_pc <- if(!is.null(fleet.names)) match(norm(fleet_nm), norm(fleet.names)) else rep(NA_integer_, length(fleet_nm))
+  unmatched <- unique(fleet_nm[is.na(fl_pc)])
+  if(length(unmatched))
+    warning("Ecospace discards: no fleet.names match for fleet(s) ",
+            paste(unmatched, collapse = ", "), " - discard mortality defaulted to 1 (DT = DD).")
+
+  uniq_pc   <- unique(fl_pc)
+  dmort_mat <- .ecospace_dmort_by_year(obs.ts, uniq_pc, years)     # [years x uniq_pc]
+
+  # total (DT) and surviving (DS) discards by fleet|group
+  dt <- dd; ds <- dd
+  nreg <- dim(dd)[3]; nrun <- dim(dd)[4]
+  for(k in seq_along(common)){
+    dmk <- dmort_mat[, match(fl_pc[k], uniq_pc)]                   # length(years)
+    for(ri in seq_len(nreg)) for(rn in seq_len(nrun)){
+      ddv <- dd[, k, ri, rn]
+      dtv <- ddv / dmk
+      dtv[!is.finite(dtv)] <- 0                                    # DD = 0 or Dmort = 0 guard
+      dt[, k, ri, rn] <- dtv
+      ds[, k, ri, rn] <- dtv - ddv
+    }
+  }
+
+  # sum fleet|group -> group
+  agg_to_group <- function(arr4){
+    ug  <- unique(group_nm)
+    out <- array(0, dim = c(dim(arr4)[1], length(ug), dim(arr4)[3], dim(arr4)[4]),
+                 dimnames = list(dimnames(arr4)[[1]], ug, dimnames(arr4)[[3]], dimnames(arr4)[[4]]))
+    for(g in ug){
+      cg <- which(group_nm == g)
+      out[, g, , ] <- if(length(cg) == 1) arr4[, cg, , ]
+                      else apply(arr4[, cg, , , drop = FALSE], c(1, 3, 4), sum, na.rm = TRUE)
+    }
+    out
+  }
+
+  # fleet|group level arrays carry a meta attribute parsed from the column names so the
+  # stacked-bar and per-fleet-group panels can map fleets/groups to pool codes for obs overlay.
+  attach_meta <- function(arr4){
+    attr(arr4, "fg_fleet_nm") <- setNames(fleet_nm, common)
+    attr(arr4, "fg_group_nm") <- setNames(group_nm, common)
+    arr4
+  }
+
+  list(dead     = agg_to_group(dd),
+       total    = agg_to_group(dt),
+       surv     = agg_to_group(ds),
+       dead_fg  = attach_meta(dd),
+       total_fg = attach_meta(dt),
+       surv_fg  = attach_meta(ds))
+}
+
+#' @keywords internal
+#' @noRd
+# Parse Ecospace "fleet|group" column names into a data frame of fleet/group name parts.
+.fg_meta <- function(fg_names){
+  parts <- strsplit(fg_names, "\\|")
+  data.frame(fg       = fg_names,
+             fleet_nm = vapply(parts, function(x) trimws(x[1]),       character(1)),
+             group_nm = vapply(parts, function(x) trimws(tail(x, 1)), character(1)),
+             stringsAsFactors = FALSE)
 }
 
 #' @keywords internal
@@ -578,8 +689,24 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #'   \code{Region} column (auto-populated as \code{NA} when the ts file has no Region header row);
 #'   obs series without a matching region are dropped from the overlays.
 #' @param vars Which panels to draw. Any subset of
-#'   \code{c("biomass","catch","landings","discards","F")}. Default is all five. \code{discards} is
-#'   computed as \code{catch - landings}; \code{F} is \code{catch / biomass} per region.
+#'   \code{c("biomass","catch","landings","discards","F")}. Default is all five. For
+#'   \code{catch}, \code{landings}, and \code{discards} three views are produced: (1) a group-level
+#'   section with one predicted line per region (obs overlaid per region), (2) an Ecosim-style
+#'   stacked-bar section (one panel per group, fleets stacked, repeated per region, obs total
+#'   overlaid), and (3) an individual fleet x group section (one panel per \code{fleet|group}
+#'   column, one line per region, obs overlaid where the ts has a matching fleet+group series:
+#'   type 12 for landings, type 13 for discards; absolute catch type 6/61 has no fleet dimension so
+#'   those panels show predictions only). \code{discards}
+#'   produces three group-level sections derived at fleet x group resolution and summed over fleets:
+#'   \strong{dead} discards \code{DD = catch - landings} (in EwE the Catch output is landings + dead
+#'   discards, so the difference is the dead portion), \strong{total} discards
+#'   \code{DT = DD / Dmort} using the per-fleet type-11 DiscardMortality series from \code{obs.ts}
+#'   (rule (a): a fleet with no type-11 entry uses Dmort = 1, i.e. DT = DD), and \strong{surviving}
+#'   discards \code{DS = DT - DD}. Total discards are overlaid against the type-19/20 DiscardsTotal
+#'   obs (apples-to-apples); dead and surviving have no obs overlay (predictions only, shown for the
+#'   same groups). Requires \code{fleet.names} to map the Catch/Landings \code{fleet|group} columns
+#'   to fleet pool codes; without it every fleet defaults to Dmort = 1. \code{F} is
+#'   \code{catch / biomass} per region.
 #' @param timestep \code{"annual"} or \code{"monthly"}.
 #' @param regions Integer vector of region IDs to plot. \code{NULL} (default) auto-detects all
 #'   \code{Region_<n>_Biomass.csv} files found under \code{dir.out}.
@@ -598,6 +725,18 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #' @param group.names Character vector indexed by group pool code. Required to map obs (which uses
 #'   pool codes) to Ecospace output columns (which use group names). If \code{NULL}, obs overlay is
 #'   skipped (predictions still plotted).
+#' @param fleet.names Character vector indexed by fleet pool code. Used by the \code{discards}
+#'   sections to map the Catch/Landings \code{fleet|group} columns to fleet pool codes so the
+#'   per-fleet type-11 DiscardMortality series can be applied. If \code{NULL}, every fleet defaults
+#'   to Dmort = 1 (total discards collapse to dead discards).
+#' @param scale.abs Logical, default \code{FALSE}. Diagnostic toggle. When \code{FALSE}, absolute
+#'   series (e.g. type 6 \code{Catches}, type 1 \code{BiomassAbs}) are plotted at their literal
+#'   values (\code{q = 1}) while only relative series are rescaled to the prediction by
+#'   \code{q = mean(obs[overlap]) / mean(pred[overlap, region])}. When \code{TRUE}, the same
+#'   \code{q} rescaling is applied to \emph{every} series including absolute ones, so all obs are
+#'   forced onto the prediction scale. Useful for separating a true scale/units mismatch (obs and
+#'   pred disagree in magnitude but the rescaled shape matches) from a genuine dynamics error (shape
+#'   still disagrees after rescaling).
 #' @param plot2pdf Logical. If TRUE, writes \code{file.path(dir.plts, "ecospace fits_<run.label>.pdf")}.
 #' @param dir.plts Directory to write the PDF.
 #' @param run.label String appended to the PDF filename. Defaults to today's date.
@@ -622,6 +761,8 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
                                   region.names  = NULL,
                                   sim.labels    = NULL,
                                   group.names   = NULL,
+                                  fleet.names   = NULL,
+                                  scale.abs     = FALSE,
                                   plot2pdf      = FALSE,
                                   dir.plts      = dir.out[1],
                                   run.label     = Sys.Date()){
@@ -641,9 +782,25 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
   # 2. read prediction arrays ----------------------------------------------------------------
   pred <- list()
   if("biomass"  %in% vars) pred$biomass  <- .read_pred_ecospace_wide   (dir.out, "Biomass",  timestep, regions, styear, aggregate_by_group = FALSE)
-  if("catch"    %in% vars) pred$catch    <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
-  if("landings" %in% vars) pred$landings <- .read_pred_ecospace_wide   (dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
-  if("discards" %in% vars) pred$discards <- .read_pred_ecospace_discards(dir.out,            timestep, regions, styear)
+  if("catch"    %in% vars){
+    pred$catch    <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
+    pred$catch_fg <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
+  }
+  if("landings" %in% vars){
+    pred$landings    <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+    pred$landings_fg <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
+  }
+  if("discards" %in% vars){
+    ds_split <- .read_pred_ecospace_discards_split(dir.out, timestep, regions, styear, obs.ts, fleet.names)
+    if(!is.null(ds_split)){
+      pred$disc_total    <- ds_split$total
+      pred$disc_dead     <- ds_split$dead
+      pred$disc_surv     <- ds_split$surv
+      pred$disc_total_fg <- ds_split$total_fg
+      pred$disc_dead_fg  <- ds_split$dead_fg
+      pred$disc_surv_fg  <- ds_split$surv_fg
+    }
+  }
   if("f"        %in% vars) pred$fmort    <- .read_pred_ecospace_F      (dir.out,            timestep, regions, styear)
 
   pred <- pred[!vapply(pred, is.null, logical(1))]
@@ -659,6 +816,9 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
   # group name -> pool code lookup
   norm_name <- function(x) gsub("\\s+", "_", trimws(gsub('"', "", as.character(x))))
   norm_gn <- if(!is.null(group.names)) norm_name(group.names) else character(0)
+  # fleet name -> pool code lookup (looser: collapse whitespace, lowercase)
+  norm_fleet <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
+  norm_fn <- if(!is.null(fleet.names)) norm_fleet(fleet.names) else character(0)
 
   # 4. open combined PDF ----------------------------------------------------------------------
   if(plot2pdf){
@@ -675,7 +835,8 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
 
   # 5. per-variable panel routine -------------------------------------------------------------
   panel_by_group_regions <- function(arr, var_label, obs_type_codes, y_lab,
-                                     obs_group_via = "Poolcode"){
+                                     obs_group_via = "Poolcode",
+                                     select_type_codes = obs_type_codes){
     if(is.null(arr)) return(invisible(NULL))
     graphics::par(mfrow = plt.dims, mar = c(2, 4, 2, 1), oma = c(4, 0, 2, 1), xpd = FALSE)
 
@@ -690,7 +851,8 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
                  else
                    rep(NA_integer_, length(eco_grp_names))
 
-    obs_match_mask <- obs.ts$ts.head$Type %in% obs_type_codes
+    obs_match_mask <- obs.ts$ts.head$Type %in% obs_type_codes      # series actually overlaid
+    sel_match_mask <- obs.ts$ts.head$Type %in% select_type_codes   # series used to pick groups
     obs_groups_col <- if(obs_group_via == "Poolcode2") obs.ts$ts.head$Poolcode2 else obs.ts$ts.head$Poolcode
 
     # determine columns to plot
@@ -699,7 +861,7 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
       if(identical(groups, "all")) arr_cols
       else if(identical(groups, "with_obs")){
         if(all(is.na(col_to_pc))) integer(0)  # no mapping, no obs
-        else arr_cols[!is.na(col_to_pc) & col_to_pc %in% unique(obs_groups_col[obs_match_mask])]
+        else arr_cols[!is.na(col_to_pc) & col_to_pc %in% unique(obs_groups_col[sel_match_mask])]
       } else arr_cols[!is.na(col_to_pc) & col_to_pc %in% as.integer(groups)]
 
     if(length(plot_cols) == 0){
@@ -749,7 +911,7 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
           obs_scaled <- obs_s
           for(j in seq_len(ncol(obs_s))){
             q <- 1
-            if(!isTRUE(abs_vec[j])){
+            if(scale.abs || !isTRUE(abs_vec[j])){
               obs_nonna <- !is.na(obs_s[, j])
               pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
               if(length(pi) > 0){
@@ -813,11 +975,271 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     .pad_page(length(plot_cols))
   }
 
+  # 5b. stacked-bar panel: one bar plot per group x region, fleet contributions stacked ------
+  # Mirrors the Ecosim look (fleets stacked, obs total overlaid) but repeated per region.
+  panel_stacked_by_group_regions <- function(arr_fg, var_label, y_lab, obs_type_codes,
+                                             obs_group_via = "Poolcode"){
+    if(is.null(arr_fg)) return(invisible(NULL))
+    fg_names <- dimnames(arr_fg)[[2]]
+    fg_names <- fg_names[grepl("\\|", fg_names)]
+    if(length(fg_names) == 0) return(invisible(NULL))
+    arr_fg <- arr_fg[, fg_names, , , drop = FALSE]
+
+    meta <- .fg_meta(fg_names)
+    meta$group_pc <- if(length(norm_gn)) match(norm_name(meta$group_nm),  norm_gn) else NA_integer_
+    meta$fleet_pc <- if(length(norm_fn)) match(norm_fleet(meta$fleet_nm), norm_fn) else NA_integer_
+
+    graphics::par(mfrow = plt.dims, mar = c(3, 4, 2, 1), oma = c(4, 0, 2, 1), xpd = FALSE)
+    xtime         <- as.numeric(dimnames(arr_fg)[[1]])
+    region_labels <- dimnames(arr_fg)[[3]]
+    region_ids    <- as.integer(sub("R", "", region_labels))
+
+    obs_match_mask <- obs.ts$ts.head$Type %in% obs_type_codes
+    obs_groups_col <- if(obs_group_via == "Poolcode2") obs.ts$ts.head$Poolcode2 else obs.ts$ts.head$Poolcode
+
+    ug <- unique(meta$group_nm)
+    group_pc_of <- function(gn) meta$group_pc[match(gn, meta$group_nm)]
+    sel_groups <-
+      if(identical(groups, "all")) ug
+      else if(identical(groups, "with_obs"))
+        ug[vapply(ug, function(gn){ gpc <- group_pc_of(gn); !is.na(gpc) && any(obs_match_mask & obs_groups_col == gpc) }, logical(1))]
+      else ug[group_pc_of(ug) %in% as.integer(groups)]
+    if(length(sel_groups) == 0){
+      graphics::plot.new(); graphics::title(main = paste("No groups to plot for", var_label))
+      .pad_page(1); return(invisible(NULL))
+    }
+
+    # fleet palette over all fleets present (consistent colors across panels)
+    active_fleets <- unique(meta$fleet_nm)
+    fleet_pal <- grDevices::hcl.colors(max(3L, length(active_fleets)), palette = "Set 2")[seq_along(active_fleets)]
+    names(fleet_pal) <- active_fleets
+
+    obs_yrs    <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    common_idx <- match(obs_yrs, xtime)
+
+    panels <- expand.grid(g = sel_groups, reg_idx = seq_along(region_ids),
+                          stringsAsFactors = FALSE)
+    n_drawn <- 0L
+    for(p in seq_len(nrow(panels))){
+      g       <- panels$g[p]
+      reg_idx <- panels$reg_idx[p]
+      r       <- region_ids[reg_idx]
+      fg_cols <- which(meta$group_nm == g)
+      gpc     <- meta$group_pc[fg_cols[1]]
+
+      stack_mat <- matrix(0, nrow = length(active_fleets), ncol = length(xtime),
+                          dimnames = list(active_fleets, as.character(xtime)))
+      for(j in fg_cols){
+        f_idx <- match(meta$fleet_nm[j], active_fleets)
+        stack_mat[f_idx, ] <- stack_mat[f_idx, ] + arr_fg[, j, reg_idx, scale2run]
+      }
+      total_pred <- colSums(stack_mat)
+
+      # obs assigned to this region & group
+      obs_scaled <- NULL; obs_label <- NULL
+      if(!is.na(gpc)){
+        obs_rows <- which(obs_match_mask & obs_groups_col == gpc &
+                          !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+        if(length(obs_rows) > 0){
+          om <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); om[om < 0] <- NA
+          row_any <- apply(!is.na(om), 1, any)
+          ovec <- rowSums(om, na.rm = TRUE); ovec[!row_any] <- NA
+          is_abs <- all(obs.ts$ts.head$Absolute[obs_rows], na.rm = TRUE)
+          q <- 1
+          if(scale.abs || !isTRUE(is_abs)){
+            nn <- !is.na(ovec); pi <- common_idx[nn]; pi <- pi[!is.na(pi)]
+            if(length(pi) > 0){
+              mo <- mean(ovec[nn], na.rm = TRUE); mp <- mean(total_pred[pi], na.rm = TRUE)
+              if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+            }
+          }
+          obs_scaled <- ovec / q
+          obs_label  <- paste0("obs (", obs_group_via, ")")
+        }
+      }
+
+      ylim_top <- max(total_pred, na.rm = TRUE) * 1.2
+      if(!is.null(obs_scaled)) ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+      g_name <- if(!is.null(group.names) && !is.na(gpc) && gpc <= length(group.names)) group.names[gpc] else g
+      panel_title <- if(length(region_ids) > 1) paste0(g_name, " (", region_labels[reg_idx], ")") else g_name
+
+      graphics::par(xpd = FALSE)
+      mids <- graphics::barplot(stack_mat, names.arg = xtime, col = fleet_pal, border = NA,
+                                ylim = c(0, ylim_top), main = panel_title, ylab = y_lab,
+                                las = 2, cex.names = 0.55, space = 0.1)
+      if(!is.null(obs_scaled)){
+        mid_for_year <- setNames(as.numeric(mids), as.character(xtime))
+        ox <- mid_for_year[as.character(obs_yrs)]
+        valid <- !is.na(obs_scaled) & !is.na(ox)
+        if(any(valid)){
+          graphics::lines (ox[valid], obs_scaled[valid], lwd = 1.5, col = "black")
+          graphics::points(ox[valid], obs_scaled[valid], pch = 21, col = "black", bg = "white", cex = 0.8)
+          graphics::legend("topleft", legend = obs_label, pch = 21, pt.bg = "white",
+                           col = "black", lwd = 1.5, cex = 0.65, bty = "n")
+        }
+      }
+
+      n_drawn <- n_drawn + 1L
+      if(n_drawn == 1 || ((n_drawn - 1) %% n_per_page == 0))
+        graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE, cex = 1.2, font = 2)
+      if(n_drawn %% n_per_page == 0 || p == nrow(panels)){
+        fleet_labs <- vapply(active_fleets, function(fn){
+          fpc <- meta$fleet_pc[match(fn, meta$fleet_nm)]
+          if(!is.null(fleet.names) && !is.na(fpc) && fpc <= length(fleet.names)) fleet.names[fpc] else fn
+        }, character(1))
+        graphics::par(xpd = NA)
+        x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
+        y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
+        graphics::legend(x = x_dev, y = y_dev, legend = fleet_labs, fill = fleet_pal,
+                         border = NA, bty = "n", xpd = NA, xjust = 0.5, yjust = 0,
+                         ncol = min(5, length(fleet_labs)))
+      }
+    }
+    .pad_page(n_drawn)
+  }
+
+  # 5c. one panel per fleet x group, region as colored lines, obs overlaid where available --
+  panel_by_fleetgroup_regions <- function(arr_fg, var_label, y_lab, obs_type_codes){
+    if(is.null(arr_fg)) return(invisible(NULL))
+    fg_names <- dimnames(arr_fg)[[2]]
+    fg_names <- fg_names[grepl("\\|", fg_names)]
+    if(length(fg_names) == 0) return(invisible(NULL))
+    arr_fg <- arr_fg[, fg_names, , , drop = FALSE]
+
+    meta <- .fg_meta(fg_names)
+    meta$group_pc <- if(length(norm_gn)) match(norm_name(meta$group_nm),  norm_gn) else NA_integer_
+    meta$fleet_pc <- if(length(norm_fn)) match(norm_fleet(meta$fleet_nm), norm_fn) else NA_integer_
+
+    graphics::par(mfrow = plt.dims, mar = c(2, 4, 2, 1), oma = c(4, 0, 2, 1), xpd = FALSE)
+    xtime         <- as.numeric(dimnames(arr_fg)[[1]])
+    region_labels <- dimnames(arr_fg)[[3]]
+    region_ids    <- as.integer(sub("R", "", region_labels))
+
+    obs_match_mask <- obs.ts$ts.head$Type %in% obs_type_codes
+
+    fg_has_obs <- function(k){
+      fpc <- meta$fleet_pc[k]; gpc <- meta$group_pc[k]
+      !is.na(fpc) && !is.na(gpc) &&
+        any(obs_match_mask & obs.ts$ts.head$Poolcode == fpc & obs.ts$ts.head$Poolcode2 == gpc)
+    }
+    fg_has_pred <- function(k) any(arr_fg[, k, , scale2run] != 0, na.rm = TRUE)
+
+    plot_cols <-
+      if(identical(groups, "all")) which(vapply(seq_along(fg_names), fg_has_pred, logical(1)))
+      else if(identical(groups, "with_obs")) which(vapply(seq_along(fg_names), fg_has_obs, logical(1)))
+      else which(meta$group_pc %in% as.integer(groups))
+    if(length(plot_cols) == 0){
+      graphics::plot.new(); graphics::title(main = paste("No fleet x group panels for", var_label))
+      .pad_page(1); return(invisible(NULL))
+    }
+
+    obs_yrs    <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    common_idx <- match(obs_yrs, xtime)
+
+    for(idx in seq_along(plot_cols)){
+      k   <- plot_cols[idx]
+      fpc <- meta$fleet_pc[k]; gpc <- meta$group_pc[k]
+
+      pred_g <- matrix(arr_fg[, k, , scale2run], nrow = length(xtime), ncol = length(region_ids),
+                       dimnames = list(dimnames(arr_fg)[[1]], region_labels))
+
+      ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
+      obs_per_region        <- vector("list", length(region_ids))
+      obs_labels_per_region <- vector("list", length(region_ids))
+      has_obs_any <- FALSE
+
+      if(!is.na(fpc) && !is.na(gpc)){
+        for(reg_idx in seq_along(region_ids)){
+          r <- region_ids[reg_idx]
+          obs_rows <- which(obs_match_mask & obs.ts$ts.head$Poolcode == fpc &
+                            obs.ts$ts.head$Poolcode2 == gpc &
+                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+          if(length(obs_rows) == 0) next
+          obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+          colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+          abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
+          pred_r  <- pred_g[, reg_idx]
+          obs_scaled <- obs_s
+          for(j in seq_len(ncol(obs_s))){
+            q <- 1
+            if(scale.abs || !isTRUE(abs_vec[j])){
+              nn <- !is.na(obs_s[, j]); pi <- common_idx[nn]; pi <- pi[!is.na(pi)]
+              if(length(pi) > 0){
+                mo <- mean(obs_s[nn, j], na.rm = TRUE); mp <- mean(pred_r[pi], na.rm = TRUE)
+                if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+              }
+            }
+            obs_scaled[, j] <- obs_s[, j] / q
+          }
+          ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+          obs_per_region[[reg_idx]]        <- obs_scaled
+          obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
+          has_obs_any <- TRUE
+        }
+      }
+      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+      f_lab <- if(!is.null(fleet.names) && !is.na(fpc) && fpc <= length(fleet.names)) fleet.names[fpc] else meta$fleet_nm[k]
+      g_lab <- if(!is.null(group.names) && !is.na(gpc) && gpc <= length(group.names)) group.names[gpc] else meta$group_nm[k]
+
+      graphics::par(xpd = FALSE)
+      graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                        ylim = c(0, ylim_top), main = paste0(f_lab, ": ", g_lab),
+                        col = region.colors, xlab = "", ylab = y_lab)
+      if(has_obs_any){
+        filled_pch <- c(21, 22, 23, 24, 25)
+        topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
+        for(reg_idx in seq_along(region_ids)){
+          if(is.null(obs_per_region[[reg_idx]])) next
+          obs_scaled <- obs_per_region[[reg_idx]]; col_reg <- region.colors[reg_idx]
+          for(j in seq_len(ncol(obs_scaled))){
+            sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
+            graphics::points(obs_yrs, obs_scaled[, j], pch = sym, col = "black",
+                             bg = col_reg, cex = 1.1, lwd = 0.5)
+            topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
+            topleft_pch    <- c(topleft_pch, sym); topleft_col <- c(topleft_col, col_reg)
+          }
+        }
+        if(length(topleft_labels))
+          graphics::legend("topleft", legend = topleft_labels, pch = topleft_pch,
+                           pt.bg = topleft_col, col = "black", pt.cex = 1.0, cex = 0.6, bty = "n")
+      }
+
+      if(idx == 1 || ((idx - 1) %% n_per_page == 0))
+        graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE, cex = 1.2, font = 2)
+      if(idx %% n_per_page == 0 || idx == length(plot_cols)){
+        graphics::par(xpd = NA)
+        x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
+        y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
+        graphics::legend(x = x_dev, y = y_dev, legend = region.names, lty = 1, lwd = 2,
+                         col = region.colors, bty = "n", xpd = NA, xjust = 0.5, yjust = 0,
+                         ncol = min(4, length(region.names)))
+      }
+    }
+    .pad_page(length(plot_cols))
+  }
+
   # 6. draw each requested variable ----------------------------------------------------------
   if("biomass"  %in% vars) panel_by_group_regions(pred$biomass,  "Biomass",                        c(0, 1),    "biomass")
-  if("catch"    %in% vars) panel_by_group_regions(pred$catch,    "Catch",                          c(6, 61, -6), "catch")
-  if("landings" %in% vars) panel_by_group_regions(pred$landings, "Landings (group, fleets summed)", c(12),     "landings", obs_group_via = "Poolcode2")
-  if("discards" %in% vars) panel_by_group_regions(pred$discards, "Discards (group)",               c(19, 20),  "discards")
+  if("catch"    %in% vars){
+    panel_by_group_regions       (pred$catch,    "Catch (group)",                 c(6, 61, -6), "catch")
+    panel_stacked_by_group_regions(pred$catch_fg, "Catch (group, fleets stacked)", "catch", c(6, 61, -6), obs_group_via = "Poolcode")
+    panel_by_fleetgroup_regions   (pred$catch_fg, "Catch by fleet x group",        "catch", c(6, 61, -6))
+  }
+  if("landings" %in% vars){
+    panel_by_group_regions       (pred$landings,    "Landings (group, fleets summed)",  c(12), "landings", obs_group_via = "Poolcode2")
+    panel_stacked_by_group_regions(pred$landings_fg, "Landings (group, fleets stacked)", "landings", c(12), obs_group_via = "Poolcode2")
+    panel_by_fleetgroup_regions   (pred$landings_fg, "Landings by fleet x group",        "landings", c(12))
+  }
+  if("discards" %in% vars){
+    panel_by_group_regions       (pred$disc_total,    "Total discards (group; (catch-landings)/Dmort)", c(19, 20), "total discards")
+    panel_by_group_regions       (pred$disc_dead,     "Dead discards (group; catch-landings)",          integer(0),  "dead discards",      select_type_codes = c(19, 20))
+    panel_by_group_regions       (pred$disc_surv,     "Surviving discards (group; total-dead)",          integer(0),  "surviving discards", select_type_codes = c(19, 20))
+    panel_stacked_by_group_regions(pred$disc_total_fg, "Total discards (group, fleets stacked)", "total discards", c(19, 20), obs_group_via = "Poolcode")
+    panel_by_fleetgroup_regions   (pred$disc_total_fg, "Total discards by fleet x group",        "total discards", c(13))
+  }
   if("f"        %in% vars) panel_by_group_regions(pred$fmort,    "Fishing mortality (catch/biomass)", c(4, 104), "F")
 
   invisible(pred)
