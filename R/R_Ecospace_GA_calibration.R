@@ -519,6 +519,23 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 #' @noRd
 
 
+<<<<<<< Updated upstream
+=======
+safe_runEwE <- function(cmdfile, do.obj) {
+  on.exit(gc(), add = TRUE)
+  #out <- tryCatch({
+    # example: quiet system call
+    # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
+  out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
+  #}, error = function(e) NA_real_)
+  if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
+    out[1]
+  } else {
+    NA_real_
+  }
+}#eof
+
+>>>>>>> Stashed changes
 # safe_runEwE <- function(cmdfile, do.obj,bug=F) {
 #     if (!bug){
 #     on.exit(gc(), add = TRUE)
@@ -911,7 +928,12 @@ ensure_cluster <- function() {
       "safe_runEwE", "fn.runEwE", "fn.objfxn1", "fn.objfxn2",
       "styear", "enyear", "group.names", "df.names", "obs.ts",
       "cmd_base", "myconfig", "run_dir"
+<<<<<<< Updated upstream
     ))
   }
 }
 
+=======
+    ))}
+}#eof
+>>>>>>> Stashed changes
