@@ -466,6 +466,19 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 
 #' @keywords internal
 #' @noRd
+# n visually distinct line colors. Uses colorRamps::matlab.like when available (the MATLAB "jet"
+# look), otherwise falls back to an equivalent jet ramp so there is no hard package dependency.
+# Unlike the base palette (seq_len(n)) this never recycles past 8 series.
+.matlab_palette <- function(n){
+  if(n < 1) return(character(0))
+  if(n == 1) return("black")   # matlab.like(1) returns white (invisible on a white device)
+  if(requireNamespace("colorRamps", quietly = TRUE)) return(colorRamps::matlab.like(n))
+  grDevices::colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F",
+                                "yellow", "#FF7F00", "red", "#7F0000"))(n)
+}
+
+#' @keywords internal
+#' @noRd
 .detect_ecospace_regions <- function(dir.out, timestep){
   prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
   files <- unique(unlist(lapply(dir.out, function(d){
@@ -709,19 +722,32 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #'   \code{catch / biomass} per region.
 #' @param timestep \code{"annual"} or \code{"monthly"}.
 #' @param regions Integer vector of region IDs to plot. \code{NULL} (default) auto-detects all
-#'   \code{Region_<n>_Biomass.csv} files found under \code{dir.out}.
+#'   \code{Region_<n>_Biomass.csv} files found under \code{dir.out}. With \code{overlay = "run"}
+#'   this must resolve to a single region (pass e.g. \code{regions = 0}).
 #' @param groups One of \code{"with_obs"} (default), \code{"all"}, or an integer vector of group
 #'   pool codes.
 #' @param styear Calendar start year. \code{NULL} (default) uses the earliest year in
 #'   \code{rownames(obs.ts$ts)}.
-#' @param scale2run For multi-run output (\code{dir.out} is a parent of multiple Ecospace run
-#'   subfolders), which run column is the scaling baseline / sole pred displayed. Default 1.
+#' @param scale2run Integer index of the run used as the obs-scaling baseline (1..nruns).
+#'   When \code{overlay = "region"} this run is also the \emph{sole} prediction drawn (one line per
+#'   region); when \code{overlay = "run"} every run is drawn and this one is only the obs baseline.
+#'   Default 1.
+#' @param overlay What the colored lines on each panel represent. \code{"region"} (default,
+#'   backward-compatible): one line per region for the single run \code{scale2run} — requires you to
+#'   pick the run when multiple runs are present. \code{"run"}: one line per run for a single region
+#'   (compare runs, like \code{\link{fn.ecosim_plot_fits}}) — requires \code{regions} to resolve to a
+#'   single region. With one region and one run either mode draws the single series.
 #' @param plt.dims Panel grid \code{c(rows, cols)}.
 #' @param region.colors Vector of line/point colors per region (in detected-region order). Default
-#'   \code{seq_along(regions)}.
+#'   is a MATLAB-like palette (\code{colorRamps::matlab.like}, jet-ramp fallback) sized to the number
+#'   of regions so colors do not recycle past 8. Used when \code{overlay = "region"}.
 #' @param region.names Optional character vector parallel to detected regions (sorted by region ID)
 #'   used in the bottom-of-page legend. Default \code{"Region <n>"}.
-#' @param sim.labels Multi-run labels. Default = run subfolder basenames.
+#' @param run.colors Vector of line colors per run (in run order). Default is a MATLAB-like palette
+#'   (\code{colorRamps::matlab.like}, jet-ramp fallback) sized to the number of runs so colors do not
+#'   recycle past 8. Used when \code{overlay = "run"}.
+#' @param sim.labels Multi-run labels (bottom-of-page legend when \code{overlay = "run"}).
+#'   Default = run subfolder basenames.
 #' @param group.names Character vector indexed by group pool code. Required to map obs (which uses
 #'   pool codes) to Ecospace output columns (which use group names). If \code{NULL}, obs overlay is
 #'   skipped (predictions still plotted).
@@ -756,9 +782,11 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
                                   groups        = "with_obs",
                                   styear        = NULL,
                                   scale2run     = 1,
+                                  overlay       = c("region", "run"),
                                   plt.dims      = c(3, 3),
                                   region.colors = NULL,
                                   region.names  = NULL,
+                                  run.colors    = NULL,
                                   sim.labels    = NULL,
                                   group.names   = NULL,
                                   fleet.names   = NULL,
@@ -767,7 +795,8 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
                                   dir.plts      = dir.out[1],
                                   run.label     = Sys.Date()){
 
-  vars <- tolower(vars)
+  vars    <- tolower(vars)
+  overlay <- match.arg(overlay)
 
   # 1. detect regions and styear -------------------------------------------------------------
   if(is.null(regions)) regions <- .detect_ecospace_regions(dir.out, timestep)
@@ -808,10 +837,28 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     stop("No prediction files found under: ", paste(dir.out, collapse = ", "))
 
   # 3. defaults -------------------------------------------------------------------------------
-  nruns <- dim(pred[[1]])[4]
-  if(is.null(region.colors)) region.colors <- seq_along(regions)
+  nruns      <- dim(pred[[1]])[4]
+  run_labels <- dimnames(pred[[1]])[[4]]
+  if(is.null(region.colors)) region.colors <- .matlab_palette(length(regions))
   if(is.null(region.names))  region.names  <- paste0("Region ", regions)
-  if(is.null(sim.labels))    sim.labels    <- dimnames(pred[[1]])[[4]]
+  if(is.null(run.colors))    run.colors    <- .matlab_palette(nruns)
+  if(is.null(sim.labels))    sim.labels    <- run_labels
+
+  if(scale2run < 1 || scale2run > nruns)
+    stop("scale2run = ", scale2run, " is out of range (", nruns, " run(s) found).")
+
+  # overlay mode: lines are either regions (single run via scale2run) or runs (single region)
+  mode_run <- identical(overlay, "run")
+  if(mode_run){
+    if(length(regions) != 1)
+      stop("overlay = \"run\" draws one line per run and needs a single region; ",
+           "pass regions = <one id> (detected: ", paste(regions, collapse = ", "), ").")
+    region_sel_idx <- 1L
+  } else if(nruns > 1){
+    message("overlay = \"region\": showing run ", scale2run, " (\"", run_labels[scale2run],
+            "\") of ", nruns, " run(s); set scale2run to pick another, ",
+            "or overlay = \"run\" (with a single region) to compare runs as lines.")
+  }
 
   # group name -> pool code lookup
   norm_name <- function(x) gsub("\\s+", "_", trimws(gsub('"', "", as.character(x))))
@@ -876,100 +923,163 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     for(idx in seq_along(plot_cols)){
       col <- plot_cols[idx]
       pc  <- col_to_pc[col]
-
-      # pred matrix: rows = years, cols = regions (single run via scale2run)
-      pred_g <- arr[, col, , scale2run, drop = FALSE]
-      pred_g <- matrix(pred_g, nrow = length(xtime), ncol = length(region_ids),
-                       dimnames = list(dimnames(arr)[[1]], region_labels))
-
-      ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
-      obs_per_region <- vector("list", length(region_ids))
-      obs_labels_per_region <- vector("list", length(region_ids))
-      has_obs_any <- FALSE
-
-      if(!is.na(pc)){
-        for(reg_idx in seq_along(region_ids)){
-          r <- region_ids[reg_idx]
-          obs_rows <- which(obs_match_mask & obs_groups_col == pc &
-                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
-          if(length(obs_rows) == 0) next
-
-          if(obs_group_via == "Poolcode2" && length(obs_rows) > 1){
-            om <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); om[om < 0] <- NA
-            row_any <- apply(!is.na(om), 1, any)
-            osum <- rowSums(om, na.rm = TRUE); osum[!row_any] <- NA
-            obs_s <- matrix(osum, ncol = 1,
-                            dimnames = list(NULL, paste0("obs_grp", pc, "_R", r)))
-            abs_vec <- all(obs.ts$ts.head$Absolute[obs_rows], na.rm = TRUE)
-          } else {
-            obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
-            colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
-            abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
-          }
-
-          pred_r <- pred_g[, reg_idx]
-          obs_scaled <- obs_s
-          for(j in seq_len(ncol(obs_s))){
-            q <- 1
-            if(scale.abs || !isTRUE(abs_vec[j])){
-              obs_nonna <- !is.na(obs_s[, j])
-              pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
-              if(length(pi) > 0){
-                mo <- mean(obs_s[obs_nonna, j], na.rm = TRUE)
-                mp <- mean(pred_r[pi], na.rm = TRUE)
-                if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
-              }
-            }
-            obs_scaled[, j] <- obs_s[, j] / q
-          }
-          ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
-          obs_per_region[[reg_idx]]        <- obs_scaled
-          obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
-          has_obs_any <- TRUE
-        }
-      }
-      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
-
       g_name <- if(!is.null(group.names) && !is.na(pc) && pc <= length(group.names))
                   group.names[pc] else eco_grp_names[col]
 
-      graphics::par(xpd = FALSE)
-      graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
-                        ylim = c(0, ylim_top), main = g_name,
-                        col = region.colors, xlab = "", ylab = y_lab)
+      if(mode_run){
+        # ---- run overlay: lines = runs, single region; obs shared, scaled to baseline run ----
+        r      <- region_ids[region_sel_idx]
+        pred_g <- matrix(arr[, col, region_sel_idx, ], nrow = length(xtime), ncol = nruns,
+                         dimnames = list(dimnames(arr)[[1]], run_labels))
+        ylim_top   <- max(pred_g, na.rm = TRUE) * 1.2
+        obs_scaled <- NULL; obs_lab <- character(0)
 
-      if(has_obs_any){
-        filled_pch <- c(21, 22, 23, 24, 25)  # circle, square, diamond, tri-up, tri-down — all with fill via bg
-        topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
-        for(reg_idx in seq_along(region_ids)){
-          if(is.null(obs_per_region[[reg_idx]])) next
-          obs_scaled <- obs_per_region[[reg_idx]]
-          col_reg <- region.colors[reg_idx]
-          for(j in seq_len(ncol(obs_scaled))){
-            sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
-            graphics::points(obs_yrs, obs_scaled[, j], pch = sym,
-                             col = "black", bg = col_reg, cex = 1.1, lwd = 0.5)
-            topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
-            topleft_pch    <- c(topleft_pch, sym)
-            topleft_col    <- c(topleft_col, col_reg)
+        if(!is.na(pc)){
+          obs_rows <- which(obs_match_mask & obs_groups_col == pc &
+                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+          if(length(obs_rows) > 0){
+            if(obs_group_via == "Poolcode2" && length(obs_rows) > 1){
+              om <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); om[om < 0] <- NA
+              row_any <- apply(!is.na(om), 1, any)
+              osum <- rowSums(om, na.rm = TRUE); osum[!row_any] <- NA
+              obs_s <- matrix(osum, ncol = 1,
+                              dimnames = list(NULL, paste0("obs_grp", pc, "_R", r)))
+              abs_vec <- all(obs.ts$ts.head$Absolute[obs_rows], na.rm = TRUE)
+            } else {
+              obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+              colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+              abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
+            }
+            pred_base  <- pred_g[, scale2run]   # scale obs to the baseline run's prediction
+            obs_scaled <- obs_s
+            for(j in seq_len(ncol(obs_s))){
+              q <- 1
+              if(scale.abs || !isTRUE(abs_vec[j])){
+                obs_nonna <- !is.na(obs_s[, j]); pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
+                if(length(pi) > 0){
+                  mo <- mean(obs_s[obs_nonna, j], na.rm = TRUE); mp <- mean(pred_base[pi], na.rm = TRUE)
+                  if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+                }
+              }
+              obs_scaled[, j] <- obs_s[, j] / q
+            }
+            ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+            obs_lab  <- colnames(obs_s)
           }
         }
-        if(length(topleft_labels))
-          graphics::legend("topleft", legend = topleft_labels,
-                           pch = topleft_pch, pt.bg = topleft_col, col = "black",
-                           pt.cex = 1.0, cex = 0.65, bty = "n")
+        if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+        main_lab <- paste0(g_name, " (", region_labels[region_sel_idx], ")")
+        graphics::par(xpd = FALSE)
+        graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                          ylim = c(0, ylim_top), main = main_lab,
+                          col = run.colors, xlab = "", ylab = y_lab)
+        if(!is.null(obs_scaled)){
+          filled_pch <- c(21, 22, 23, 24, 25)
+          syms <- filled_pch[((seq_len(ncol(obs_scaled)) - 1) %% length(filled_pch)) + 1]
+          for(j in seq_len(ncol(obs_scaled))){
+            graphics::points(obs_yrs, obs_scaled[, j], pch = syms[j], col = "black",
+                             bg = "white", cex = 1.1, lwd = 0.5)
+          }
+          if(length(obs_lab))
+            graphics::legend("topleft", legend = obs_lab, pch = syms, pt.bg = "white",
+                             col = "black", pt.cex = 1.0, cex = 0.65, bty = "n")
+        }
+
+      } else {
+        # ---- region overlay (default): lines = regions, single run via scale2run ----
+        pred_g <- arr[, col, , scale2run, drop = FALSE]
+        pred_g <- matrix(pred_g, nrow = length(xtime), ncol = length(region_ids),
+                         dimnames = list(dimnames(arr)[[1]], region_labels))
+
+        ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
+        obs_per_region <- vector("list", length(region_ids))
+        obs_labels_per_region <- vector("list", length(region_ids))
+        has_obs_any <- FALSE
+
+        if(!is.na(pc)){
+          for(reg_idx in seq_along(region_ids)){
+            r <- region_ids[reg_idx]
+            obs_rows <- which(obs_match_mask & obs_groups_col == pc &
+                              !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+            if(length(obs_rows) == 0) next
+
+            if(obs_group_via == "Poolcode2" && length(obs_rows) > 1){
+              om <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); om[om < 0] <- NA
+              row_any <- apply(!is.na(om), 1, any)
+              osum <- rowSums(om, na.rm = TRUE); osum[!row_any] <- NA
+              obs_s <- matrix(osum, ncol = 1,
+                              dimnames = list(NULL, paste0("obs_grp", pc, "_R", r)))
+              abs_vec <- all(obs.ts$ts.head$Absolute[obs_rows], na.rm = TRUE)
+            } else {
+              obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+              colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+              abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
+            }
+
+            pred_r <- pred_g[, reg_idx]
+            obs_scaled <- obs_s
+            for(j in seq_len(ncol(obs_s))){
+              q <- 1
+              if(scale.abs || !isTRUE(abs_vec[j])){
+                obs_nonna <- !is.na(obs_s[, j])
+                pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
+                if(length(pi) > 0){
+                  mo <- mean(obs_s[obs_nonna, j], na.rm = TRUE)
+                  mp <- mean(pred_r[pi], na.rm = TRUE)
+                  if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+                }
+              }
+              obs_scaled[, j] <- obs_s[, j] / q
+            }
+            ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+            obs_per_region[[reg_idx]]        <- obs_scaled
+            obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
+            has_obs_any <- TRUE
+          }
+        }
+        if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+        graphics::par(xpd = FALSE)
+        graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                          ylim = c(0, ylim_top), main = g_name,
+                          col = region.colors, xlab = "", ylab = y_lab)
+
+        if(has_obs_any){
+          filled_pch <- c(21, 22, 23, 24, 25)  # circle, square, diamond, tri-up, tri-down — all with fill via bg
+          topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
+          for(reg_idx in seq_along(region_ids)){
+            if(is.null(obs_per_region[[reg_idx]])) next
+            obs_scaled <- obs_per_region[[reg_idx]]
+            col_reg <- region.colors[reg_idx]
+            for(j in seq_len(ncol(obs_scaled))){
+              sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
+              graphics::points(obs_yrs, obs_scaled[, j], pch = sym,
+                               col = "black", bg = col_reg, cex = 1.1, lwd = 0.5)
+              topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
+              topleft_pch    <- c(topleft_pch, sym)
+              topleft_col    <- c(topleft_col, col_reg)
+            }
+          }
+          if(length(topleft_labels))
+            graphics::legend("topleft", legend = topleft_labels,
+                             pch = topleft_pch, pt.bg = topleft_col, col = "black",
+                             pt.cex = 1.0, cex = 0.65, bty = "n")
+        }
       }
 
       if(idx == 1 || ((idx - 1) %% n_per_page == 0))
         graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE, cex = 1.2, font = 2)
 
       if(idx %% n_per_page == 0 || idx == length(plot_cols)){
+        leg_lab <- if(mode_run) sim.labels else region.names
+        leg_col <- if(mode_run) run.colors else region.colors
         graphics::par(xpd = NA)
         x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
         y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
-        graphics::legend(x = x_dev, y = y_dev, legend = region.names, lty = 1, lwd = 2,
-                         col = region.colors, bty = "n", xpd = NA,
-                         xjust = 0.5, yjust = 0, ncol = min(4, length(region.names)))
+        graphics::legend(x = x_dev, y = y_dev, legend = leg_lab, lty = 1, lwd = 2,
+                         col = leg_col, bty = "n", xpd = NA,
+                         xjust = 0.5, yjust = 0, ncol = min(4, length(leg_lab)))
       }
     }
     .pad_page(length(plot_cols))
@@ -1142,80 +1252,137 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
       k   <- plot_cols[idx]
       fpc <- meta$fleet_pc[k]; gpc <- meta$group_pc[k]
 
-      pred_g <- matrix(arr_fg[, k, , scale2run], nrow = length(xtime), ncol = length(region_ids),
-                       dimnames = list(dimnames(arr_fg)[[1]], region_labels))
-
-      ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
-      obs_per_region        <- vector("list", length(region_ids))
-      obs_labels_per_region <- vector("list", length(region_ids))
-      has_obs_any <- FALSE
-
-      if(!is.na(fpc) && !is.na(gpc)){
-        for(reg_idx in seq_along(region_ids)){
-          r <- region_ids[reg_idx]
-          obs_rows <- which(obs_match_mask & obs.ts$ts.head$Poolcode == fpc &
-                            obs.ts$ts.head$Poolcode2 == gpc &
-                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
-          if(length(obs_rows) == 0) next
-          obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
-          colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
-          abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
-          pred_r  <- pred_g[, reg_idx]
-          obs_scaled <- obs_s
-          for(j in seq_len(ncol(obs_s))){
-            q <- 1
-            if(scale.abs || !isTRUE(abs_vec[j])){
-              nn <- !is.na(obs_s[, j]); pi <- common_idx[nn]; pi <- pi[!is.na(pi)]
-              if(length(pi) > 0){
-                mo <- mean(obs_s[nn, j], na.rm = TRUE); mp <- mean(pred_r[pi], na.rm = TRUE)
-                if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
-              }
-            }
-            obs_scaled[, j] <- obs_s[, j] / q
-          }
-          ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
-          obs_per_region[[reg_idx]]        <- obs_scaled
-          obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
-          has_obs_any <- TRUE
-        }
-      }
-      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
-
       f_lab <- if(!is.null(fleet.names) && !is.na(fpc) && fpc <= length(fleet.names)) fleet.names[fpc] else meta$fleet_nm[k]
       g_lab <- if(!is.null(group.names) && !is.na(gpc) && gpc <= length(group.names)) group.names[gpc] else meta$group_nm[k]
 
-      graphics::par(xpd = FALSE)
-      graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
-                        ylim = c(0, ylim_top), main = paste0(f_lab, ": ", g_lab),
-                        col = region.colors, xlab = "", ylab = y_lab)
-      if(has_obs_any){
-        filled_pch <- c(21, 22, 23, 24, 25)
-        topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
-        for(reg_idx in seq_along(region_ids)){
-          if(is.null(obs_per_region[[reg_idx]])) next
-          obs_scaled <- obs_per_region[[reg_idx]]; col_reg <- region.colors[reg_idx]
-          for(j in seq_len(ncol(obs_scaled))){
-            sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
-            graphics::points(obs_yrs, obs_scaled[, j], pch = sym, col = "black",
-                             bg = col_reg, cex = 1.1, lwd = 0.5)
-            topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
-            topleft_pch    <- c(topleft_pch, sym); topleft_col <- c(topleft_col, col_reg)
+      if(mode_run){
+        # ---- run overlay: lines = runs, single region; obs shared, scaled to baseline run ----
+        r      <- region_ids[region_sel_idx]
+        pred_g <- matrix(arr_fg[, k, region_sel_idx, ], nrow = length(xtime), ncol = nruns,
+                         dimnames = list(dimnames(arr_fg)[[1]], run_labels))
+        ylim_top   <- max(pred_g, na.rm = TRUE) * 1.2
+        obs_scaled <- NULL; obs_lab <- character(0)
+
+        if(!is.na(fpc) && !is.na(gpc)){
+          obs_rows <- which(obs_match_mask & obs.ts$ts.head$Poolcode == fpc &
+                            obs.ts$ts.head$Poolcode2 == gpc &
+                            !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+          if(length(obs_rows) > 0){
+            obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+            colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+            abs_vec   <- obs.ts$ts.head$Absolute[obs_rows]
+            pred_base <- pred_g[, scale2run]
+            obs_scaled <- obs_s
+            for(j in seq_len(ncol(obs_s))){
+              q <- 1
+              if(scale.abs || !isTRUE(abs_vec[j])){
+                nn <- !is.na(obs_s[, j]); pi <- common_idx[nn]; pi <- pi[!is.na(pi)]
+                if(length(pi) > 0){
+                  mo <- mean(obs_s[nn, j], na.rm = TRUE); mp <- mean(pred_base[pi], na.rm = TRUE)
+                  if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+                }
+              }
+              obs_scaled[, j] <- obs_s[, j] / q
+            }
+            ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+            obs_lab  <- colnames(obs_s)
           }
         }
-        if(length(topleft_labels))
-          graphics::legend("topleft", legend = topleft_labels, pch = topleft_pch,
-                           pt.bg = topleft_col, col = "black", pt.cex = 1.0, cex = 0.6, bty = "n")
+        if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+        graphics::par(xpd = FALSE)
+        graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                          ylim = c(0, ylim_top),
+                          main = paste0(f_lab, ": ", g_lab, " (", region_labels[region_sel_idx], ")"),
+                          col = run.colors, xlab = "", ylab = y_lab)
+        if(!is.null(obs_scaled)){
+          filled_pch <- c(21, 22, 23, 24, 25)
+          syms <- filled_pch[((seq_len(ncol(obs_scaled)) - 1) %% length(filled_pch)) + 1]
+          for(j in seq_len(ncol(obs_scaled))){
+            graphics::points(obs_yrs, obs_scaled[, j], pch = syms[j], col = "black",
+                             bg = "white", cex = 1.1, lwd = 0.5)
+          }
+          if(length(obs_lab))
+            graphics::legend("topleft", legend = obs_lab, pch = syms, pt.bg = "white",
+                             col = "black", pt.cex = 1.0, cex = 0.6, bty = "n")
+        }
+
+      } else {
+        # ---- region overlay (default): lines = regions, single run via scale2run ----
+        pred_g <- matrix(arr_fg[, k, , scale2run], nrow = length(xtime), ncol = length(region_ids),
+                         dimnames = list(dimnames(arr_fg)[[1]], region_labels))
+
+        ylim_top <- max(pred_g, na.rm = TRUE) * 1.2
+        obs_per_region        <- vector("list", length(region_ids))
+        obs_labels_per_region <- vector("list", length(region_ids))
+        has_obs_any <- FALSE
+
+        if(!is.na(fpc) && !is.na(gpc)){
+          for(reg_idx in seq_along(region_ids)){
+            r <- region_ids[reg_idx]
+            obs_rows <- which(obs_match_mask & obs.ts$ts.head$Poolcode == fpc &
+                              obs.ts$ts.head$Poolcode2 == gpc &
+                              !is.na(obs.ts$ts.head$Region) & obs.ts$ts.head$Region == r)
+            if(length(obs_rows) == 0) next
+            obs_s <- as.matrix(obs.ts$ts[, obs_rows, drop = FALSE]); obs_s[obs_s < 0] <- NA
+            colnames(obs_s) <- gsub(" ", "_", obs.ts$ts.head$Title[obs_rows])
+            abs_vec <- obs.ts$ts.head$Absolute[obs_rows]
+            pred_r  <- pred_g[, reg_idx]
+            obs_scaled <- obs_s
+            for(j in seq_len(ncol(obs_s))){
+              q <- 1
+              if(scale.abs || !isTRUE(abs_vec[j])){
+                nn <- !is.na(obs_s[, j]); pi <- common_idx[nn]; pi <- pi[!is.na(pi)]
+                if(length(pi) > 0){
+                  mo <- mean(obs_s[nn, j], na.rm = TRUE); mp <- mean(pred_r[pi], na.rm = TRUE)
+                  if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+                }
+              }
+              obs_scaled[, j] <- obs_s[, j] / q
+            }
+            ylim_top <- max(ylim_top, max(obs_scaled, na.rm = TRUE) * 1.2, na.rm = TRUE)
+            obs_per_region[[reg_idx]]        <- obs_scaled
+            obs_labels_per_region[[reg_idx]] <- colnames(obs_s)
+            has_obs_any <- TRUE
+          }
+        }
+        if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+        graphics::par(xpd = FALSE)
+        graphics::matplot(xtime, pred_g, type = "l", lty = 1, lwd = 2,
+                          ylim = c(0, ylim_top), main = paste0(f_lab, ": ", g_lab),
+                          col = region.colors, xlab = "", ylab = y_lab)
+        if(has_obs_any){
+          filled_pch <- c(21, 22, 23, 24, 25)
+          topleft_labels <- character(0); topleft_pch <- integer(0); topleft_col <- character(0)
+          for(reg_idx in seq_along(region_ids)){
+            if(is.null(obs_per_region[[reg_idx]])) next
+            obs_scaled <- obs_per_region[[reg_idx]]; col_reg <- region.colors[reg_idx]
+            for(j in seq_len(ncol(obs_scaled))){
+              sym <- filled_pch[((j - 1) %% length(filled_pch)) + 1]
+              graphics::points(obs_yrs, obs_scaled[, j], pch = sym, col = "black",
+                               bg = col_reg, cex = 1.1, lwd = 0.5)
+              topleft_labels <- c(topleft_labels, obs_labels_per_region[[reg_idx]][j])
+              topleft_pch    <- c(topleft_pch, sym); topleft_col <- c(topleft_col, col_reg)
+            }
+          }
+          if(length(topleft_labels))
+            graphics::legend("topleft", legend = topleft_labels, pch = topleft_pch,
+                             pt.bg = topleft_col, col = "black", pt.cex = 1.0, cex = 0.6, bty = "n")
+        }
       }
 
       if(idx == 1 || ((idx - 1) %% n_per_page == 0))
         graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE, cex = 1.2, font = 2)
       if(idx %% n_per_page == 0 || idx == length(plot_cols)){
+        leg_lab <- if(mode_run) sim.labels else region.names
+        leg_col <- if(mode_run) run.colors else region.colors
         graphics::par(xpd = NA)
         x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
         y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
-        graphics::legend(x = x_dev, y = y_dev, legend = region.names, lty = 1, lwd = 2,
-                         col = region.colors, bty = "n", xpd = NA, xjust = 0.5, yjust = 0,
-                         ncol = min(4, length(region.names)))
+        graphics::legend(x = x_dev, y = y_dev, legend = leg_lab, lty = 1, lwd = 2,
+                         col = leg_col, bty = "n", xpd = NA, xjust = 0.5, yjust = 0,
+                         ncol = min(4, length(leg_lab)))
       }
     }
     .pad_page(length(plot_cols))

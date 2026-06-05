@@ -678,6 +678,14 @@ fn.netcdf2ascii_glorys <- function(nc.files=list.files(dir.glorys,pattern=".nc$"
     #monthly climatology
     month_indices <- match(substr(names(st.stack),1,3),month.abb)
     monthly_averages <- stackApply(st.stack, indices = month_indices, fun = mean, na.rm = TRUE)
+    #stackApply orders output layers by first appearance of the index, not by month number,
+    #so data that doesn't start in January gets mislabeled. Reorder to Jan..Dec.
+    monthly_averages <- monthly_averages[[order(as.integer(sub("index_","",names(monthly_averages))))]]
+
+    #for relative-forcing (normalized) drivers, rescale the climatology to its own mean=1
+    if(grepl("_norm$",basename(dirs.stvars[i]))){
+      monthly_averages <- monthly_averages/cellStats(calc(monthly_averages,mean,na.rm=T),mean,na.rm=T)
+    }
 
     writeRaster(monthly_averages,file.path(dirs.stvars[i],paste0(basename(dirs.stvars[i]),'_0000')),
                 suffix=formatC(1:12,width=2,flag=0), format='ascii',overwrite=T, bylayer=T)
@@ -1139,7 +1147,15 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
           #monthly climatology
           month_indices <- match(substr(names(st.stack),1,3),month.abb)
           monthly_averages <- stackApply(st.stack, indices = month_indices, fun = mean, na.rm = TRUE)
-          
+          #stackApply orders output layers by first appearance of the index, not by month number,
+          #so data that doesn't start in January gets mislabeled. Reorder to Jan..Dec.
+          monthly_averages <- monthly_averages[[order(as.integer(sub("index_","",names(monthly_averages))))]]
+
+          #for relative-forcing (normalized) drivers, rescale the climatology to its own mean=1
+          if(grepl("_norm$",basename(dirs.stvars[i]))){
+            monthly_averages <- monthly_averages/cellStats(calc(monthly_averages,mean,na.rm=T),mean,na.rm=T)
+          }
+
           writeRaster(monthly_averages,file.path(dirs.stvars[i],paste0(basename(dirs.stvars[i]),'_0000')),
                       suffix=formatC(1:12,width=2,flag=0), format='ascii',overwrite=T, bylayer=T)
           
@@ -1667,6 +1683,285 @@ fn.make_monthly_climatology_maps <- function(dir.stdriver=dir.stdriver){
 
   rm(st.stack); gc()
 }
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#' @title Create ascii files from ESA CCI netcdf
+#' @description This function processes ESA CCI satellite netcdf files (e.g. chlor_a, SST, SSS)
+#' from the local machine, downloaded with \code{fn.pull_esacci()}.  It loops through monthly
+#' timesteps, resamples to the depth grid, fills coastal cells, applies the Morel and Berthon
+#' (1989) depth-integration for surface chlorophyll, normalizes PP drivers to the first-year
+#' mean, and writes ascii files for input to Ecospace.  It can also produce static maps and
+#' monthly climatologies.
+#' @param nc.files A character vector containing the full file paths of the netcdf files to
+#' process.
+#' @param depth Raster grid of depth, matching the basemap of Ecospace with land cells NA.
+#' Saved ascii files will have the same dimensions.
+#' @param dir.stdriver Parent directory for spatial temporal drivers.  A folder will be created
+#' for each variable in this directory to save the ascii files.
+#' @param scalePP Logical.  TRUE will normalize primary-production drivers (chlor_a and its
+#' depth-integrated companion) to the mean of the first year of data.  Default TRUE.
+#' @param do.vars Optional character vector of variable name prefixes used to filter which
+#' subdirectories are processed in the static/climatology step.  Default NULL processes all.
+#' @param zint.method Character vector of one or both depth-integration methods for surface
+#' chlorophyll; each is written to its own tagged \code{_Zint_<method>} folder.  \code{"MB"} uses
+#' Morel and Berthon (1989) equations 2b and 2c.  \code{"MBMML"} integrates the Morel & Maritorena
+#' (2001) mean euphotic concentration over the Lee (2007) euphotic (z1\%) depth.  Default runs both.
+#' @param make.monthly Logical.  TRUE will create the monthly ST driver ascii files.  Default
+#' TRUE.
+#' @param make.static Logical.  TRUE will create a static map (first-year and all-years
+#' averages) for each variable.  Default TRUE.
+#' @param make.climatology Logical.  TRUE will create a 12-month climatology stack for each
+#' variable.  Default TRUE.
+#' @return A series of ascii files saved in subdirectories of \code{dir.stdriver}.
+#' @examples
+#' \dontrun{
+#' # example code:
+#' nc.files <- list.files(path = dir.esacci, pattern = ".nc$", full.names = TRUE)
+#' fn.netcdf2ascii_esacci(nc.files = nc.files, depth = depth,
+#'                        dir.stdriver = file.path(dirname(getwd()), 'ST drivers', '5min', 'ESA_CCI'))}
+#' @export
+fn.netcdf2ascii_esacci <- function(nc.files=list.files(path=dir.cefi, pattern=".nc$", full.names=T), depth=depth,
+                                   dir.stdriver=dir.stdriver, scalePP=TRUE, do.vars=NULL,
+                                   zint.method=c("MB","MBMML"),
+                                   make.monthly=TRUE, make.static=TRUE, make.climatology=TRUE){
+  zint.method <- match.arg(zint.method, several.ok=TRUE)  #one or both of "MB","MBMML"
+  zint.tags.all <- c("MB","MBMML")  #all possible method tags, for stripping from folder names
+
+  #depth-integrate surface chl (mg m-3) to integrated chl (mg m-2); one equation per method tag
+  fn.zint <- function(chl, method){
+    if(method=="MB"){
+      #Morel and Berthon (1989) equations 2b and 2c
+      raster::calc(chl, function(x) ifelse(x<1.0, 38.0*x^0.425, 40.2*x^0.507))
+    } else if(method=="MBMML"){
+      #Lee (2007) euphotic depth x Morel & Maritorena (2001) mean euphotic concentration.
+      #chl is a raster RasterStack, so keep all ops raster-based (raster::calc, raster Arith/[]).
+      Zd.m   <- raster::calc(chl, function(x) 34*(x^-0.39))                 #Lee (2007) z1%
+      Ctot   <- raster::calc(chl, function(x) ifelse(x<1.0, 38.0*x^0.425, 40.2*x^0.507))  #M&B 2b/2c
+      Zehat1 <- 912.5*Ctot^-0.839   #Morel & Maritorena (2001) eq 6, for Ze<102m
+      Zehat2 <- 426.3*Ctot^-0.547   #for Ze>102m
+      Zehat  <- Zehat1
+      Zehat[] <- ifelse(Zehat1[]>102, Zehat2[], Zehat[])
+      out    <- (Ctot/Zehat)*Zd.m   #mean euphotic concentration integrated over the Lee euphotic depth
+      names(out) <- names(chl)
+      out
+    }
+  }
+  # nc.files
+  # depth
+  # dir.stdriver=dir.st_out
+  # scalePP=TRUE
+  # do.vars=NULL
+  # zint.method=c("MB","MBMML")
+  # make.monthly=TRUE
+  # make.static=TRUE
+  # make.climatology=TRUE
+  if(make.monthly){
+    for(i in 1:length(nc.files)){
+      #i=3
+      nc <- nc_open(nc.files[i])
+      nc.vars = names(nc$var)
+      message(nc.vars)
+      ndims = nc$ndims
+      message("- Processing variable ",i," of ",length(nc.files),": ",nc.vars)
+      
+      #Get coordinate variables----
+      if(grepl("SSS",basename(nc.files)[i])){
+        lon <- ncvar_get(nc, "lon")
+        lat <- ncvar_get(nc, "lat")
+      } else {
+        lon <- ncvar_get(nc, "longitude")
+        lat <- ncvar_get(nc, "latitude")
+      }
+      time <- ncvar_get(nc,'time')
+      ntime <- length(time)
+      refdate <- as.Date(gsub("[A-Za-z ]", "",nc$dim$time$units))
+      if(grepl("seconds",nc$dim$time$units)) nc.times <- refdate+(time/(60*60*24))
+      if(grepl("days",nc$dim$time$units)) nc.times <- refdate+time
+      
+      # Extract data for spatial subset
+      nc.v <- ncvar_get(nc, nc.vars)
+      nc.v <- aperm(nc.v,c(2,1,3))
+      
+      if(grepl("SST",basename(nc.files)[i])) nc.v <- nc.v[dim(nc.v)[1]:1,,]
+      if(grepl("SSS",basename(nc.files)[i])) nc.v <- aperm(nc.v,c(2,1,3))
+      #plot(rast(nc.v[,,1]))
+      nc_close(nc)
+      
+      #if(make.monthly){
+      ndims = length(dim(nc.v))
+      ntimes = dim(nc.v)[3]
+      dimnames(nc.v)[[3]] <- gsub("-","_",substr(nc.times,1,10))
+      #nc.tmp = aperm(nc.v,c(2,1,3))
+      #dim(depth)
+      #nc.tmp = nc.v[dim(nc.v)[1]:1,,]
+      brick1 = brick(nc.v, crs=crs(depth))
+      extent(brick1) = extent(depth)
+      ras.v <- resample(rast(brick1),rast(depth))
+      #plot(ras.v)
+      out.v = stack()
+      #fill coastal cells
+      for(t in 1:nlyr(ras.v)){
+        #t=1
+        message(paste0(nc.vars,"--month ",t," of ",ntimes))
+        ras.t.filled <- fill_coastal_cells(ras.v[[t]])
+        ras.t <- mask(ras.t.filled,rast(depth))
+        out.v <- addLayer(out.v, raster(ras.t))
+        rm(ras.t, ras.t.filled); gc()
+      }
+      names(out.v) <- paste0("X",format(nc.times,"%Y%m"))[1:dim(out.v)[3]]
+      
+      #----unit conversions----
+      # #convert units of NPP from mol N m-2 s-1 to gC m-2 month-1
+      # if(nc.vars=='wc_vert_int_npp'){
+      #   message("Converting units of NPP from mol N m-2 s-1 to gC m-2 month-1")
+      #   #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      #   out.v <- out.v*6.625*12*30.5*24*60*60
+      # }
+      # 
+      # #convert units of chlos from kg m-3 to mg m-3
+      # if(nc.vars=='chlos'){
+      #   message("Converting units of chlos from kg m-3 to mg m-3")
+      #   #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      #   out.v <- out.v*1e6
+      # }
+      # 
+      # #convert units of chlo from ug/kg to mg m-3
+      # if(nc.vars=='chl'){
+      #   message("Converting units of chl from ug kg-1 to mg m-3")
+      #   #multiply by seawater density 1.025 kg/L
+      #   out.v <- out.v*1.025
+      # }
+      # 
+      # #convert units of oxygen from mol kg-1 to  mmol m-3
+      # if(nc.vars=='btm_o2'){
+      #   message("Converting units of btm_o2 from mol kg-1 to  mmol m-3")
+      #   #mol N m-2 s-1 * C:N ratio of 106:16 * molar weight of C 12 g * seconds in month
+      #   out.v <- out.v*1000*1025
+      # }
+      
+      if(nlayers(out.v)>0) out.v <- round(out.v,4)
+      if(nlayers(out.v)>0) names(out.v) <- paste0("X",format(nc.times,"%Y%m"))[1:dim(out.v)[3]]
+      
+      
+      #surface-chl PP normalization (method-independent; depth integration handled at write time)----
+      if(nc.vars=='chlor_a' & scalePP){
+        message("Normalizing surface PP driver to mean=1 in first year of data")
+        surf.yr1mean <-  calc(out.v[[1:12]],mean,na.rm=T)
+        surf.norm <- out.v/cellStats(surf.yr1mean,mean,na.rm=T)
+      }
+      
+      #write ascii----
+      dir.out = file.path(dir.stdriver,nc.vars)
+      if(!dir.exists(dir.out)) dir.create(dir.out,recursive=T)
+      writeRaster(out.v,file.path(dir.out,nc.vars),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+
+      if(nc.vars=='chlor_a'){
+        #surface normalized chl (method-independent), written once
+        if(scalePP){
+          dir.out = file.path(dir.stdriver,paste0(nc.vars,'_norm'))
+          if(!dir.exists(dir.out)) dir.create(dir.out,recursive=T)
+          writeRaster(round(surf.norm,6),file.path(dir.out,basename(dir.out)),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+        }
+
+        #depth-integrated chl: one tagged folder per requested method (the folder carries the
+        #method tag; the filename itself stays un-tagged)
+        for(zt in zint.method){
+          message("- depth-integrating surface chl, method ",zt)
+          chlos.zint <- fn.zint(out.v, zt)
+
+          dir.out = file.path(dir.stdriver,paste0(nc.vars,'_Zint_',zt))
+          if(!dir.exists(dir.out)) dir.create(dir.out,recursive = T)
+          writeRaster(round(chlos.zint,6),file.path(dir.out,paste0(nc.vars,'_Zint')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+
+          if(scalePP){
+            zint.yr1mean <- calc(chlos.zint[[1:12]],mean,na.rm=T)
+            zint.norm <- chlos.zint/cellStats(zint.yr1mean,mean,na.rm=T)
+            dir.out = file.path(dir.stdriver,paste0(nc.vars,'_Zint_',zt,'_norm'))
+            if(!dir.exists(dir.out)) dir.create(dir.out,recursive = T)
+            writeRaster(round(zint.norm,6),file.path(dir.out,paste0(nc.vars,'_Zint_norm')),bylayer=T,suffix=format(nc.times[1:ntimes],"%Y%m"),format='ascii',overwrite=T)
+            rm(zint.norm)
+          }
+          rm(chlos.zint); gc()
+        }
+        rm(out.v); if(scalePP) rm(surf.norm); gc()
+      }
+      
+      
+    }
+  }
+  
+  #make static maps----
+  if(make.static | make.climatology){
+    message("Making static and monthly climatology maps")
+    dirs.stvars = list.dirs(path=dir.stdriver,recursive=F)
+    dir.static = file.path(dir.stdriver,"static")
+    if(!dir.exists(dir.static)) dir.create(dir.static)
+    if(length(c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))>0)){
+      dirs.stvars = dirs.stvars[-c(which(grepl("static",dirs.stvars)),which(grepl("plots",dirs.stvars)))]
+    }
+    basename(dirs.stvars)
+    for(i in 1:length(dirs.stvars)){
+      #i=1
+      stvar.i <- unlist(strsplit(basename(dirs.stvars[i]),"_"))[1]
+      if(!is.null(do.vars) & !stvar.i %in% c(do.vars,gsub("_glor","",do.vars))) next
+      stname = basename(dirs.stvars[i]) #paste0(basename(dirname(dirs.stvars[i])),"_",basename(dirs.stvars[i]))
+      message(paste0("now making ",i," of ",length(dirs.stvars),": ",stname))
+      
+      #read output--------------------------------------------------------------------
+      #list ecospace output ascii files
+      files.st = list.files(dirs.stvars[i],full.names = T,recursive=T)#[-c(1:6)]
+      files.st = files.st[!grepl("_0000_",basename(files.st))]
+      
+      #read them into raster stack
+      st.stack = stack(files.st)
+      #names(st.stack) = paste0(rep(month.abb,24),rep(1997:2020,each=12))
+      yrmo = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
+      names(st.stack) = paste0(month.abb[as.numeric(substr(yrmo,5,6))],substr(yrmo,1,4))
+      
+      #create static map s
+      st.mean_yr1 = calc(st.stack[[1:12]],fun=mean,na.rm=T)
+      st.mean_allyrs = calc(st.stack,fun=mean,na.rm=T)
+      
+      
+      #save static map
+      writeRaster(round(st.mean_allyrs,6),file.path(dir.static,paste0(stname,"_avg_allyrs")),format='ascii',overwrite=T)
+      writeRaster(round(st.mean_yr1,6),file.path(dir.static,paste0(stname,"_avg_yr1")),format='ascii',overwrite=T)
+      
+      #no need to normalize, since the monthly maps were already normalized and in their own folder.
+      # if(substr(basename(stname),1,3) %in% c('chl','npp','phy')){
+      #   st.mean_yr1.norm = st.mean_yr1/cellStats(st.mean_yr1,mean,na.rm=T)
+      #   st.mean_allyrs.norm = st.mean_allyrs/cellStats(st.mean_allyrs,mean,na.rm=T)
+      #   
+      #   writeRaster(st.mean_allyrs.norm,file.path(dir.static,paste0(stname,"_avg_allyrs_norm")),format='ascii',overwrite=T)
+      #   writeRaster(st.mean_yr1.norm,file.path(dir.static,paste0(stname,"_avg_yr1_norm")),format='ascii',overwrite=T)
+      # }
+      
+      #monthly climatology
+      month_indices <- match(substr(names(st.stack),1,3),month.abb)
+      monthly_averages <- stackApply(st.stack, indices = month_indices, fun = mean, na.rm = TRUE)
+      #stackApply orders output layers by first appearance of the index, not by month number,
+      #so data that doesn't start in January gets mislabeled. Reorder to Jan..Dec.
+      monthly_averages <- monthly_averages[[order(as.integer(sub("index_","",names(monthly_averages))))]]
+
+      #for relative-forcing (normalized) drivers, rescale the climatology to its own mean=1
+      if(grepl("_norm$",basename(dirs.stvars[i]))){
+        monthly_averages <- monthly_averages/cellStats(calc(monthly_averages,mean,na.rm=T),mean,na.rm=T)
+      }
+
+      #strip the method tag (MB/MBMML) from the climatology filename; the folder still carries it.
+      #remove _norm and the tag as separate fixed suffixes (avoids an optional-group backreference,
+      #which R's ERE engine drops), then restore _norm.
+      is.norm <- grepl("_norm$",basename(dirs.stvars[i]))
+      clim.name <- sub("_norm$","",basename(dirs.stvars[i]))
+      clim.name <- sub(paste0('_(',paste(zint.tags.all,collapse='|'),')$'),'',clim.name)
+      if(is.norm) clim.name <- paste0(clim.name,'_norm')
+      writeRaster(monthly_averages,file.path(dirs.stvars[i],paste0(clim.name,'_0000')),
+                  suffix=formatC(1:12,width=2,flag=0), format='ascii',overwrite=T, bylayer=T)
+      
+      rm(st.stack); gc()
+    }
+  }
+}#eof
 
 
 

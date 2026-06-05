@@ -38,12 +38,17 @@ fn.STdriver_timeseries <- function(dirs.stdriver=dirs.stdriver, datestamps=NULL,
   # }))
   
   for(i in 1:length(dirs.stdriver)){
-    #i=1
+    #i=2
     var.name=basename(dirs.stdriver[i])
+    if(i==1) message("Calculating timeseries averages from ascii files")
     message(paste(i,'of',length(dirs.stdriver),":",var.name))
     files.st = list.files(dirs.stdriver[i],full.names = T,recursive=T)
+    #remove climatology
+    #files.st = files.st[-which(grepl("_0000",basename(files.st)))]
     st.rast = rast(files.st)
-    names(st.rast) = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
+    tmp.names = gsub("_","",names(st.rast))
+    names(st.rast) = substr(tmp.names,nchar(tmp.names)-5,nchar(tmp.names))
+    #names(st.rast) = substr(basename(files.st),nchar(basename(files.st))-9,nchar(basename(files.st))-4)
     
     #unit conversions
     #npp: molC/m2/s to gC/m2/yr
@@ -58,13 +63,17 @@ fn.STdriver_timeseries <- function(dirs.stdriver=dirs.stdriver, datestamps=NULL,
     
     #store output
     if(i==1){
-      mean.out <- st.rast.mean
+      mean.out <- data.frame(yrmo=names(st.rast),st.rast.mean)
     } else {
-      mean.out <- merge(mean.out,st.rast.mean,by=0,all.y=T)
+      tmp.out <- data.frame(yrmo=names(st.rast),st.rast.mean)
+      mean.out <- merge(mean.out,tmp.out,by='yrmo',all=T)
+      #mean.out <- merge(mean.out,st.rast.mean,by=0,all.y=T)
+      #mean.out$Row.names <- NULL
     }
-    rm(st.rast);gc()
+    rm(st.rast,st.rast.mean);gc()
   }
   names(mean.out)[1] <- 'time'
   mean.out$time = as.numeric(substr(mean.out$time,1,4))+(as.numeric(substr(mean.out$time,5,6))-1)/12
   write.csv(mean.out,file.path(dirname(dirs.stdriver[1]),'STdriver_timeseries_mean.csv'),row.names=F)
+  return(mean.out)
 } #eof 

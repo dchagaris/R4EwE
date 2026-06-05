@@ -13,9 +13,11 @@ fn.ecospace_plot_fits(
   groups = "with_obs",
   styear = NULL,
   scale2run = 1,
+  overlay = c("region", "run"),
   plt.dims = c(3, 3),
   region.colors = NULL,
   region.names = NULL,
+  run.colors = NULL,
   sim.labels = NULL,
   group.names = NULL,
   fleet.names = NULL,
@@ -57,7 +59,8 @@ to fleet pool codes; without it every fleet defaults to Dmort = 1. \code{F} is
 \item{timestep}{\code{"annual"} or \code{"monthly"}.}
 
 \item{regions}{Integer vector of region IDs to plot. \code{NULL} (default) auto-detects all
-\code{Region_<n>_Biomass.csv} files found under \code{dir.out}.}
+\code{Region_<n>_Biomass.csv} files found under \code{dir.out}. With \code{overlay = "run"}
+this must resolve to a single region (pass e.g. \code{regions = 0}).}
 
 \item{groups}{One of \code{"with_obs"} (default), \code{"all"}, or an integer vector of group
 pool codes.}
@@ -65,18 +68,32 @@ pool codes.}
 \item{styear}{Calendar start year. \code{NULL} (default) uses the earliest year in
 \code{rownames(obs.ts$ts)}.}
 
-\item{scale2run}{For multi-run output (\code{dir.out} is a parent of multiple Ecospace run
-subfolders), which run column is the scaling baseline / sole pred displayed. Default 1.}
+\item{scale2run}{Integer index of the run used as the obs-scaling baseline (1..nruns).
+When \code{overlay = "region"} this run is also the \emph{sole} prediction drawn (one line per
+region); when \code{overlay = "run"} every run is drawn and this one is only the obs baseline.
+Default 1.}
+
+\item{overlay}{What the colored lines on each panel represent. \code{"region"} (default,
+backward-compatible): one line per region for the single run \code{scale2run} — requires you to
+pick the run when multiple runs are present. \code{"run"}: one line per run for a single region
+(compare runs, like \code{\link{fn.ecosim_plot_fits}}) — requires \code{regions} to resolve to a
+single region. With one region and one run either mode draws the single series.}
 
 \item{plt.dims}{Panel grid \code{c(rows, cols)}.}
 
 \item{region.colors}{Vector of line/point colors per region (in detected-region order). Default
-\code{seq_along(regions)}.}
+is a MATLAB-like palette (\code{colorRamps::matlab.like}, jet-ramp fallback) sized to the number
+of regions so colors do not recycle past 8. Used when \code{overlay = "region"}.}
 
 \item{region.names}{Optional character vector parallel to detected regions (sorted by region ID)
 used in the bottom-of-page legend. Default \code{"Region <n>"}.}
 
-\item{sim.labels}{Multi-run labels. Default = run subfolder basenames.}
+\item{run.colors}{Vector of line colors per run (in run order). Default is a MATLAB-like palette
+(\code{colorRamps::matlab.like}, jet-ramp fallback) sized to the number of runs so colors do not
+recycle past 8. Used when \code{overlay = "run"}.}
+
+\item{sim.labels}{Multi-run labels (bottom-of-page legend when \code{overlay = "run"}).
+Default = run subfolder basenames.}
 
 \item{group.names}{Character vector indexed by group pool code. Required to map obs (which uses
 pool codes) to Ecospace output columns (which use group names). If \code{NULL}, obs overlay is
