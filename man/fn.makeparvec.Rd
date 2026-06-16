@@ -27,7 +27,12 @@ fn.makeparvec(
   fltdyn_pars = NULL,
   fltdyn.min = 0,
   fltdyn.max = 5,
-  fltdyn.cv = 0.2
+  fltdyn.cv = 0.2,
+  do.redtide = FALSE,
+  redtide_pars = NULL,
+  redtide.min = 0.5,
+  redtide.max = 1.5,
+  redtide.cv = 0.2
 )
 }
 \arguments{

@@ -26,17 +26,29 @@
 #fn.runEwE-----------------------------------------------------------------------------------------
 #' Run one Ecospace job (system2 version)
 #' @param cmdfile Character: full path to the command file Ecospace consumes
-#' @param do.obj Integer: reserved for later (kept for signature parity)
-#' @param console Character: full path to the Ecospace console executable (defaults to global 
+#' @param do.obj Integer: 0=none, 1=\code{fn.objfxn1}, 2=\code{fn.objfxn2},
+#' 3=\code{fn.ecospace_objfxn}
+#' @param console Character: full path to the Ecospace console executable (defaults to global
 #' file.console)
 #' @param stdout_target NULL/FALSE to suppress, or a file path to capture stdout
 #' @param stderr_target NULL/FALSE to suppress, or a file path to capture stderr
+#' @param fit.abs.catch Logical, passed to \code{fn.ecospace_objfxn} when \code{do.obj == 3}.
+#' If \code{TRUE} (default), absolute-type series (BiomassAbs, Catches, Landings, Discards,
+#' DiscardsTotalAbs) are fit on their literal scale (\code{q = 1}); if \code{FALSE}, every
+#' series is q-rescaled. Ignored for \code{do.obj} 1 or 2.
+#' @param timeout Numeric seconds; passed to \code{system2}. If the Ecospace child
+#' process hasn't exited within this many seconds it is killed and the run is treated as
+#' a failure (returns \code{NA}). Guards against hung EwE.exe processes that would
+#' otherwise block a worker indefinitely (e.g., a Windows Error Reporting dialog from
+#' a child crash). Default 300 (5 minutes).
 #' @return Integer exit status (0 = success); invisibly
 fn.runEwE <- function(cmdfile,
                       do.obj   = 1,
                       console  = file.console,
                       stdout_target = FALSE,
-                      stderr_target = FALSE) {
+                      stderr_target = FALSE,
+                      fit.abs.catch = TRUE,
+                      timeout = 300) {
   
   # cmdfile=files.cmd[1]
   # do.obj=1
@@ -51,13 +63,18 @@ fn.runEwE <- function(cmdfile,
   # Build argument vector: the command file is passed as an argument
   args <- shQuote(cmdfile_path)
 
-  # Run the Ecospace console; block until it finishes (wait = TRUE)
+  # Run the Ecospace console; block until it finishes (wait = TRUE) or until `timeout`
+  # seconds elapse, at which point the child is killed and a non-zero status is returned.
+  # The timeout guards against an EwE.exe child that hangs (e.g., on a Windows Error
+  # Reporting dialog after a crash); without it a single bad parameter vector can stall
+  # a worker indefinitely.
   status <- tryCatch(
     system2(command = console_path,
             args    = args,
             stdout  = stdout_target,    # FALSE to suppress, or a file path
             stderr  = stderr_target,    # FALSE to suppress, or a file path
-            wait    = TRUE),
+            wait    = TRUE,
+            timeout = timeout),
     error = function(e) {
       # Could not launch the process (bad path, permissions, etc.)
       warning(sprintf("Ecospace call failed to start: %s", conditionMessage(e)))
@@ -94,6 +111,11 @@ fn.runEwE <- function(cmdfile,
       fn.objfxn1(dir.pred = pred_dir, obs.ts = obs.ts)
     } else if (do.obj == 2L) {
       fn.objfxn2(dir.pred = pred_dir, obs.ts = obs.ts, obs.map = obs.map)
+    } else if (do.obj == 3L) {
+      fn.ecospace_objfxn(dir.pred = pred_dir, obs.ts = obs.ts,
+                         group.names = group.names, fleet.names = fleet.names,
+                         fit.abs.catch = fit.abs.catch,
+                         return = "vector")
     } else {
       NA_real_
     }
@@ -114,55 +136,63 @@ fn.runEwE <- function(cmdfile,
 #' @description Calls fn.runEwE in parallel framework.
 #' @param runlist A dataframe that must contain a variable named 'cmd_file', which is the full file 
 #' path of the command files to run.
-#' @param obj.fxn A single number indicating the likelihood function to use. 0=none, 1=timeseries 
-#' only, 2=timeseries and spatial data.
+#' @param obj.fxn A single number indicating the likelihood function to use. 0=none, 1=timeseries
+#' only (\code{fn.objfxn1}), 2=timeseries and spatial data (\code{fn.objfxn2}), 3=Ecospace
+#' timeseries with fleet-specific landings and discards (\code{fn.ecospace_objfxn}).
+#' \code{obj.fxn = 3} additionally requires \code{group.names} and \code{fleet.names} to be in
+#' the worker's environment (add them to \code{cl.export}).
 #' @param cl.export A list of objects exported to each worker.
-#' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods 
-#' is returned and added to the runlist dataframe. 
+#' @param fit.abs.catch Logical, passed to \code{fn.ecospace_objfxn} when \code{obj.fxn == 3}.
+#' If \code{TRUE} (default), absolute-type series are fit on their literal scale; if
+#' \code{FALSE}, every series is q-rescaled. Ignored for other \code{obj.fxn} values.
+#' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods
+#' is returned and added to the runlist dataframe.
 #' @examples
 #' # example code:
 #' \dontrun{result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))}
 #' @export
 fn.runEwE.parallel <-  function(
-    runlist=runlist, 
-    obj.fxn=1, 
-    cl.export = list("runlist", "obs.ts")
+    runlist=runlist,
+    obj.fxn=1,
+    cl.export = list("runlist", "obs.ts"),
+    fit.abs.catch = TRUE
 ){
-  #runlist=runlist[runlist$tag.type=='environmental response',]
-  #source(file.setup)
   t1 <- Sys.time()
   cl <- makeSOCKcluster(detectCores()-1)
   registerDoSNOW(cl)
-  clusterExport(cl,append(cl.export,list("file.console", "fn.runEwE", "fn.objfxn1", "fn.objfxn2","styear","enyear","group.names","df.names")))
+  clusterExport(cl, append(cl.export, list(
+    "file.console", "fn.runEwE",
+    "fn.objfxn1", "fn.objfxn2", "fn.ecospace_objfxn",
+    "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
+    ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",
+    "styear", "enyear", "group.names", "fleet.names", "df.names")))
   print(paste('Setup',detectCores()-1,'Clusters: Overhead time',round(as.numeric(Sys.time()-t1),2)))
-  
-  #runlist=runlist[1:20,]
+
   pbar <- winProgressBar("Running Ecospace Console",label=paste0("Simulation 0 of ",nrow(runlist)),max=100)
   prog <- function(n) setWinProgressBar(pbar,(n/nrow(runlist)*100),label=paste("Simulation Run", n,"of", nrow(runlist),"Completed"))
   opts <- list(progress=prog)
-  
+
   print(paste('Running',nrow(runlist),'Ecospace simulations'))
   t1 <- Sys.time()
   runs <- foreach(i = 1:nrow(runlist), .errorhandling = 'pass', .options.snow = opts) %dopar% {
-    fn.runEwE(cmdfile = runlist$cmd_file[i], do.obj = obj.fxn)
+    fn.runEwE(cmdfile = runlist$cmd_file[i], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
   }
   close(pbar)
   print(paste('Run time',round(as.numeric(Sys.time()-t1),2)))
-  
+
   ##missing runs----
   filecheck <- sapply(runlist$dir.out,FUN=function(x)length(list.files(x)))
-  erruns <- which(filecheck<=1)  
-  #erruns <- c(3,5,7)
+  erruns <- which(filecheck<=1)
 
   while(length(erruns)>=1){
     message(paste0('Redo missing runs: n=',length(erruns)))
-    
+
     pbar <- winProgressBar("Running Ecospace Console: Missing Runs",label=paste0("Simulation 0 of ",length(erruns)),max=100)
     prog <- function(n) setWinProgressBar(pbar,(n/length(erruns)*100),label=paste("Simulation Run", n,"of", length(erruns),"Completed"))
     opts <- list(progress=prog)
-    
+
     runs.erruns <- foreach(i=1:length(erruns),.errorhandling='pass',.options.snow=opts) %dopar% {
-      fn.runEwE(cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn)
+      fn.runEwE(cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn, fit.abs.catch=fit.abs.catch)
     }
     close(pbar)
     
@@ -378,12 +408,11 @@ fn.mediation_testval_tags = function(meds.base, do.xbase=TRUE){
 #' \dontrun{tags.vul <- fn.vul_testval_tags(predprey=data.frame(pred=1:5,prey=6:10, basevul=2), maxvul=1000, minvul=1.01, is.maxvul.mult=T)}
 #' @export
 fn.envresp_testval_tags = function(env.base, fact=2){
-  #env.base = envpars
+  idx_vec <- .env_resp_idx(env.base)
   env.narrow = env.wide = env.base
   env.out = data.frame()
   tags <- character()
   for(i in 1:nrow(env.base)){
-    #i=1
     #TRAPEZOID....
     if(env.base$shape.idx[i]==9){
       pref.range = env.base$par3[i]-env.base$par2[i]
@@ -395,20 +424,113 @@ fn.envresp_testval_tags = function(env.base, fact=2){
       env.narrow$par2[i] <- env.base$par2[i]+(pref.range*(1/fact)^2)
       env.narrow$par3[i] <- env.base$par3[i]-(pref.range*(1/fact)^2)
       env.narrow$par4[i] <- env.base$par3[i]+(env.base$par4[i]-env.base$par3[i])/fact
-      #print(rbind(env.base[i,],env.wide[i,], env.narrow[i,]))
-      tag.wide.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.wide$resp.idx[i],"),",env.wide$shape.idx[i], env.wide$par1[i],env.wide$par2[i],env.wide$par3[i],env.wide$par4[i],",Indexed.Single[]")
-      tag.narrow.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",env.narrow$resp.idx[i],"),",env.narrow$shape.idx[i], env.narrow$par1[i],env.narrow$par2[i],env.narrow$par3[i],env.narrow$par4[i],",Indexed.Single[]")
-      tags <- c(tags,tag.wide.i,tag.narrow.i) 
-      #env.out <- rbind(env.out,env.wide[i,],env.narrow[i,])
+      tag.wide.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",idx_vec[i],"),",env.wide$shape.idx[i], env.wide$par1[i],env.wide$par2[i],env.wide$par3[i],env.wide$par4[i],",Indexed.Single[]")
+      tag.narrow.i = paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",idx_vec[i],"),",env.narrow$shape.idx[i], env.narrow$par1[i],env.narrow$par2[i],env.narrow$par3[i],env.narrow$par4[i],",Indexed.Single[]")
+      tags <- c(tags,tag.wide.i,tag.narrow.i)
       env.out <- rbind(env.out,env.base[i,],env.base[i,])
-    } #end trapezoid  
-    
+    } #end trapezoid
+
    } #end loop
   env.out$tag <- tags
   return(env.out)
 } #eof
 
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+# Internal: resolve the env-response index column.
+# Accepts either 'fxn_num' (current convention) or 'resp.idx' (legacy).
+#' @keywords internal
+#' @noRd
+.env_resp_idx <- function(env.base){
+  if("fxn_num"  %in% names(env.base)) return(env.base$fxn_num)
+  if("resp.idx" %in% names(env.base)) return(env.base$resp.idx)
+  stop("env.base needs a 'fxn_num' (preferred) or 'resp.idx' column for the EcoSpace response index.")
+}
+
+# Internal: normalize an env-response parameters data frame to the canonical
+# schema (shape.idx + par1..par6). Accepts either the setup-script schema
+# (shape.idx, par1..par6) or the sensitivity-results schema (shape, Param.1..Param.6).
+# Unspecified par columns are left absent.
+#' @keywords internal
+#' @noRd
+.normalize_env_pars <- function(env_pars){
+  if(is.null(env_pars)) return(env_pars)
+  out <- env_pars
+  if(!"shape.idx" %in% names(out) && "shape" %in% names(out))
+    out$shape.idx <- suppressWarnings(as.integer(out$shape))
+  for(n in 1:6){
+    canon <- paste0("par", n)
+    alias <- paste0("Param.", n)
+    if(!canon %in% names(out) && alias %in% names(out))
+      out[[canon]] <- out[[alias]]
+  }
+  out
+}
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#fn.envresp_offval_tags-----
+#' @title Make environmental-response "off" parameter taglines for sensitivity runs.
+#' @description Creates one sensitivity tagline per environmental response function that
+#'   neutralizes that response by replacing its shape with a flat \strong{linear} response.
+#'   For foraging responses both linear endpoints are set to 1 (flat response of 1, no
+#'   spatial preference). For mortality responses both linear endpoints are set to 0
+#'   (flat response of 0, no extra mortality). The original shape and parameters of the
+#'   response are discarded in the emitted tag; \code{par3} and \code{par4} of the linear
+#'   shape are written as 0 placeholders. Use this instead of
+#'   \code{fn.envresp_testval_tags} when you want to evaluate the effect of each env response
+#'   by turning it off (one run per response) rather than perturbing its parameters.
+#' @param env.base A data frame with one row per env response function. Must include
+#'   the EcoSpace response index in either \code{fxn_num} (preferred) or \code{resp.idx}
+#'   (legacy), and \code{resp_type} (character; either \code{"foraging"} or
+#'   \code{"mortality"}). Other columns are passed through unchanged so the result can be
+#'   \code{rbind.fill}'d into a runlist alongside other parameter types.
+#' @return A data frame with one row per env response, with \code{shape.idx} set to 1
+#'   (linear), \code{par1..par4} overwritten with the off values, and a \code{tag} column
+#'   containing the formatted \code{<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>} tagline.
+#'   Rows with unrecognized \code{resp_type} are dropped with a warning.
+#' @examples
+#' \dontrun{tags.off <- fn.envresp_offval_tags(envpars.base)}
+#' @export
+fn.envresp_offval_tags <- function(env.base){
+  if(!"resp_type" %in% names(env.base))
+    stop("env.base is missing required column 'resp_type'.")
+  idx_vec <- .env_resp_idx(env.base)             # accepts fxn_num or resp.idx
+
+  out <- env.base
+  out$shape.idx <- 1L                            # linear "off" shape
+
+  rt <- tolower(trimws(as.character(out$resp_type)))
+  off_val <- ifelse(rt == "foraging", 1,
+                    ifelse(rt == "mortality", 0, NA_real_))
+
+  if(any(is.na(off_val))){
+    bad <- unique(out$resp_type[is.na(off_val)])
+    warning("Dropping ", sum(is.na(off_val)),
+            " env-response row(s) with unrecognized resp_type: ",
+            paste(bad, collapse = ", "),
+            " (expected 'foraging' or 'mortality').")
+    keep    <- !is.na(off_val)
+    out     <- out[keep, , drop = FALSE]
+    idx_vec <- idx_vec[keep]
+    off_val <- off_val[keep]
+  }
+
+  out$par1 <- off_val
+  out$par2 <- off_val
+  out$par3 <- 0
+  out$par4 <- 0
+
+  # Drop any par5/par6 (or Param.5/Param.6) — linear uses only 2 params and the CLI tag
+  # carries 4 slots, so anything beyond par4 is irrelevant to the off tag.
+  for(col in c("par5", "par6", "Param.5", "Param.6"))
+    if(col %in% names(out)) out[[col]] <- NULL
+
+  out$tag <- paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(", idx_vec, "),",
+                   out$shape.idx, out$par1, out$par2, out$par3, out$par4,
+                   ",Indexed.Single[]")
+  rownames(out) <- NULL
+  out
+} #eof
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #fn.make_cmd_files----------------------------------------------------------------------------------
 #' @title Make command files.
 #' @description This function adds taglines to the base command file and saves them in run folders.

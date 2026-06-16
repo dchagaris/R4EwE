@@ -506,3 +506,439 @@ fn.ecospace_ascii2stack <- function(dir.out=dir.pred,
   names(out.stack) <- ascii.df.sub$label
   return(out.stack)
 }
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#Ecospace per-region prediction readers------------------------------------------
+# Shared readers used by fn.ecospace_plot_fits() and fn.ecospace_objfxn(). Reads
+# the per-region Ecospace_Annual_Average_Region_<n>_<Var>.csv files into a 4-D
+# array [years, groups (or fleet|group), regions, runs].
+
+#' @keywords internal
+#' @noRd
+.find_year_skip <- function(x, timestep){
+  key_fun <- if(timestep == "annual")
+               function(L) which(tolower(substr(L, 1, 4)) == "year")
+             else
+               function(L) which(tolower(substr(L, 1, 8)) == "timestep")
+  for(nread in c(30L, 100L, 500L, 5000L)){
+    L <- readLines(x, n = nread)
+    hit <- key_fun(L)
+    if(length(hit)) return(hit[1] - 1)
+    if(length(L) < nread) return(NA_integer_)
+  }
+  NA_integer_
+}
+
+#' @keywords internal
+#' @noRd
+.detect_ecospace_regions <- function(dir.out, timestep){
+  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
+  files <- unique(unlist(lapply(dir.out, function(d){
+    list.files(d, pattern = paste0("^", prefix, "\\d+_Biomass\\.csv$"),
+               recursive = TRUE)
+  })))
+  if(length(files) == 0) return(integer(0))
+  m <- regmatches(basename(files), regexec("Region_(\\d+)_", basename(files)))
+  regs <- as.integer(vapply(m, `[`, character(1), 2))
+  sort(unique(regs))
+}
+
+#' @keywords internal
+#' @noRd
+# Per-fleet discard-mortality rate by year from the ts (type 11). Rule: a fleet
+# with no type-11 entry defaults to Dmort = 1 (i.e. DT = DD). NA years within an
+# existing series are filled with that fleet's mean rate.
+.ecospace_dmort_by_year <- function(obs.ts, fleet_poolcodes, years){
+  th       <- obs.ts$ts.head
+  ts_years <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+  out <- matrix(1, nrow = length(years), ncol = length(fleet_poolcodes))
+  for(j in seq_along(fleet_poolcodes)){
+    fc <- fleet_poolcodes[j]
+    if(is.na(fc)) next
+    rows <- which(th$Type == 11 & th$Poolcode == fc)
+    if(length(rows) == 0) next
+    series <- obs.ts$ts[, rows[1]]
+    series[series < 0] <- NA
+    fill <- mean(series, na.rm = TRUE)
+    v <- series[match(years, ts_years)]
+    v[is.na(v)] <- if(is.finite(fill)) fill else 1
+    out[, j] <- v
+  }
+  out
+}
+
+#' @title Read Ecospace per-region prediction arrays.
+#' @description Reads the per-region \code{Ecospace_Annual_Average_Region_<n>_<Var>.csv}
+#'   (or \code{Ecospace_Average_Region_*} for monthly) outputs from one or more Ecospace run
+#'   folders and packs them into a 4-D array
+#'   \code{[years, groups (or fleet|group), regions, runs]}. When \code{aggregate_by_group = TRUE}
+#'   any \code{"fleet|group"} columns are summed to the group level.
+#' @param dir.out Path or vector of paths to Ecospace run folders.
+#' @param varname Variable to read: typically \code{"Biomass"}, \code{"Catch"}, or \code{"Landings"}.
+#' @param timestep \code{"annual"} or \code{"monthly"}.
+#' @param regions Integer vector of region IDs to read.
+#' @param styear Calendar start year used to label the year dimension.
+#' @param aggregate_by_group Logical. If TRUE, sum \code{"fleet|group"} columns to group level.
+#' @return A 4-D array \code{[years, groups, regions, runs]} or \code{NULL} if no matching files found.
+#' @export
+fn.read_pred_ecospace_wide <- function(dir.out, varname, timestep, regions, styear,
+                                       aggregate_by_group = FALSE){
+  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
+
+  collected <- list()
+  for(d in dir.out){
+    for(r in regions){
+      pat <- paste0("^", prefix, r, "_", varname, "\\.csv$")
+      files <- list.files(d, pattern = pat, recursive = TRUE, full.names = TRUE)
+      for(f in files){
+        run_key <- basename(dirname(f))
+        nskip <- .find_year_skip(f, timestep)
+        if(length(nskip) == 0 || is.na(nskip)) next
+        dt <- utils::read.csv(f, skip = nskip, row.names = 1, check.names = FALSE)
+        if(aggregate_by_group && any(grepl("\\|", names(dt)))){
+          grp_names <- vapply(strsplit(names(dt), "\\|"), function(x) tail(x, 1), character(1))
+          uniq_grps <- unique(grp_names)
+          agg <- matrix(0, nrow = nrow(dt), ncol = length(uniq_grps),
+                        dimnames = list(rownames(dt), uniq_grps))
+          for(g in uniq_grps){
+            cg <- which(grp_names == g)
+            agg[, g] <- if(length(cg) == 1) dt[, cg] else rowSums(dt[, cg, drop = FALSE], na.rm = TRUE)
+          }
+          dt <- as.data.frame(agg, check.names = FALSE)
+        }
+        if(is.null(collected[[run_key]])) collected[[run_key]] <- list()
+        collected[[run_key]][[as.character(r)]] <- dt
+      }
+    }
+  }
+  if(length(collected) == 0) return(NULL)
+
+  all_groups <- unique(unlist(lapply(collected, function(rl)
+    unique(unlist(lapply(rl, names))))))
+  template <- collected[[1]][[which(!vapply(collected[[1]], is.null, logical(1)))[1]]]
+  n_years <- nrow(template)
+  runs <- names(collected)
+
+  arr <- array(NA_real_,
+               dim = c(n_years, length(all_groups), length(regions), length(runs)),
+               dimnames = list(seq_len(n_years), all_groups, paste0("R", regions), runs))
+  for(r_idx in seq_along(runs)){
+    for(reg_idx in seq_along(regions)){
+      dt <- collected[[runs[r_idx]]][[as.character(regions[reg_idx])]]
+      if(is.null(dt)) next
+      arr[seq_len(nrow(dt)), names(dt), reg_idx, r_idx] <- as.matrix(dt)
+    }
+  }
+  dimnames(arr)[[1]] <- as.character(styear + seq_len(n_years) - 1L)
+  arr
+}
+
+#' @title Split Ecospace discards into dead, total, and surviving.
+#' @description Derives predicted dead / total / surviving discards from per-region per-fleet-group
+#'   Catch and Landings CSVs. Uses \code{DD = Catch - Landings} (dead discards),
+#'   \code{DT = DD / Dmort} (total discards, with per-fleet Dmort taken from the type-11
+#'   DiscardMortality series in \code{obs.ts}; a fleet with no type-11 entry defaults to
+#'   Dmort = 1 so DT = DD), and \code{DS = DT - DD} (surviving discards). Computed at
+#'   fleet x group resolution then summed to group level.
+#' @param dir.out Path or vector of paths to Ecospace run folders.
+#' @param timestep \code{"annual"} or \code{"monthly"}.
+#' @param regions Integer vector of region IDs.
+#' @param styear Calendar start year used to label the year dimension.
+#' @param obs.ts Output of \code{\link{fn.read_ecosim_timeseries}}, providing the per-fleet
+#'   type-11 DiscardMortality series.
+#' @param fleet.names Character vector indexed by fleet pool code, used to map the
+#'   \code{"fleet|group"} column names to fleet pool codes. If \code{NULL}, every fleet
+#'   defaults to Dmort = 1 (total discards collapse to dead discards).
+#' @return A list with elements \code{dead}, \code{total}, \code{surv} (each
+#'   \code{[years, groups, regions, runs]}) and the fleet|group versions
+#'   \code{dead_fg}, \code{total_fg}, \code{surv_fg}; or \code{NULL} if Catch/Landings files
+#'   are missing.
+#' @export
+fn.read_pred_ecospace_discards_split <- function(dir.out, timestep, regions, styear,
+                                                 obs.ts, fleet.names){
+  catch <- fn.read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
+  land  <- fn.read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
+  if(is.null(catch) || is.null(land)) return(NULL)
+
+  common <- intersect(dimnames(catch)[[2]], dimnames(land)[[2]])
+  common <- common[grepl("\\|", common)]
+  if(length(common) == 0) return(NULL)
+  catch <- catch[, common, , , drop = FALSE]
+  land  <- land [, common, , , drop = FALSE]
+
+  dd <- catch - land
+  dd[dd < 0] <- 0
+
+  years    <- as.numeric(dimnames(dd)[[1]])
+  parts    <- strsplit(common, "\\|")
+  fleet_nm <- vapply(parts, function(x) trimws(x[1]),        character(1))
+  group_nm <- vapply(parts, function(x) trimws(tail(x, 1)),  character(1))
+
+  norm  <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
+  fl_pc <- if(!is.null(fleet.names)) match(norm(fleet_nm), norm(fleet.names)) else rep(NA_integer_, length(fleet_nm))
+  unmatched <- unique(fleet_nm[is.na(fl_pc)])
+  if(length(unmatched))
+    warning("Ecospace discards: no fleet.names match for fleet(s) ",
+            paste(unmatched, collapse = ", "), " - discard mortality defaulted to 1 (DT = DD).")
+
+  uniq_pc   <- unique(fl_pc)
+  dmort_mat <- .ecospace_dmort_by_year(obs.ts, uniq_pc, years)
+
+  dt <- dd; ds <- dd
+  nreg <- dim(dd)[3]; nrun <- dim(dd)[4]
+  for(k in seq_along(common)){
+    dmk <- dmort_mat[, match(fl_pc[k], uniq_pc)]
+    for(ri in seq_len(nreg)) for(rn in seq_len(nrun)){
+      ddv <- dd[, k, ri, rn]
+      dtv <- ddv / dmk
+      dtv[!is.finite(dtv)] <- 0
+      dt[, k, ri, rn] <- dtv
+      ds[, k, ri, rn] <- dtv - ddv
+    }
+  }
+
+  agg_to_group <- function(arr4){
+    ug  <- unique(group_nm)
+    out <- array(0, dim = c(dim(arr4)[1], length(ug), dim(arr4)[3], dim(arr4)[4]),
+                 dimnames = list(dimnames(arr4)[[1]], ug, dimnames(arr4)[[3]], dimnames(arr4)[[4]]))
+    for(g in ug){
+      cg <- which(group_nm == g)
+      out[, g, , ] <- if(length(cg) == 1) arr4[, cg, , ]
+                      else apply(arr4[, cg, , , drop = FALSE], c(1, 3, 4), sum, na.rm = TRUE)
+    }
+    out
+  }
+
+  attach_meta <- function(arr4){
+    attr(arr4, "fg_fleet_nm") <- setNames(fleet_nm, common)
+    attr(arr4, "fg_group_nm") <- setNames(group_nm, common)
+    arr4
+  }
+
+  list(dead     = agg_to_group(dd),
+       total    = agg_to_group(dt),
+       surv     = agg_to_group(ds),
+       dead_fg  = attach_meta(dd),
+       total_fg = attach_meta(dt),
+       surv_fg  = attach_meta(ds))
+}
+
+#' @title Parse Ecospace \code{fleet|group} column names.
+#' @description Splits Ecospace \code{"fleet|group"} column-name strings into a data frame of
+#'   fleet and group name parts. Use with the column dimnames of arrays returned by
+#'   \code{\link{fn.read_pred_ecospace_wide}} to map columns to fleet and group pool codes.
+#' @param fg_names Character vector of \code{"fleet|group"} column names.
+#' @return A data frame with columns \code{fg}, \code{fleet_nm}, \code{group_nm}.
+#' @export
+fn.fg_meta <- function(fg_names){
+  parts <- strsplit(fg_names, "\\|")
+  data.frame(fg       = fg_names,
+             fleet_nm = vapply(parts, function(x) trimws(x[1]),       character(1)),
+             group_nm = vapply(parts, function(x) trimws(tail(x, 1)), character(1)),
+             stringsAsFactors = FALSE)
+}
+
+#' @title Other-mortality loss rate from Ecospace output.
+#' @description Computes the annual M0 loss rate (loss / mean biomass) per group from a pair of
+#'   Ecospace annual-average output CSVs. Multistanza groups (columns named like
+#'   \code{"gag 0"}, \code{"gag 1"}, ..., \code{"gag 5+"}) are detected by suffix; for each
+#'   such base group an additional \code{"<base> total"} column is added containing the
+#'   biomass-weighted aggregate rate: \code{sum(loss) / sum(biomass)} across stanzas. This
+#'   matches the gag/red-grouper Mrt calculations in
+#'   \code{red tide sims/get red tide mortality S88.R}, generalized so the function can be
+#'   applied to any other-mortality source (red tide, hypoxia, harmful algal bloom, etc.).
+#' @param dir.out Character vector of one or more Ecospace run output directories. Each is
+#'   expected to contain both \code{file.bio} and \code{file.loss}.
+#' @param file.bio Biomass CSV filename. Defaults to the annual-average file.
+#' @param file.loss Other-mortality-loss CSV filename. Defaults to the annual-average file.
+#' @param out.file Output CSV filename written into each \code{dir.out} when \code{write=TRUE}.
+#' @param skip Number of metadata header lines to skip when reading data (default 31, matches
+#'   EwE 6.7 Ecospace output). The function also preserves the blank line after the metadata
+#'   so the written output mirrors the structure of the source CSV.
+#' @param stanza.regex Regular expression matching the stanza-age suffix on a column name. The
+#'   default \code{"\\s+[0-9]+\\+?$"} matches the EwE convention of \code{"<group> <age>"} or
+#'   \code{"<group> 5+"} for terminal stanzas. The base group name is everything before the
+#'   match.
+#' @param write Logical; if \code{TRUE} (default), write \code{out.file} into each input dir.
+#'   Header info is copied verbatim from the source biomass CSV, with the \code{Data,} line
+#'   updated to reflect the new content.
+#' @return If \code{length(dir.out) == 1L}, a numeric matrix
+#'   \code{[years x (n_groups + n_stanza_totals)]} of rates only: the source year/time column is
+#'   dropped from the matrix and its values are carried on \code{rownames()}. Otherwise a 3-D
+#'   array \code{[years x groups x runs]} whose \code{dimnames[[1]]} are the years/time index and
+#'   whose 3rd dimension is named by \code{basename(dir.out)}. (The on-disk CSV written when
+#'   \code{write=TRUE} still re-attaches the year column to mirror the source file structure.)
+#' @details Division by zero (biomass = 0) yields \code{NaN}/\code{Inf} in the returned rate,
+#'   matching the source mortality scripts; downstream summaries should use \code{na.rm=TRUE}
+#'   in percentile / mean calls.
+#' @export
+fn.M0_loss_rate <- function(dir.out,
+                            file.bio  = "Ecospace_Annual_Average_Biomass.csv",
+                            file.loss = "Ecospace_Annual_Average_OtherMortalityLoss.csv",
+                            out.file  = "M0_loss_rate.csv",
+                            skip      = 31,
+                            stanza.regex = "\\s+[0-9]+\\+?$",
+                            write     = TRUE){
+  dir.out  <- as.character(dir.out)
+  n.runs   <- length(dir.out)
+  if(n.runs < 1L) stop("dir.out must contain at least one directory.")
+  out.list <- vector("list", n.runs)
+
+  for(r in seq_len(n.runs)){
+    bio.file  <- file.path(dir.out[r], file.bio)
+    loss.file <- file.path(dir.out[r], file.loss)
+    if(!file.exists(bio.file))  stop("Missing biomass file: ",  bio.file)
+    if(!file.exists(loss.file)) stop("Missing loss file: ",     loss.file)
+
+    # Preserve the metadata block plus the blank line that separates it from the
+    # column-header row, so the output CSV mirrors the source file's structure.
+    header.lines <- readLines(bio.file, n = skip + 1L)
+
+    bio  <- utils::read.csv(bio.file,  as.is = TRUE, skip = skip, check.names = FALSE)
+    loss <- utils::read.csv(loss.file, as.is = TRUE, skip = skip, check.names = FALSE)
+    if(!identical(dim(bio), dim(loss)))
+      stop("Biomass and loss CSVs have different shapes in ", dir.out[r])
+    if(!identical(names(bio), names(loss)))
+      stop("Biomass and loss CSVs have different column names in ", dir.out[r])
+
+    # First column is the time index (Year / Time step). Peel it off so the
+    # returned matrix is rates only, with years carried on dimnames[[1]].
+    year.col <- names(bio)[1]
+    years    <- as.character(bio[[year.col]])
+    grp.cols <- names(bio)[-1]
+
+    rate <- as.matrix(loss[, grp.cols, drop = FALSE]) / as.matrix(bio[, grp.cols, drop = FALSE])
+    rownames(rate) <- years
+
+    # Multistanza aggregation: group columns by the part of the name BEFORE the
+    # trailing " <age>" suffix and append a biomass-weighted total per base group.
+    is.stanza <- grepl(stanza.regex, grp.cols)
+    if(any(is.stanza)){
+      base.names   <- sub(stanza.regex, "", grp.cols[is.stanza])
+      stanza.split <- split(grp.cols[is.stanza], base.names)
+      for(bn in names(stanza.split)){
+        cols <- stanza.split[[bn]]
+        if(length(cols) < 2L) next  # singleton -> not actually multistanza
+        bio.sum  <- rowSums(bio[,  cols, drop = FALSE])
+        loss.sum <- rowSums(loss[, cols, drop = FALSE])
+        rate <- cbind(rate, setNames(data.frame(loss.sum / bio.sum), paste0(bn, " total")))
+        rate <- as.matrix(rate); rownames(rate) <- years
+      }
+    }
+
+    if(write){
+      # Re-attach the Year column to the on-disk CSV so the output mirrors the
+      # source EwE file structure (header + Year column + group columns); the
+      # in-memory return value stays Year-free with years on rownames.
+      out.path <- file.path(dir.out[r], out.file)
+      data.idx <- grep("^Data,", header.lines)
+      if(length(data.idx) == 1L)
+        header.lines[data.idx] <- "Data,\"Other mortality loss rate (1/yr)\""
+      writeLines(header.lines, out.path)
+      csv.df <- data.frame(check.names = FALSE,
+                           setNames(list(bio[[year.col]]), year.col))
+      for(cn in colnames(rate)) csv.df[[cn]] <- rate[, cn]
+      utils::write.table(csv.df, out.path, sep = ",", row.names = FALSE,
+                         col.names = TRUE, append = TRUE, quote = FALSE)
+    }
+
+    out.list[[r]] <- rate
+  }
+
+  if(n.runs == 1L) return(out.list[[1]])
+
+  # Multi-run: stack into a 3-D array. All runs must share shape AND column set;
+  # this is the typical case when feeding a directory of GA-final-pop runs.
+  dims <- dim(out.list[[1]])
+  cols <- colnames(out.list[[1]])
+  if(!all(vapply(out.list, function(x) identical(dim(x), dims),       logical(1L))))
+    stop("Cannot stack: run output matrices have inconsistent shapes.")
+  if(!all(vapply(out.list, function(x) identical(colnames(x), cols),  logical(1L))))
+    stop("Cannot stack: run output matrices have inconsistent column sets.")
+  arr <- array(NA_real_, dim = c(dims, n.runs),
+               dimnames = list(rownames(out.list[[1]]), cols, basename(dir.out)))
+  for(r in seq_len(n.runs)) arr[,,r] <- out.list[[r]]
+  arr
+}
+
+#' @title Ensemble summary of M0 loss rates (long-form for downstream use).
+#' @description Reduces an Mrt ensemble to per-year per-group summary statistics
+#'   (mean + arbitrary percentiles) across an ensemble of model runs. The output
+#'   is a long-form data frame with one row per (year, group) suitable for
+#'   plotting (ggplot2) or feeding into stock-assessment projection workflows.
+#'   Either pass a pre-computed Mrt array (typically from
+#'   \code{\link{fn.M0_loss_rate}}) via \code{mrt}, or a vector of model output
+#'   directories via \code{dir.out} (the function will call \code{fn.M0_loss_rate}
+#'   first; \code{...} is forwarded).
+#' @param dir.out Character vector of Ecospace run output directories. Ignored if
+#'   \code{mrt} is supplied. Required otherwise.
+#' @param mrt A 3-D array \code{[years x groups x runs]} (multi-run) or a 2-D
+#'   matrix \code{[years x groups]} (single run) as returned by
+#'   \code{\link{fn.M0_loss_rate}}. If supplied, \code{dir.out} is ignored.
+#' @param probs Numeric vector of percentiles to compute across runs. Default
+#'   \code{c(0.05, 0.5, 0.95)} (90\% ensemble interval + median). \code{0.5} is
+#'   renamed to \code{"median"}; other values become \code{"q05"}, \code{"q95"}, etc.
+#' @param styear Optional integer start year. If supplied, the \code{year} column
+#'   becomes \code{styear, styear+1, ...}; otherwise the year labels are taken from
+#'   \code{dimnames(mrt)[[1]]} (the row names set by \code{\link{fn.M0_loss_rate}}),
+#'   falling back to the row index \code{1..N} if those are absent/non-numeric.
+#' @param out.file Optional path. If supplied, the long-form summary is written
+#'   as CSV (one row per year-group combination).
+#' @param ... Forwarded to \code{\link{fn.M0_loss_rate}} when \code{mrt} is NULL
+#'   and \code{dir.out} is supplied.
+#' @return A data frame with columns \code{year}, \code{group}, \code{mean}, and
+#'   one column per requested percentile. For a single-run input, the
+#'   percentile columns equal the mean (no ensemble to summarize across).
+#' @export
+fn.M0_loss_rate_summary <- function(dir.out  = NULL,
+                                    mrt      = NULL,
+                                    probs    = c(0.05, 0.5, 0.95),
+                                    styear   = NULL,
+                                    out.file = NULL,
+                                    ...){
+  if(is.null(mrt)){
+    if(is.null(dir.out)) stop("Provide either `dir.out` or a pre-computed `mrt` array.")
+    mrt <- fn.M0_loss_rate(dir.out = dir.out, write = FALSE, ...)
+  }
+
+  # Promote single-run matrix to a degenerate 3-D array so the summary path is
+  # uniform. The percentile columns will collapse to the mean (no ensemble).
+  if(length(dim(mrt)) == 2L){
+    mrt <- array(mrt,
+                 dim = c(dim(mrt), 1L),
+                 dimnames = c(dimnames(mrt), list("run1")))
+  }
+  if(length(dim(mrt)) != 3L)
+    stop("`mrt` must be a 2-D matrix (single run) or 3-D array (years x groups x runs).")
+
+  # mrt no longer carries a year column: every column is a group, and the
+  # years/time index live on dimnames(mrt)[[1]] (see fn.M0_loss_rate).
+  group_cols <- dimnames(mrt)[[2]]
+
+  years <- if(!is.null(styear)){
+    styear + seq_len(dim(mrt)[1]) - 1L
+  } else {
+    rn <- suppressWarnings(as.numeric(dimnames(mrt)[[1]]))
+    if(length(rn) == dim(mrt)[1] && !anyNA(rn)) rn else seq_len(dim(mrt)[1])
+  }
+
+  sub <- mrt[, group_cols, , drop = FALSE]
+
+  agg <- list(mean = apply(sub, c(1, 2), mean, na.rm = TRUE))
+  for(p in probs){
+    nm <- if(isTRUE(all.equal(p, 0.5))) "median" else sprintf("q%02d", round(p * 100))
+    agg[[nm]] <- apply(sub, c(1, 2), stats::quantile, probs = p, na.rm = TRUE, names = FALSE)
+  }
+
+  long <- do.call(rbind, lapply(group_cols, function(g){
+    df <- data.frame(year = years, group = g, stringsAsFactors = FALSE)
+    for(nm in names(agg)) df[[nm]] <- agg[[nm]][, g]
+    df
+  }))
+
+  if(!is.null(out.file)){
+    utils::write.csv(long, out.file, row.names = FALSE)
+  }
+  long
+}

@@ -7,7 +7,8 @@
 fn.runEwE.parallel(
   runlist = runlist,
   obj.fxn = 1,
-  cl.export = list("runlist", "obs.ts")
+  cl.export = list("runlist", "obs.ts"),
+  fit.abs.catch = TRUE
 )
 }
 \arguments{
@@ -15,9 +16,16 @@ fn.runEwE.parallel(
 path of the command files to run.}
 
 \item{obj.fxn}{A single number indicating the likelihood function to use. 0=none, 1=timeseries
-only, 2=timeseries and spatial data.}
+only (\code{fn.objfxn1}), 2=timeseries and spatial data (\code{fn.objfxn2}), 3=Ecospace
+timeseries with fleet-specific landings and discards (\code{fn.ecospace_objfxn}).
+\code{obj.fxn = 3} additionally requires \code{group.names} and \code{fleet.names} to be in
+the worker's environment (add them to \code{cl.export}).}
 
 \item{cl.export}{A list of objects exported to each worker.}
+
+\item{fit.abs.catch}{Logical, passed to \code{fn.ecospace_objfxn} when \code{obj.fxn == 3}.
+If \code{TRUE} (default), absolute-type series are fit on their literal scale; if
+\code{FALSE}, every series is q-rescaled. Ignored for other \code{obj.fxn} values.}
 }
 \value{
 Model output is saved according to command file. If do.obj!=0 then a vector likelihoods

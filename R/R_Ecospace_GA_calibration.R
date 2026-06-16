@@ -51,7 +51,13 @@ fn.makeparvec <- function(
   fltdyn_pars=NULL,
   fltdyn.min=0,
   fltdyn.max=5,
-  fltdyn.cv=0.2){
+  fltdyn.cv=0.2,
+
+  do.redtide = FALSE,
+  redtide_pars = NULL,
+  redtide.min = 0.5,
+  redtide.max = 1.5,
+  redtide.cv = 0.2){
   
   # do.vuls=fit.vuls; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4; 
   # do.env=fit.env; env_pars=env_pars; env.min=0.1; env.max=2; env.cv=0.3;
@@ -68,20 +74,25 @@ fn.makeparvec <- function(
     }
   }
   
+  # Normalize column conventions: accept either canonical (shape.idx + parN) or
+  # sensitivity-results (shape + Param.N) schemas for env_pars and redtide_pars.
+  if(do.env)     env_pars     <- .normalize_env_pars(env_pars)
+  if(do.redtide) redtide_pars <- .normalize_env_pars(redtide_pars)
+
   #build parameter vector----
-  n_vuls <- n_env <- n_disp <- n_med <- n_fleet <- 0
-  if(do.vuls) n_vuls <- nrow(vul_pars)
-  if(do.env) n_env <- nrow(env_pars)  #need to melt the env resp fxn dataframe
-  if(do.disp) n_disp <- nrow(disp_pars)
-  if(do.med) n_med <- nrow(med_pars)
-  if(do.fltdyn) n_fleet <- nrow(fltdyn_pars)
-  #medations functions
-  
-  n_pars <- n_vuls + n_env + n_disp + n_med + n_fleet
+  n_vuls <- n_env <- n_disp <- n_med <- n_fleet <- n_redtide <- 0
+  if(do.vuls)    n_vuls    <- nrow(vul_pars)
+  if(do.env)     n_env     <- nrow(env_pars)
+  if(do.disp)    n_disp    <- nrow(disp_pars)
+  if(do.med)     n_med     <- nrow(med_pars)
+  if(do.fltdyn)  n_fleet   <- nrow(fltdyn_pars)
+  if(do.redtide) n_redtide <- nrow(redtide_pars)
+
+  n_pars <- n_vuls + n_env + n_redtide + n_disp + n_med + n_fleet
   if (n_pars == 0) stop("n_pars==0: No predator-prey pairs or environmental responses parameters to estimate.  Check inputs.")
-  
+
   #no longer taking log of parameters
-  vuln_vec <- env_vec <- disp_vec <- med_vec <- fleet_vec <- numeric()
+  vuln_vec <- env_vec <- redtide_vec <- disp_vec <- med_vec <- fleet_vec <- numeric()
   par.idx <- par.labels <- par.groups <- character()
   #log.par.idx <- logical()
   
@@ -95,21 +106,54 @@ fn.makeparvec <- function(
   }
   
   if(do.env) {
+    env_idx_vec <- .env_resp_idx(env_pars)   # accepts fxn_num or resp.idx
     for(i in 1:n_env){
-      #i=1
-      #TRAPEZOID SHAPE
-      if(env_pars$shape.idx[i]==9){
-        #par_vec.i <- c(env_pars$par1[i],env_pars$par2[i],env_pars$par3[i],env_pars$par4[i])  
-        par_vec.i <- rep(1,2)
-        par.labels.i <- paste(paste0('env',rep(env_pars$resp.idx[i],length(par_vec.i))),paste0('type',rep(env_pars$shape.idx[i],length(par_vec.i))),c('mid.adj','width.adj'),sep="_")
-        par.groups.i <- paste0('env',rep(env_pars$resp.idx[i],length(par_vec.i)))
-      } #end trapezoid
-      env_vec <- c(env_vec,par_vec.i)
-      par.labels <- c(par.labels,par.labels.i)
-      par.groups <- c(par.groups,par.groups.i)
+      shape_type.i <- env_pars$shape.idx[i]
+      resp_id.i    <- env_idx_vec[i]
+      # All supported shapes use 2 multiplicative GA pars centered on 1.
+      adj_names.i <- switch(as.character(shape_type.i),
+        "6"  = c('mean.adj',       'width.adj'),    # normal: Mean (par4); SDLeft (par1) & SDRight (par3) jointly
+        "9"  = c('mid.adj',        'width.adj'),    # trapezoid: mid=(LT+RT)/2; pref=RT-LT + shoulders
+        "10" = c('xmid.adj',       'slope.adj'),    # sigmoid: XMid (par3); Slope (par5)
+        "11" = c('inflection.adj', 'slope.adj'),    # logistic4params: Inflection (par3); Slope (par4)
+        stop("Unsupported env response shape.idx: ", shape_type.i,
+             " (supported: 6 normal, 9 trapezoid, 10 sigmoid, 11 logistic4params).")
+      )
+      par_vec.i    <- rep(1, length(adj_names.i))
+      par.labels.i <- paste(paste0('env',  resp_id.i),
+                            paste0('type', shape_type.i),
+                            adj_names.i, sep = "_")
+      par.groups.i <- rep(paste0('env', resp_id.i), length(par_vec.i))
+
+      env_vec    <- c(env_vec, par_vec.i)
+      par.labels <- c(par.labels, par.labels.i)
+      par.groups <- c(par.groups, par.groups.i)
     } #end loop
-    par.idx <- c(par.idx,rep('env',length(env_vec)))
+    par.idx <- c(par.idx, rep('env', length(env_vec)))
   } #end do.env
+
+  if(do.redtide){
+    redtide_idx_vec <- .env_resp_idx(redtide_pars)
+    for(i in 1:n_redtide){
+      shape_type.i <- redtide_pars$shape.idx[i]
+      resp_id.i    <- redtide_idx_vec[i]
+      # All red tide responses are shape 11 (logistic4params): GA pars inflection.adj, slope.adj.
+      if(shape_type.i != 11)
+        stop("Red tide response (fxn_num=", resp_id.i, ") has shape.idx=", shape_type.i,
+             "; expected 11 (logistic4params).")
+      adj_names.i  <- c('inflection.adj', 'slope.adj')
+      par_vec.i    <- rep(1, length(adj_names.i))
+      par.labels.i <- paste(paste0('rt',   resp_id.i),
+                            paste0('type', shape_type.i),
+                            adj_names.i, sep = "_")
+      par.groups.i <- rep(paste0('rt', resp_id.i), length(par_vec.i))
+
+      redtide_vec <- c(redtide_vec, par_vec.i)
+      par.labels  <- c(par.labels, par.labels.i)
+      par.groups  <- c(par.groups, par.groups.i)
+    }
+    par.idx <- c(par.idx, rep('redtide', length(redtide_vec)))
+  } #end do.redtide
   
   if(do.disp){
     #log_disp_vec = log(disp_pars$base.val)
@@ -159,28 +203,27 @@ fn.makeparvec <- function(
   
   
   
-  #n_pars <<- length(log_vuln_vec) + length(env_vec) + length(log_disp_vec) + length(med_vec)
-  n_pars <<- length(vuln_vec) + length(env_vec) + length(disp_vec) + length(med_vec) + length(fleet_vec)
+  n_pars <<- length(vuln_vec) + length(env_vec) + length(redtide_vec) + length(disp_vec) + length(med_vec) + length(fleet_vec)
   if (n_pars == 0) stop("n_pars==0: No parameters to estimate.  Check inputs.")
-  
-  #est_par_vec <- c(log_vuln_vec, env_vec, log_disp_vec, med_vec)
-  est_par_vec <- c(vuln_vec, env_vec, disp_vec, med_vec, fleet_vec)
+
+  est_par_vec <- c(vuln_vec, env_vec, redtide_vec, disp_vec, med_vec, fleet_vec)
   names(est_par_vec) <- par.labels
-  
+
   # index parameter types
-  vul.par.idx <<- which(par.idx=='vul')
-  env.par.idx <<- which(par.idx=='env')
-  disp.par.idx <<- which(par.idx=='disp')
-  med.par.idx <<- which(par.idx=='med')
-  flt.par.idx <<- which(par.idx=='fleetdyn')
-  #log.par.idx <<- log.par.idx
-  
+  vul.par.idx     <<- which(par.idx=='vul')
+  env.par.idx     <<- which(par.idx=='env')
+  redtide.par.idx <<- which(par.idx=='redtide')
+  disp.par.idx    <<- which(par.idx=='disp')
+  med.par.idx     <<- which(par.idx=='med')
+  flt.par.idx     <<- which(par.idx=='fleetdyn')
+
   # super assignment so these are available
-  vul_pars <<- vul_pars
-  env_pars <<- env_pars
-  disp_pars <<- disp_pars
-  med_pars <<- med_pars
-  fltdyn_pars <<- fltdyn_pars
+  vul_pars     <<- vul_pars
+  env_pars     <<- env_pars
+  redtide_pars <<- redtide_pars
+  disp_pars    <<- disp_pars
+  med_pars     <<- med_pars
+  fltdyn_pars  <<- fltdyn_pars
   
   # set parameter bounds--------------------------------------------------------
   ##vulnerabilities - do these on the log scale
@@ -190,33 +233,39 @@ fn.makeparvec <- function(
   lower.vuls <- ifelse(lower.vuls<=1.0,1.01,lower.vuls)
   upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))
   }
-  ##environmental shapes - TBD
+  ##environmental shapes — all supported shapes use uniform [env.min, env.max] multiplier bounds
   lower.env <- upper.env <- numeric()
   if(do.env){
   if(n_env>0){
     for(i in 1:length(env_vec)){
-      #i=1
       label.i <- par.labels[env.par.idx[i]]
-      shape.i <- as.numeric(gsub('env','',unlist(strsplit(label.i,"_"))[1]))
-      type.i <- as.numeric(gsub('type','',unlist(strsplit(label.i,"_"))[2]))
-      par.i <- unlist(strsplit(label.i,"_"))[3]
-      val.i <- env_vec[i]
-      if(type.i==9){
+      type.i  <- as.numeric(gsub('type','', unlist(strsplit(label.i, "_"))[2]))
+      if(type.i %in% c(6, 9, 10, 11)){
         lower.i <- env.min
         upper.i <- env.max
-        
-      } #end trapezoid
-      lower.env <- c(lower.env,lower.i)
-      upper.env <- c(upper.env,upper.i)
+      } else {
+        stop("Unsupported env response shape.idx: ", type.i,
+             " (supported: 6 normal, 9 trapezoid, 10 sigmoid, 11 logistic4params).")
+      }
+      lower.env <- c(lower.env, lower.i)
+      upper.env <- c(upper.env, upper.i)
     } #end i loop
   } #end if env
   }
   
+  ##red tide — uniform [redtide.min, redtide.max] multiplier bounds
+  lower.redtide <- upper.redtide <- numeric()
+  if(do.redtide && length(redtide_vec)>0){
+    lower.redtide <- rep(redtide.min, length(redtide_vec))
+    upper.redtide <- rep(redtide.max, length(redtide_vec))
+  }
+
   ##dispersal
   lower.disp <- upper.disp <- numeric()
-  if(do.dispersal)
+  if(do.disp){
   lower.disp <- disp_vec-2*disp.cv*disp_vec
   upper.disp <- disp_vec+2*disp.cv*disp_vec
+  }
   
   ##fleet dynamics
   lower.flt <- upper.flt <- numeric()
@@ -255,23 +304,25 @@ fn.makeparvec <- function(
   
   #super assignment
   est_par_vec <<- round(est_par_vec,2)
-  L.bounds <<- round(c(lower.vuls,lower.env,lower.disp,lower.med,lower.flt),2)
-  U.bounds <<- round(c(upper.vuls, upper.env, upper.disp,upper.med,upper.flt),2)
-  n_vuls <<- n_vuls
-  n_env <<- length(env_vec)
-  n_disp <<- n_disp
-  n_med <<- length(med_vec)
-  n_flt <<- n_fleet
+  L.bounds <<- round(c(lower.vuls, lower.env, lower.redtide, lower.disp, lower.med, lower.flt), 2)
+  U.bounds <<- round(c(upper.vuls, upper.env, upper.redtide, upper.disp, upper.med, upper.flt), 2)
+  n_vuls    <<- n_vuls
+  n_env     <<- length(env_vec)
+  n_redtide <<- length(redtide_vec)
+  n_disp    <<- n_disp
+  n_med     <<- length(med_vec)
+  n_flt     <<- n_fleet
   par.groups <<- par.groups
   par.labels <<- par.labels
-  
+
   #create vector of cv for rnorm() draws
   par_cv_vec <- est_par_vec
-  par_cv_vec[vul.par.idx] <- vul.cv
-  par_cv_vec[env.par.idx] <- env.cv
-  par_cv_vec[disp.par.idx] <- disp.cv
-  par_cv_vec[med.par.idx] <- med.cv
-  par_cv_vec[flt.par.idx] <- fltdyn.cv
+  par_cv_vec[vul.par.idx]     <- vul.cv
+  par_cv_vec[env.par.idx]     <- env.cv
+  par_cv_vec[redtide.par.idx] <- redtide.cv
+  par_cv_vec[disp.par.idx]    <- disp.cv
+  par_cv_vec[med.par.idx]     <- med.cv
+  par_cv_vec[flt.par.idx]     <- fltdyn.cv
   par_cv_vec <<- par_cv_vec
   
 } #end function
@@ -424,7 +475,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
                                          random_len = 8)
   
   #parameter tags----
-  tags.vul <- tags.env <- tags.disp <- tags.med <- tags.flt <- character()
+  tags.vul <- tags.env <- tags.redtide <- tags.disp <- tags.med <- tags.flt <- character()
   if(length(vul.par.idx)>0){
     vuln_vec <- par_vec[vul.par.idx]
     tags.vul <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", vul_pars$pred, " ", ifelse(is.na(vul_pars$prey),"",vul_pars$prey),
@@ -438,36 +489,111 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
   
   if(length(env.par.idx)>0){
     env_groups <- unique(par.groups[env.par.idx])
+    env_idx_vec <- .env_resp_idx(env_pars)         # accepts fxn_num or resp.idx
     tags.env <- character()
     for(i in 1:length(env_groups)){
-      #i=1
-      par_set.i <- par_vec[which(par.groups==env_groups[i])]
-      par_labels.i <- par.labels[which(par.groups==env_groups[i])]
-      type.i <- as.numeric(gsub('type','',strsplit(par_labels.i[1],"_")[[1]][2]))
-      shape.i <- as.numeric(gsub('env','',strsplit(par_labels.i[1],"_")[[1]][1]))
-      #TRAPEZOID
-      if(type.i==9){
-        LB.base <- env_pars[env_pars$resp.idx==shape.i,'par1']
-        LT.base <- env_pars[env_pars$resp.idx==shape.i,'par2']
-        RT.base <- env_pars[env_pars$resp.idx==shape.i,'par3']
-        RB.base <- env_pars[env_pars$resp.idx==shape.i,'par4']
-        mid.base <- (RT.base+LT.base)/2
-        pref.base <- RT.base-LT.base
-        mid.i <- mid.base*par_set.i[1]
-        pref.i <- pref.base*par_set.i[2]
-        LT.i <- round(pmax(0,mid.i-pref.i/2),2)
-        RT.i <- round(mid.i+pref.i/2,2)
-        LB.i <- round(LT.i-(LT.base-LB.base)*par_set.i[2],2)
-        #LB.i <- round(pmax(0,LT.i-(LT.base-LB.base)*par_set.i[2]),2)
-        RB.i <- round(RT.i+(RB.base-RT.base)*par_set.i[2],2)
-        par.string.i <- paste(type.i, LB.i, LT.i, RT.i, RB.i, sep=" ")
-        tag.i <- paste0("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(",shape.i,"), ",par.string.i,", Indexed.Single[]")
+      par_set.i    <- par_vec[which(par.groups == env_groups[i])]
+      par_labels.i <- par.labels[which(par.groups == env_groups[i])]
+      type.i       <- as.numeric(gsub('type','', strsplit(par_labels.i[1], "_")[[1]][2]))
+      resp_id.i    <- as.numeric(gsub('env','',  strsplit(par_labels.i[1], "_")[[1]][1]))
+      row.i        <- which(env_idx_vec == resp_id.i)[1]
+      if(is.na(row.i))
+        stop("fn.parvec2cmd: no env_pars row matches response index ", resp_id.i)
+
+      if(type.i == 9){
+        ##TRAPEZOID — par1=LB, par2=LT, par3=RT, par4=RB
+        ## GA pars: mid.adj, width.adj
+        LB.base   <- env_pars[row.i, 'par1']
+        LT.base   <- env_pars[row.i, 'par2']
+        RT.base   <- env_pars[row.i, 'par3']
+        RB.base   <- env_pars[row.i, 'par4']
+        mid.base  <- (RT.base + LT.base) / 2
+        pref.base <- RT.base - LT.base
+        mid.i     <- mid.base  * par_set.i[1]      # mid.adj
+        pref.i    <- pref.base * par_set.i[2]      # width.adj
+        LT.i      <- round(pmax(0, mid.i - pref.i / 2), 2)
+        RT.i      <- round(           mid.i + pref.i / 2,  2)
+        LB.i      <- round(LT.i - (LT.base - LB.base) * par_set.i[2], 2)
+        RB.i      <- round(RT.i + (RB.base - RT.base) * par_set.i[2], 2)
+        par.string.i <- paste(type.i, LB.i, LT.i, RT.i, RB.i, sep = " ")
+
+      } else if(type.i == 6){
+        ##NORMAL — par1=SDLeft, par2=DataWidth(auto), par3=SDRight, par4=Mean, par5=Max
+        ## GA pars: mean.adj (multiplies Mean), width.adj (multiplies SDLeft and SDRight jointly)
+        SDLeft.base    <- env_pars[row.i, 'par1']
+        SDRight.base   <- env_pars[row.i, 'par3']
+        Mean.base      <- env_pars[row.i, 'par4']
+        Max.base       <- env_pars[row.i, 'par5']
+        Mean.i         <- round(Mean.base    * par_set.i[1], 4)    # mean.adj
+        SDLeft.i       <- round(SDLeft.base  * par_set.i[2], 4)    # width.adj (symmetric)
+        SDRight.i      <- round(SDRight.base * par_set.i[2], 4)
+        DataWidth.i    <- round(5 * SDLeft.i + 5 * SDRight.i, 4)   # auto per cNormalShapeFunction.vb
+        par.string.i   <- paste(type.i, SDLeft.i, DataWidth.i, SDRight.i, Mean.i, Max.base, sep = " ")
+
+      } else if(type.i == 10){
+        ##SIGMOID — par1=XMin, par2=XMax, par3=XMid, par4=XOpt, par5=Slope, par6=Scalar
+        ## GA pars: xmid.adj (multiplies XMid), slope.adj (multiplies Slope)
+        XMin.base    <- env_pars[row.i, 'par1']
+        XMax.base    <- env_pars[row.i, 'par2']
+        XMid.base    <- env_pars[row.i, 'par3']
+        XOpt.base    <- env_pars[row.i, 'par4']
+        Slope.base   <- env_pars[row.i, 'par5']
+        Scalar.base  <- env_pars[row.i, 'par6']
+        XMid.i       <- round(XMid.base  * par_set.i[1], 4)        # xmid.adj
+        Slope.i      <- round(Slope.base * par_set.i[2], 4)        # slope.adj
+        par.string.i <- paste(type.i, XMin.base, XMax.base, XMid.i, XOpt.base, Slope.i, Scalar.base, sep = " ")
+
+      } else if(type.i == 11){
+        ##LOGISTIC_4PARAMS — par1=XMin, par2=XMax, par3=Inflection, par4=Slope
+        ## GA pars: inflection.adj (multiplies Inflection), slope.adj (multiplies Slope)
+        XMin.base    <- env_pars[row.i, 'par1']
+        XMax.base    <- env_pars[row.i, 'par2']
+        Inf.base     <- env_pars[row.i, 'par3']
+        Slope.base   <- env_pars[row.i, 'par4']
+        Inf.i        <- round(Inf.base   * par_set.i[1], 4)        # inflection.adj
+        Slope.i      <- round(Slope.base * par_set.i[2], 4)        # slope.adj
+        par.string.i <- paste(type.i, XMin.base, XMax.base, Inf.i, Slope.i, sep = " ")
+
+      } else {
+        stop("fn.parvec2cmd: unsupported env response shape.idx: ", type.i,
+             " (supported: 6 normal, 9 trapezoid, 10 sigmoid, 11 logistic4params).")
       }
-      
-      tags.env <- c(tags.env,tag.i)
+
+      tag.i <- paste0("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(", resp_id.i, "), ",
+                      par.string.i, ", Indexed.Single[]")
+      tags.env <- c(tags.env, tag.i)
     }
   }
-  
+
+  if(length(redtide.par.idx)>0){
+    redtide_pars   <- .normalize_env_pars(redtide_pars)
+    redtide_groups <- unique(par.groups[redtide.par.idx])
+    rt_idx_vec     <- .env_resp_idx(redtide_pars)
+    for(i in 1:length(redtide_groups)){
+      par_set.i    <- par_vec[which(par.groups == redtide_groups[i])]
+      par_labels.i <- par.labels[which(par.groups == redtide_groups[i])]
+      type.i       <- as.numeric(gsub('type','', strsplit(par_labels.i[1], "_")[[1]][2]))
+      resp_id.i    <- as.numeric(gsub('rt','',   strsplit(par_labels.i[1], "_")[[1]][1]))
+      row.i        <- which(rt_idx_vec == resp_id.i)[1]
+      if(is.na(row.i))
+        stop("fn.parvec2cmd: no redtide_pars row matches response index ", resp_id.i)
+
+      # All red tide responses are shape 11 (logistic4params).
+      # par1=XMin, par2=XMax, par3=Inflection, par4=Slope
+      # GA pars: inflection.adj, slope.adj
+      XMin.base  <- redtide_pars[row.i, 'par1']
+      XMax.base  <- redtide_pars[row.i, 'par2']
+      Inf.base   <- redtide_pars[row.i, 'par3']
+      Slope.base <- redtide_pars[row.i, 'par4']
+      Inf.i      <- round(Inf.base   * par_set.i[1], 4)    # inflection.adj
+      Slope.i    <- round(Slope.base * par_set.i[2], 4)    # slope.adj
+      par.string.i <- paste(type.i, XMin.base, XMax.base, Inf.i, Slope.i, sep = " ")
+      tag.i <- paste0("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(", resp_id.i, "), ",
+                      par.string.i, ", Indexed.Single[]")
+      tags.redtide <- c(tags.redtide, tag.i)
+    }
+  }
+
   if(length(med.par.idx)>0){
     med_groups <- unique(par.groups[med.par.idx])
     tags.med <- character()
@@ -501,13 +627,19 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
   }
   
   
-  tags = c(tags.vul,tags.env,tags.disp, tags.med, tags.flt)
+  tags = c(tags.vul, tags.env, tags.redtide, tags.disp, tags.med, tags.flt)
   
   
   #command files----
+  # EwE silently mis-parses mixed-separator paths (e.g. "C:\WFS MICE\foo/bar")
+  # on Windows -- the forward slashes get treated as filename characters, so
+  # output ends up in a flat sibling directory with dashes instead of slashes.
+  # Force native Windows separators so the user can construct dir.out.ga any way
+  # they like without this trap.
+  output_dir_for_ewe <- normalizePath(run_path, winslash = "\\", mustWork = FALSE)
   cmd_j <- cmd_base
   cmd_j[startsWith(cmd_j, "<ECOSPACE_OUTPUT_DIR>")] <-
-    sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", run_path)
+    sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", output_dir_for_ewe)
   cmd_j <- c(cmd_j, tags)
   cmd_file <- file.path(run_path, "cmd.txt")
   writeLines(cmd_j, cmd_file)
@@ -515,125 +647,182 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
   
 }
 
+#' @title Plot GA population: response-function curves for env/redtide, histograms otherwise.
+#' @description For each unique parameter group, plots a panel:
+#'   \itemize{
+#'     \item Env response groups (\code{env<N>_type<S>}) and red-tide groups (\code{rt<N>_type<S>}):
+#'           overlay one response curve per population member, with a highlighted curve
+#'           drawn in blue. By default that curve is the baseline; pass \code{highlight_pars}
+#'           to highlight a different parameter set (e.g. the min-LL individual from the
+#'           final generation).
+#'     \item All other groups (vul, disp, fleetdyn, med): one histogram per parameter with
+#'           a vertical dashed line at the highlighted value.
+#'   }
+#'   Writes the panels to a multipage PDF.
+#' @param gapop Numeric matrix \code{[popSize x n_pars]} of parameter values.
+#' @param est_par_vec Named numeric vector of baseline parameter values.
+#' @param par.groups Character vector mapping each column of \code{gapop} to a group.
+#' @param par.labels Character vector of column labels (typically the colnames of \code{gapop}).
+#' @param env_pars Data frame of env response baselines (canonical or sensitivity-results
+#'   schema, see \code{\link{fn.makeparvec}}). May be \code{NULL}.
+#' @param redtide_pars Same as \code{env_pars} for red-tide responses. May be \code{NULL}.
+#' @param file Output PDF path.
+#' @param dims Panel grid \code{c(rows, cols)}. Default \code{c(3, 3)}.
+#' @param highlight_pars Numeric vector of length \code{ncol(gapop)} whose values get the
+#'   blue highlight (vline on histograms, overlaid curve on env/rt panels). If
+#'   \code{NULL} (default), \code{est_par_vec} is used — i.e. the baseline is highlighted,
+#'   matching the original behavior used for the initial-population plot. Pass the
+#'   min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the final-population
+#'   posterior plot.
+#' @return Invisibly returns \code{file}.
+#' @export
+fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
+                                     env_pars = NULL, redtide_pars = NULL,
+                                     file, dims = c(3, 3),
+                                     highlight_pars = NULL){
+  if(!is.null(env_pars))     env_pars     <- .normalize_env_pars(env_pars)
+  if(!is.null(redtide_pars)) redtide_pars <- .normalize_env_pars(redtide_pars)
+
+  # When no highlight set is provided, fall back to the baseline est_par_vec so existing
+  # callers (initial-pop plot) keep their current behavior. For env/rt curves a NULL
+  # highlight means the blue curve is the BASE curve (adj1 = adj2 = 1), which matches
+  # the original "baseline curve highlighted in blue" behavior.
+  hl <- if(is.null(highlight_pars)) est_par_vec else highlight_pars
+
+  alpha_col <- grDevices::rgb(0, 0, 0, alpha = 0.15)
+
+  grDevices::pdf(file, onefile = TRUE)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  graphics::par(mfrow = dims, mar = c(3, 3, 2, 1), mgp = c(1.6, 0.5, 0))
+
+  draw_hists <- function(col_idx){
+    for(j in col_idx){
+      graphics::hist(gapop[, j], breaks = 50, main = par.labels[j], xlab = 'value')
+      graphics::abline(v = hl[j], col = 'blue', lty = 2)
+    }
+  }
+
+  unique_groups <- unique(par.groups)
+  for(grp in unique_groups){
+    col_idx <- which(par.groups == grp)
+    is_env  <- startsWith(grp, "env")
+    is_rt   <- startsWith(grp, "rt")
+    pars_df <- if(is_rt) redtide_pars else if(is_env) env_pars else NULL
+
+    if(is.null(pars_df)){ draw_hists(col_idx); next }
+
+    parts      <- strsplit(par.labels[col_idx[1]], "_")[[1]]
+    shape_type <- suppressWarnings(as.numeric(gsub("type", "", parts[2])))
+    resp_id    <- suppressWarnings(as.numeric(gsub("^(env|rt)", "", parts[1])))
+    row.i      <- which(.env_resp_idx(pars_df) == resp_id)[1]
+    if(is.na(row.i) || is.na(shape_type)){ draw_hists(col_idx); next }
+
+    adj1 <- gapop[, col_idx[1]]
+    adj2 <- if(length(col_idx) >= 2) gapop[, col_idx[2]] else rep(1, nrow(gapop))
+
+    # Highlight curve adj values: 1,1 when no override (= base curve), else from highlight_pars.
+    h_adj1 <- if(is.null(highlight_pars)) 1 else highlight_pars[col_idx[1]]
+    h_adj2 <- if(is.null(highlight_pars) || length(col_idx) < 2) 1 else highlight_pars[col_idx[2]]
+
+    if(shape_type == 11){
+      # Logistic 4-params: par1=XMin, par2=XMax, par3=Inflection, par4=Slope
+      XMin       <- pars_df[row.i, 'par1']
+      XMax       <- pars_df[row.i, 'par2']
+      Inf.base   <- pars_df[row.i, 'par3']
+      Slope.base <- pars_df[row.i, 'par4']
+      x <- seq(XMin, XMax, length.out = 200)
+      ycurve <- function(Inf.i, Slope.i) 1 - 1 / (1 + (x / Inf.i)^Slope.i)
+      graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, 1.05),
+                     main = grp, xlab = "x", ylab = "response")
+      for(k in seq_len(nrow(gapop)))
+        graphics::lines(x, ycurve(Inf.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
+      graphics::lines(x, ycurve(Inf.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+
+    } else if(shape_type == 9){
+      # Trapezoid: par1=LB, par2=LT, par3=RT, par4=RB. GA: mid.adj, width.adj.
+      LB <- pars_df[row.i, 'par1']; LT <- pars_df[row.i, 'par2']
+      RT <- pars_df[row.i, 'par3']; RB <- pars_df[row.i, 'par4']
+      mid.base  <- (RT + LT) / 2
+      pref.base <- RT - LT
+      xlim <- range(c(LB, LT, RT, RB), na.rm = TRUE)
+      xlim <- xlim + c(-0.1, 0.1) * diff(xlim)
+      graphics::plot(NA, xlim = xlim, ylim = c(0, 1.05),
+                     main = grp, xlab = "x", ylab = "response")
+      trap_pts <- function(mid.adj, w.adj){
+        mid.i  <- mid.base  * mid.adj
+        pref.i <- pref.base * w.adj
+        LT.i <- pmax(0, mid.i - pref.i/2); RT.i <- mid.i + pref.i/2
+        LB.i <- LT.i - (LT - LB) * w.adj;  RB.i <- RT.i + (RB - RT) * w.adj
+        list(x = c(LB.i, LT.i, RT.i, RB.i), y = c(0, 1, 1, 0))
+      }
+      for(k in seq_len(nrow(gapop))){
+        p <- trap_pts(adj1[k], adj2[k]); graphics::lines(p$x, p$y, col = alpha_col)
+      }
+      hp <- trap_pts(h_adj1, h_adj2)
+      graphics::lines(hp$x, hp$y, col = 'blue', lwd = 2)
+
+    } else if(shape_type == 6){
+      # Normal: par1=SDLeft, par3=SDRight, par4=Mean, par5=Max. GA: mean.adj, width.adj.
+      SDLeft.base  <- pars_df[row.i, 'par1']
+      SDRight.base <- pars_df[row.i, 'par3']
+      Mean.base    <- pars_df[row.i, 'par4']
+      Max.base     <- pars_df[row.i, 'par5']
+      DataWidth.base <- 5 * SDLeft.base + 5 * SDRight.base
+      x <- seq(Mean.base - DataWidth.base/2, Mean.base + DataWidth.base/2, length.out = 200)
+      norm_y <- function(Mean.i, SDL, SDR, Mx){
+        y <- numeric(length(x)); lf <- x < Mean.i
+        y[lf]  <- Mx * exp(-0.5 * ((x[lf]  - Mean.i) / SDL)^2)
+        y[!lf] <- Mx * exp(-0.5 * ((x[!lf] - Mean.i) / SDR)^2)
+        y
+      }
+      graphics::plot(NA, xlim = range(x), ylim = c(0, Max.base * 1.2),
+                     main = grp, xlab = "x", ylab = "response")
+      for(k in seq_len(nrow(gapop)))
+        graphics::lines(x, norm_y(Mean.base * adj1[k],
+                                  SDLeft.base * adj2[k],
+                                  SDRight.base * adj2[k],
+                                  Max.base), col = alpha_col)
+      graphics::lines(x, norm_y(Mean.base * h_adj1,
+                                SDLeft.base * h_adj2,
+                                SDRight.base * h_adj2,
+                                Max.base),
+                      col = 'blue', lwd = 2)
+
+    } else if(shape_type == 10){
+      # Sigmoid: par1=XMin, par2=XMax, par3=XMid, par5=Slope, par6=Scalar. GA: xmid.adj, slope.adj.
+      XMin        <- pars_df[row.i, 'par1']
+      XMax        <- pars_df[row.i, 'par2']
+      XMid.base   <- pars_df[row.i, 'par3']
+      Slope.base  <- pars_df[row.i, 'par5']
+      Scalar.base <- pars_df[row.i, 'par6']
+      x <- seq(XMin, XMax, length.out = 200)
+      ycurve <- function(XMid.i, Slope.i) Scalar.base / (1 + exp(-Slope.i * (x - XMid.i)))
+      graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, Scalar.base * 1.1),
+                     main = grp, xlab = "x", ylab = "response")
+      for(k in seq_len(nrow(gapop)))
+        graphics::lines(x, ycurve(XMid.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
+      graphics::lines(x, ycurve(XMid.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+
+    } else {
+      draw_hists(col_idx)
+    }
+  }
+  invisible(file)
+}
+
+
 #' @keywords internal
 #' @noRd
-
-
-<<<<<<< Updated upstream
-=======
-safe_runEwE <- function(cmdfile, do.obj) {
-  on.exit(gc(), add = TRUE)
-  #out <- tryCatch({
-    # example: quiet system call
-    # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
-  out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-  #}, error = function(e) NA_real_)
+safe_runEwE <- function(cmdfile, do.obj, fit.abs.catch = TRUE) {
+  on.exit(gc(), add = TRUE)   # ensure cleanup
+  out <- tryCatch(
+    fn.runEwE(cmdfile = cmdfile, do.obj = do.obj, fit.abs.catch = fit.abs.catch),
+    error = function(e) NA_real_)
   if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
     out[1]
   } else {
     NA_real_
   }
-}#eof
-
->>>>>>> Stashed changes
-# safe_runEwE <- function(cmdfile, do.obj,bug=F) {
-#     if (!bug){
-#     on.exit(gc(), add = TRUE)
-#     #out <- tryCatch({
-#       # example: quiet system call
-#       # system2("EwE.exe", args = c(cmdfile), stdout = FALSE, stderr = FALSE, wait = TRUE)
-#     out <- fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-#     #}, error = function(e) NA_real_)
-#     if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])) out[1] else NA_real_
-#     } else {
-#       on.exit(gc(), add = TRUE)
-#       run_dir <- dirname(cmdfile)
-#       
-#       # Ensure clean slate for output detection
-#       target_file <- file.path(run_dir, "Ecospace_Annual_Average_Biomass.csv")
-#       if(file.exists(target_file)) file.remove(target_file)
-#       
-#       # Normalize paths and handle spaces in "King Mackerel" via PowerShell triple-quotes
-#       console_path <- normalizePath(file.console, winslash = "\\", mustWork = TRUE)
-#       cmd_path     <- normalizePath(cmdfile, winslash = "\\", mustWork = TRUE)
-#       
-#       # PowerShell command construction [cite: 1]
-#       ps_cmd <- paste0("powershell -Command \"Start-Process -FilePath '", console_path, 
-#                        "' -ArgumentList '\"\"", cmd_path, "\"\"' -PassThru | Select-Object -ExpandProperty Id\"")
-#       
-#       # Jitter to prevent concurrent Access DB collisions [cite: 6]
-#       Sys.sleep(runif(1, 0.1, 5.0)) 
-#       
-#       # Launch and capture PID
-#       pid <- tryCatch(suppressWarnings(system(ps_cmd, intern = TRUE)), error = function(e) NA)
-#       
-#       start_time <- Sys.time()
-#       model_finished <- FALSE
-#       
-#       # Monitoring loop with 20-minute timeout [cite: 6]
-#       while(difftime(Sys.time(), start_time, units="mins") < 20) {
-#         Sys.sleep(5) 
-#         if(file.exists(target_file)) {
-#           if(file.info(target_file)$size > 100) {
-#             Sys.sleep(2) # Buffer for disk writing
-#             model_finished <- TRUE
-#             break
-#           }
-#         }
-#       }
-#       
-#       # Force kill the specific PID to release file locks 
-#       if(!is.na(pid)) {
-#         try(system(paste0("taskkill /F /PID ", pid), show.output.on.console = FALSE), silent = TRUE)
-#       }
-#       
-#       if(model_finished) {
-#         out <- tryCatch({
-#           # Pass obs.ts explicitly from the worker's environment 
-#           res <- fn.objfxn1(dir.pred = run_dir, obs.ts = obs.ts)
-#           # Save results to local text file in the run directory
-#           write.table(t(res), file = file.path(run_dir, "obj_results.txt"), 
-#                       sep = ",", row.names = FALSE, col.names = TRUE)
-#           
-#           res # Return the full vector for the logic below
-#         }, error = function(e) {
-#           # Log the error to a file if objective function fails
-#           writeLines(as.character(e), file.path(run_dir, "obj_error.txt"))
-#           return(NA_real_)
-#         })
-#         
-#         # Return the total likelihood (first element) to the GA 
-#         if(is.numeric(out) && length(out) >= 1) return(out[1])
-#       }
-#       return(NA_real_)
-#     }
-# }#eof
-
-
-
-
-# safe_runEwE <- function(cmdfile, do.obj, timeout_sec = 1) {
-#   if (requireNamespace("R.utils", quietly = TRUE)) {
-#     R.utils::withTimeout({
-#       fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-#     }, timeout = timeout_sec, onTimeout = "silent")
-#   } else {
-#     # Fallback without timeout (consider installing R.utils)
-#     fn.runEwE(cmdfile = cmdfile, do.obj = do.obj)
-#   }
-# }#eof
-
-
-safe_runEwE <- function(cmdfile, do.obj) {
-  on.exit(gc(), add = TRUE)   # ensure cleanup
-  out <- tryCatch(
-    fn.runEwE(cmdfile = cmdfile, do.obj = do.obj),
-    error = function(e) NA_real_)
-    if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
-      out[1]
-    } else {
-      NA_real_
-    }
 }#eof
 
 
@@ -659,29 +848,31 @@ safe_runEwE <- function(cmdfile, do.obj) {
 #'
 
 fn.runEwE.gapop <-  function(
-    files.cmd, 
-    obj.fxn=1, 
+    files.cmd,
+    obj.fxn=1,
+    fit.abs.catch=TRUE,
     delete.output=T,
-    max_tries=50
+    max_tries=50,
+    gen=NULL,
+    pardist = if(exists("gapop.pardist", envir=.GlobalEnv)) get("gapop.pardist", envir=.GlobalEnv) else "uniform",
+    vuldist = if(exists("gapop.vuldist", envir=.GlobalEnv)) get("gapop.vuldist", envir=.GlobalEnv) else "uniform"
 ){
-
-
-  #clusterExport(cl,append(cl.export,c("file.console", "fn.runEwE", "safe_runEwE","fn.objfxn1", "fn.objfxn2","styear","enyear","group.names","df.names","fn.ecospace_predB_ts2array","fn.ecospace_predC_ts2array")))
-
-  #pbar <- winProgressBar("Running Ecospace GApop",label=paste0("Simulation 0 of ",length(files.cmd)),max=100)
-  #prog <- function(n) setWinProgressBar(pbar,(n/length(files.cmd)*100),label=paste("Simulation Run", n,"of",length(files.cmd),"Completed"))
-  #opts <- list(progress=prog)
-  
-  #print(paste('Running',length(files.cmd),'Ecospace simulations'))
   t1 <- Sys.time()
-  runLL.out <- foreach(i = seq_along(files.cmd), .errorhandling = 'pass') %dopar% { #, .options.snow = opts
-    #i=5
-    safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn)
-    #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
+
+  # console progress bar; requires doSNOW backend (see ensure_cluster)
+  gen_label <- if(is.null(gen)) "GA pop" else sprintf("Gen %d", gen)
+  cat(sprintf("\n[%s] %d simulations\n", gen_label, length(files.cmd)))
+  pbar <- utils::txtProgressBar(min = 0, max = length(files.cmd), style = 3)
+  prog <- function(n) utils::setTxtProgressBar(pbar, n)
+  opts <- list(progress = prog)
+
+  runLL.out <- foreach(i = seq_along(files.cmd),
+                       .errorhandling = 'pass',
+                       .options.snow  = opts) %dopar% {
+    safe_runEwE(cmdfile=files.cmd[i], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
   }
+  close(pbar)
   runLL <- unlist(runLL.out)
-  #close(pbar)
-  #print(paste('Run time',round(as.numeric(Sys.time()-t1),2)))
   
   ##missing runs----------------------------------------------------------------
   #tmp.errs = sample(1:340,10)
@@ -693,32 +884,33 @@ fn.runEwE.gapop <-  function(
   tries <- 0
   while(length(erruns)>=1 && tries<max_tries){
     tries <- tries+1
-    #print(paste0('Redo missing runs: n=',length(erruns)))
-    
-    #pbar <- winProgressBar("Running Ecospace GApop: Missing Runs",label=paste0("Simulation 0 of ",length(erruns)),max=100)
-    #prog <- function(n) setWinProgressBar(pbar,(n/length(erruns)*100),label=paste("Simulation Run", n,"of", length(erruns),"Completed"))
-    #opts <- list(progress=prog)
-    
-    gapop.err <- fn.GApop(pardist=gapop.pardist,vuldist=gapop.vuldist)
-    files.cmd.err <- lapply(erruns,function(i) fn.parvec2cmd(par_vec=gapop.err[i,], g=0, idx=i)) 
+
+    gapop.err <- fn.GApop(pardist=pardist, vuldist=vuldist)
+    files.cmd.err <- lapply(erruns,function(i) fn.parvec2cmd(par_vec=gapop.err[i,], g=0, idx=i))
     files.cmd.err <- unlist(files.cmd.err, use.names=F)
-    
-    
-    runLL.err.out <- foreach(i=1:length(erruns),.errorhandling='pass') %dopar% {#,.options.snow=opts
-      safe_runEwE(cmdfile=files.cmd.err[i], do.obj = obj.fxn)
-      #fn.runEwE(cmdfile=files.cmd[i], do.obj=obj.fxn)
+
+    cat(sprintf("\n[%s retry %d] %d failed runs\n", gen_label, tries, length(erruns)))
+    pbar.err <- utils::txtProgressBar(min = 0, max = length(erruns), style = 3)
+    prog.err <- function(n) utils::setTxtProgressBar(pbar.err, n)
+    opts.err <- list(progress = prog.err)
+
+    runLL.err.out <- foreach(i = seq_along(erruns),
+                             .errorhandling = 'pass',
+                             .options.snow  = opts.err) %dopar% {
+      safe_runEwE(cmdfile=files.cmd.err[i], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
     }
+    close(pbar.err)
     runLL.err <- unlist(runLL.err.out)
-    #close(pbar)
     
     #for(k in 1:length(erruns)) runs[[erruns[k]]] <- unlist(runs.erruns[k])
     for (k in seq_along(erruns)) runLL[erruns[k]] <- runLL.err[k]
-    
-    #filecheck <- sapply(dirname(files.cmd),FUN=function(x)length(list.files(x)))
-    #erruns <- which(filecheck<=1)  #if there are many missing runs, then need to do this in parallel
-    #runLL[16] <- NA_real_
+
+    # Preserve the index map: point files.cmd at the new retry cmd files for the
+    # indices we just re-ran, so the next round's unlink targets the correct run dirs.
+    # Do NOT re-list run_dir here — list.files() returns alphabetical order, which
+    # breaks the runLL <-> files.cmd index alignment.
+    for (k in seq_along(erruns)) files.cmd[erruns[k]] <- files.cmd.err[k]
     erruns <- which(is.na(runLL))
-    files.cmd <- list.files(path=run_dir, pattern="cmd.txt", full.names=T, recursive=T)
     if(length(erruns)>0) unlink(dirname(files.cmd[erruns]), recursive=T)
   }
   
@@ -911,29 +1103,46 @@ cluster_is_ok <- function() {
   ok
 }
 
-#' @keywords internal
-#' @noRd
-ensure_cluster <- function() {
-  if (!cluster_is_ok()) {
-    # rebuild
-    try(silent = TRUE, stopCluster(cl))
-    rm(list = "cl", envir = .GlobalEnv)
-    gc()
-    closeAllConnections()
-    workers <- max(1L, floor(detectCores() / 4))
-    cl <<- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
-    doParallel::registerDoParallel(cl)
-    clusterExport(cl, c(
-      # everything used from worker side:
-      "safe_runEwE", "fn.runEwE", "fn.objfxn1", "fn.objfxn2",
-      "styear", "enyear", "group.names", "df.names", "obs.ts",
-      "cmd_base", "myconfig", "run_dir"
-<<<<<<< Updated upstream
-    ))
-  }
+#' @title Canonical list of objects to clusterExport for R4EwE GA/sensitivity workers.
+#' @description Returns the character vector of object names that every worker process
+#'   needs in its global environment to call \code{safe_runEwE} → \code{fn.runEwE} →
+#'   any of the supported objective functions (\code{fn.objfxn1}, \code{fn.objfxn2},
+#'   \code{fn.ecospace_objfxn}). Use it in your top-level \code{clusterExport()} call
+#'   so the three clusterExport sites (script, \code{ensure_cluster}, \code{fn.GA}'s
+#'   every-5-gen reset) stay in sync.
+#' @return Character vector of object names.
+#' @export
+.r4ewe_worker_exports <- function(){
+  c(
+    # console + objective functions
+    "file.console",
+    "safe_runEwE", "fn.runEwE",
+    "fn.objfxn1", "fn.objfxn2", "fn.ecospace_objfxn",
+    # per-region prediction readers and their internal helpers
+    "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
+    ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",
+    # legacy single-region readers (still used by fn.objfxn1)
+    "fn.ecospace_predB_ts2array", "fn.ecospace_predC_ts2array",
+    # data the objective functions need
+    "obs.ts", "group.names", "fleet.names", "df.names",
+    # model years and run context
+    "styear", "enyear",
+    "cmd_base", "myconfig", "run_dir"
+  )
 }
 
-=======
-    ))}
+#' @keywords internal
+#' @noRd
+ensure_cluster <- function(workers = NULL) {
+  if (!cluster_is_ok()) {
+    if(exists("cl", envir = .GlobalEnv)){
+      try(stopCluster(get("cl", envir = .GlobalEnv)), silent = TRUE)
+      rm(list = "cl", envir = .GlobalEnv)
+    }
+    gc()
+    if(is.null(workers)) workers <- max(1L, floor(detectCores() / 4))
+    cl <<- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
+    doSNOW::registerDoSNOW(cl)
+    clusterExport(cl, .r4ewe_worker_exports())
+  }
 }#eof
->>>>>>> Stashed changes

@@ -28,8 +28,6 @@
 #' are appended to the CSV and printed to the console.
 
 fn.GA <- function(myconfig){
-  #unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
-  pop_size <<- myconfig$popSize
   n_generations <<- myconfig$n_gen
   mutation_rate <<- myconfig$pmutation
   elitism <<- myconfig$elitism
@@ -39,23 +37,40 @@ fn.GA <- function(myconfig){
   gapop.vuldist <<- myconfig$gapop.vuldist
   mutate.margin <<- myconfig$mutate.margin
   dir.results <<- myconfig$dir.ga_results
-  #small test change here
+
+  # objective function selection (defaults: fn.ecospace_objfxn with fit.abs.catch=FALSE)
+  obj.fxn       <- if(is.null(myconfig$obj.fxn))       3L    else as.integer(myconfig$obj.fxn)
+  fit.abs.catch <- if(is.null(myconfig$fit.abs.catch)) FALSE else as.logical(myconfig$fit.abs.catch)
+
+  # If TRUE, every individual in the final-generation gapop ends up with a preserved
+  # Ecospace output directory so downstream per-run aggregation (e.g. fn.M0_loss_rate
+  # across the final pop to derive Mrt uncertainty bounds) has full coverage.
+  # Implementation:
+  #   1) gen == n_generations runs with delete.output=FALSE, so the offspring runs
+  #      that survive into gapop stay on disk at zero extra cost.
+  #   2) The elite rows in the final gapop were carried over from gen N-1 and have
+  #      no run on disk; they get re-evaluated in a small extra batch (~elitism
+  #      runs) after the loop. EwE.exe is deterministic for a given param vector,
+  #      so this regenerates the deterministic output rather than adding a new run.
+  # A mapping CSV (final_ga_runs_<ts>.csv) records each gapop row's role and its
+  # cmd file path. Default FALSE for backward compatibility.
+  preserve.final.output <- isTRUE(myconfig$preserve.final.output)
   
   #create results file
-  file.ga.results <- file.path(dir.results.ga, paste0('ga_results_',timestamp,'.csv'))
+  file.ga.results <- file.path(dir.results, paste0('ga_results_',timestamp,'.csv'))
   myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
   write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
   write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
-  write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
-  write.table(myconfig.string,file.ga.results,file.ga.results,row.names=F, col.names=F,append=T, quote=F)
+  write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],         file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+  write.table(myconfig.string,                                                  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
   write.table(t(c("gen","min_LL","max_LL","mean_LL","median_LL","sd_LL","NA_count",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
   #base run
   files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
   message('Running the base model')
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1,delete.output=T)  
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=-1)
 
   #pipe output
   g=-1
@@ -76,18 +91,14 @@ fn.GA <- function(myconfig){
   gapop[1,] <- est_par_vec  #include base run in initial population
   write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
-  pdf(file.path(dir.results,paste0('init_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
-  graphics.off();rm(.SavedPlots);windows(record=T)
-  par(mfrow=c(3,3))
-  for(i in 1:ncol(gapop)){
-    hist(gapop[,i],breaks=100,main=colnames(gapop)[i],xlab='value')
-    abline(v=est_par_vec[i],col='blue',lty=2)
-  }
-  dev.off()
+  fn.plot_ga_pop_responses(gapop, est_par_vec, par.groups, par.labels,
+                           env_pars = env_pars, redtide_pars = redtide_pars,
+                           file = file.path(dir.results,
+                                  paste0('init_ga_pop_distributions_', timestamp, '.pdf')))
 
-  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i)) 
+  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i))
   files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.out=T)
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=0)
 
   #calculate penalty for parameter bounds violations
   if(do.penalty){
@@ -96,8 +107,6 @@ fn.GA <- function(myconfig){
     low.pen = L.bounds*0.5
     penalties = rep(0,nrow(gapop))
     for(i in 1:nrow(gapop)){
-      #i=119
-      penalty=rep(0,ncol(gapop))
       penalties[i] <- sum((pmax(0,gapop[i,]-upp.pen)^2 + pmax(0,low.pen-gapop[i,])^2)*pen.wt)
     }
     fitness <- fitness+penalties
@@ -123,21 +132,23 @@ fn.GA <- function(myconfig){
     #reset workers after every 5 generations - this didn't help but we'll keep it jic
     if(n_generations>5){
     if(gen %in% seq(6,n_generations,5)){
-      try(silent = TRUE, stopCluster(cl))
-      rm(cl); gc()
-      closeAllConnections()
-      workers <- floor(detectCores() / 4)
-      cl <- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
-      doParallel::registerDoParallel(cl)
-      clusterExport(cl, c("file.console","cmd_base","myconfig","run_dir",
-                          "safe_runEwE","fn.runEwE","fn.objfxn1","fn.objfxn2",
-                          "fn.ecospace_predB_ts2array","fn.ecospace_predC_ts2array",
-                          "styear","enyear","group.names","df.names","obs.ts"))
+      # Cluster lives in .GlobalEnv as a single source of truth (also used by
+      # ensure_cluster). Use cl <<- so this reset writes back to the same slot
+      # rather than creating a function-local shadow that leaks zombie workers.
+      if(exists("cl", envir = .GlobalEnv)){
+        try(stopCluster(get("cl", envir = .GlobalEnv)), silent = TRUE)
+        rm(list = "cl", envir = .GlobalEnv)
+      }
+      gc()
+      workers <- if(!is.null(myconfig$workers)) myconfig$workers else floor(detectCores() / 2)
+      cl <<- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
+      doSNOW::registerDoSNOW(cl)
+      clusterExport(cl, .r4ewe_worker_exports())
     }
     }
     # Elitism - keep the top n runs
     elite_idx <- order(fitness, decreasing=F)[1:elitism]
-    elite <- gapop[elite_idx, ]
+    elite <- gapop[elite_idx, , drop = FALSE]
     
     # Selection, Crossover, Mutation
     parents <- select_parents(gapop, fitness) #resamples the population, with replacement, with rank-based probabilities in the sample draws
@@ -154,10 +165,13 @@ fn.GA <- function(myconfig){
 
     
     # Evaluate new population
-    ensure_cluster()  # optional but recommended
-    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i)) 
+    ensure_cluster(workers = myconfig$workers)  # optional but recommended
+    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i))
     files.cmd <- unlist(files.cmd, use.names=F)
-    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=1, delete.output=T)
+    # On the last gen, keep the offspring run dirs so downstream per-run aggregation
+    # (e.g. Mrt across the final pop) can read each individual's Ecospace output.
+    del.this.gen <- !(preserve.final.output && gen == n_generations)
+    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=del.this.gen, gen=gen)
     
     #calculate penalty for parameter bounds violations
     # pen.wt = abs(diff(range(fitness)))*0.1
@@ -172,22 +186,59 @@ fn.GA <- function(myconfig){
       new_fitness <- new_fitness+penalties
     }
     
-    # Combine elite + offspring: keep elites and the best (lowest) offspring
-    worst_offspring_idx <- order(new_fitness, decreasing = TRUE)[1:elitism]  # drop worst 'elitism'
+    # Combine elite + offspring: keep elites and the best (lowest) offspring.
+    # na.last=FALSE pushes NA fitnesses to the front of the decreasing sort so they're
+    # included in worst_offspring_idx and dropped (failed runs shouldn't propagate).
+    worst_offspring_idx <- order(new_fitness, decreasing = TRUE, na.last = FALSE)[1:elitism]
     gapop   <- rbind(elite, offspring[-worst_offspring_idx, ])
     fitness <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
     
     #plot and save final generation
     if(gen==n_generations){
-      pdf(file.path(dir.results,paste0('final_ga_pop_distributions_',timestamp,'.pdf')),onefile=T)
-      graphics.off();rm(.SavedPlots);windows(record=T)
-      par(mfrow=c(3,3))
-      for(i in 1:ncol(gapop)){
-        hist(gapop[,i],breaks=100,main=colnames(gapop)[i],xlab='value')
-        abline(v=est_par_vec[i],col='blue',lty=2)
+      # Posterior plot: highlight the min-LL individual (best fit) in blue rather than
+      # the baseline est_par_vec. Histograms get a vline at best-fit values, env/rt
+      # panels overlay the best-fit response curve in blue.
+      best_pars_final <- gapop[which.min(fitness), ]
+      fn.plot_ga_pop_responses(gapop, est_par_vec, par.groups, par.labels,
+                               env_pars = env_pars, redtide_pars = redtide_pars,
+                               highlight_pars = best_pars_final,
+                               file = file.path(dir.results,
+                                      paste0('final_ga_pop_distributions_', timestamp, '.pdf')))
+      write.csv(gapop, file.path(dir.results, paste0('final_ga_pop', timestamp, '.csv')))
+
+      if(preserve.final.output){
+        # gapop layout after rebuild: rows 1..elitism are elites (carried over from
+        # gen N-1, no output dir on disk); rows elitism+1..popSize are this gen's
+        # surviving offspring (output dirs kept because del.this.gen=FALSE above).
+        offspring_rows_kept <- setdiff(seq_len(nrow(offspring)), worst_offspring_idx)
+        offspring_cmd       <- files.cmd[offspring_rows_kept]
+
+        # Re-run the elite slots to materialize their output dirs. EwE.exe is
+        # deterministic so this regenerates the same outputs gen N-1 produced.
+        elite_cmd <- character(0L)
+        if(elitism > 0L){
+          elite_cmd <- vapply(seq_len(elitism),
+                              function(i) fn.parvec2cmd(par_vec=gapop[i,], g=998, idx=i),
+                              character(1L))
+          cat(sprintf("\n[final-pop] Re-running %d elite individuals to preserve their Ecospace output\n", elitism))
+          .ignored <- fn.runEwE.gapop(elite_cmd, obj.fxn=obj.fxn,
+                                      fit.abs.catch=fit.abs.catch,
+                                      delete.output=FALSE, gen="elite")
+        }
+
+        mapping <- data.frame(
+          gapop_row = seq_len(nrow(gapop)),
+          role      = c(rep("elite",     elitism),
+                        rep("offspring", length(offspring_cmd))),
+          cmd_file  = c(elite_cmd, offspring_cmd),
+          fitness   = fitness,
+          stringsAsFactors = FALSE
+        )
+        map_path <- file.path(dir.results, paste0("final_ga_runs_", timestamp, ".csv"))
+        write.csv(mapping, map_path, row.names=FALSE)
+        message(sprintf("Final-pop output preserved: %d/%d individuals on disk; mapping at %s",
+                        sum(!is.na(mapping$cmd_file)), nrow(gapop), map_path))
       }
-      dev.off()
-      write.csv(gapop,file.path(dir.results,paste0('final_ga_pop',timestamp,'.csv')))
     }
     
     

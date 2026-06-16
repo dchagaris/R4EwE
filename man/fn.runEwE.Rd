@@ -9,13 +9,16 @@ fn.runEwE(
   do.obj = 1,
   console = file.console,
   stdout_target = FALSE,
-  stderr_target = FALSE
+  stderr_target = FALSE,
+  fit.abs.catch = TRUE,
+  timeout = 300
 )
 }
 \arguments{
 \item{cmdfile}{Character: full path to the command file Ecospace consumes}
 
-\item{do.obj}{Integer: reserved for later (kept for signature parity)}
+\item{do.obj}{Integer: 0=none, 1=\code{fn.objfxn1}, 2=\code{fn.objfxn2},
+3=\code{fn.ecospace_objfxn}}
 
 \item{console}{Character: full path to the Ecospace console executable (defaults to global
 file.console)}
@@ -23,6 +26,17 @@ file.console)}
 \item{stdout_target}{NULL/FALSE to suppress, or a file path to capture stdout}
 
 \item{stderr_target}{NULL/FALSE to suppress, or a file path to capture stderr}
+
+\item{fit.abs.catch}{Logical, passed to \code{fn.ecospace_objfxn} when \code{do.obj == 3}.
+If \code{TRUE} (default), absolute-type series (BiomassAbs, Catches, Landings, Discards,
+DiscardsTotalAbs) are fit on their literal scale (\code{q = 1}); if \code{FALSE}, every
+series is q-rescaled. Ignored for \code{do.obj} 1 or 2.}
+
+\item{timeout}{Numeric seconds; passed to \code{system2}. If the Ecospace child
+process hasn't exited within this many seconds it is killed and the run is treated as
+a failure (returns \code{NA}). Guards against hung EwE.exe processes that would
+otherwise block a worker indefinitely (e.g., a Windows Error Reporting dialog from
+a child crash). Default 300 (5 minutes).}
 }
 \value{
 Integer exit status (0 = success); invisibly

@@ -251,21 +251,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 # Internal helpers for fn.ecosim_plot_fits ---------------------------------------------------------
 
-#' @keywords internal
-#' @noRd
-.find_year_skip <- function(x, timestep){
-  key_fun <- if(timestep == "annual")
-               function(L) which(tolower(substr(L, 1, 4)) == "year")
-             else
-               function(L) which(tolower(substr(L, 1, 8)) == "timestep")
-  for(nread in c(30L, 100L, 500L, 5000L)){
-    L <- readLines(x, n = nread)
-    hit <- key_fun(L)
-    if(length(hit)) return(hit[1] - 1)
-    if(length(L) < nread) return(NA_integer_)  # EOF reached, no match
-  }
-  NA_integer_
-}
+# .find_year_skip lives in input_output.R (shared with fn.ecospace_objfxn).
 
 #' @keywords internal
 #' @noRd
@@ -477,75 +463,7 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
                                 "yellow", "#FF7F00", "red", "#7F0000"))(n)
 }
 
-#' @keywords internal
-#' @noRd
-.detect_ecospace_regions <- function(dir.out, timestep){
-  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
-  files <- unique(unlist(lapply(dir.out, function(d){
-    list.files(d, pattern = paste0("^", prefix, "\\d+_Biomass\\.csv$"),
-               recursive = TRUE)
-  })))
-  if(length(files) == 0) return(integer(0))
-  m <- regmatches(basename(files), regexec("Region_(\\d+)_", basename(files)))
-  regs <- as.integer(vapply(m, `[`, character(1), 2))
-  sort(unique(regs))
-}
-
-#' @keywords internal
-#' @noRd
-.read_pred_ecospace_wide <- function(dir.out, varname, timestep, regions, styear,
-                                     aggregate_by_group = FALSE){
-  prefix <- if(timestep == "annual") "Ecospace_Annual_Average_Region_" else "Ecospace_Average_Region_"
-
-  # Collect data: [[run_key]][[region_id]] = data frame (years x groups [x fleet pre-agg])
-  collected <- list()
-  for(d in dir.out){
-    for(r in regions){
-      pat <- paste0("^", prefix, r, "_", varname, "\\.csv$")
-      files <- list.files(d, pattern = pat, recursive = TRUE, full.names = TRUE)
-      for(f in files){
-        run_key <- basename(dirname(f))
-        nskip <- .find_year_skip(f, timestep)
-        if(length(nskip) == 0 || is.na(nskip)) next
-        dt <- utils::read.csv(f, skip = nskip, row.names = 1, check.names = FALSE)
-        if(aggregate_by_group && any(grepl("\\|", names(dt)))){
-          grp_names <- vapply(strsplit(names(dt), "\\|"), function(x) tail(x, 1), character(1))
-          uniq_grps <- unique(grp_names)
-          agg <- matrix(0, nrow = nrow(dt), ncol = length(uniq_grps),
-                        dimnames = list(rownames(dt), uniq_grps))
-          for(g in uniq_grps){
-            cg <- which(grp_names == g)
-            agg[, g] <- if(length(cg) == 1) dt[, cg] else rowSums(dt[, cg, drop = FALSE], na.rm = TRUE)
-          }
-          dt <- as.data.frame(agg, check.names = FALSE)
-        }
-        if(is.null(collected[[run_key]])) collected[[run_key]] <- list()
-        collected[[run_key]][[as.character(r)]] <- dt
-      }
-    }
-  }
-  if(length(collected) == 0) return(NULL)
-
-  # Union of group columns across all run/region data frames
-  all_groups <- unique(unlist(lapply(collected, function(rl)
-    unique(unlist(lapply(rl, names))))))
-  template <- collected[[1]][[which(!vapply(collected[[1]], is.null, logical(1)))[1]]]
-  n_years <- nrow(template)
-  runs <- names(collected)
-
-  arr <- array(NA_real_,
-               dim = c(n_years, length(all_groups), length(regions), length(runs)),
-               dimnames = list(seq_len(n_years), all_groups, paste0("R", regions), runs))
-  for(r_idx in seq_along(runs)){
-    for(reg_idx in seq_along(regions)){
-      dt <- collected[[runs[r_idx]]][[as.character(regions[reg_idx])]]
-      if(is.null(dt)) next
-      arr[seq_len(nrow(dt)), names(dt), reg_idx, r_idx] <- as.matrix(dt)
-    }
-  }
-  dimnames(arr)[[1]] <- as.character(styear + seq_len(n_years) - 1L)
-  arr
-}
+# .detect_ecospace_regions and fn.read_pred_ecospace_wide live in input_output.R.
 
 #' @keywords internal
 #' @noRd
@@ -555,127 +473,13 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
   list(a = a[, common, , , drop = FALSE], b = b[, common, , , drop = FALSE])
 }
 
-#' @keywords internal
-#' @noRd
-# Per-fleet discard-mortality rate by year from the ts (type 11). Rule (a): a fleet with no
-# type-11 entry defaults to Dmort = 1 (i.e. DT = DD). NA years within an existing series are
-# filled with that fleet's mean rate.
-.ecospace_dmort_by_year <- function(obs.ts, fleet_poolcodes, years){
-  th       <- obs.ts$ts.head
-  ts_years <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
-  out <- matrix(1, nrow = length(years), ncol = length(fleet_poolcodes))  # default Dmort = 1
-  for(j in seq_along(fleet_poolcodes)){
-    fc <- fleet_poolcodes[j]
-    if(is.na(fc)) next                                   # unmatched fleet -> Dmort = 1
-    rows <- which(th$Type == 11 & th$Poolcode == fc)
-    if(length(rows) == 0) next                           # rule (a): no entry -> Dmort = 1
-    series <- obs.ts$ts[, rows[1]]
-    series[series < 0] <- NA
-    fill <- mean(series, na.rm = TRUE)
-    v <- series[match(years, ts_years)]
-    v[is.na(v)] <- if(is.finite(fill)) fill else 1
-    out[, j] <- v
-  }
-  out
-}
-
-#' @keywords internal
-#' @noRd
-# Predicted dead / total / surviving discards by group, derived from per-region per-fleet-group
-# Catch and Landings CSVs. DD = Catch - Landings (dead discards), DT = DD / Dmort (total discards),
-# DS = DT - DD (surviving), computed at fleet x group resolution (where Dmort applies) then summed
-# over fleets to group level. Returns list(dead, total, surv), each [years, groups, regions, runs].
-.read_pred_ecospace_discards_split <- function(dir.out, timestep, regions, styear,
-                                               obs.ts, fleet.names){
-  catch <- .read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
-  land  <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
-  if(is.null(catch) || is.null(land)) return(NULL)
-
-  # keep fleet|group columns common to both files
-  common <- intersect(dimnames(catch)[[2]], dimnames(land)[[2]])
-  common <- common[grepl("\\|", common)]
-  if(length(common) == 0) return(NULL)
-  catch <- catch[, common, , , drop = FALSE]
-  land  <- land [, common, , , drop = FALSE]
-
-  dd <- catch - land
-  dd[dd < 0] <- 0                                        # dead discards by fleet|group
-
-  years    <- as.numeric(dimnames(dd)[[1]])
-  parts    <- strsplit(common, "\\|")
-  fleet_nm <- vapply(parts, function(x) trimws(x[1]),        character(1))
-  group_nm <- vapply(parts, function(x) trimws(tail(x, 1)),  character(1))
-
-  # fleet name -> fleet pool code via fleet.names (NA -> rule (a) Dmort = 1)
-  norm  <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
-  fl_pc <- if(!is.null(fleet.names)) match(norm(fleet_nm), norm(fleet.names)) else rep(NA_integer_, length(fleet_nm))
-  unmatched <- unique(fleet_nm[is.na(fl_pc)])
-  if(length(unmatched))
-    warning("Ecospace discards: no fleet.names match for fleet(s) ",
-            paste(unmatched, collapse = ", "), " - discard mortality defaulted to 1 (DT = DD).")
-
-  uniq_pc   <- unique(fl_pc)
-  dmort_mat <- .ecospace_dmort_by_year(obs.ts, uniq_pc, years)     # [years x uniq_pc]
-
-  # total (DT) and surviving (DS) discards by fleet|group
-  dt <- dd; ds <- dd
-  nreg <- dim(dd)[3]; nrun <- dim(dd)[4]
-  for(k in seq_along(common)){
-    dmk <- dmort_mat[, match(fl_pc[k], uniq_pc)]                   # length(years)
-    for(ri in seq_len(nreg)) for(rn in seq_len(nrun)){
-      ddv <- dd[, k, ri, rn]
-      dtv <- ddv / dmk
-      dtv[!is.finite(dtv)] <- 0                                    # DD = 0 or Dmort = 0 guard
-      dt[, k, ri, rn] <- dtv
-      ds[, k, ri, rn] <- dtv - ddv
-    }
-  }
-
-  # sum fleet|group -> group
-  agg_to_group <- function(arr4){
-    ug  <- unique(group_nm)
-    out <- array(0, dim = c(dim(arr4)[1], length(ug), dim(arr4)[3], dim(arr4)[4]),
-                 dimnames = list(dimnames(arr4)[[1]], ug, dimnames(arr4)[[3]], dimnames(arr4)[[4]]))
-    for(g in ug){
-      cg <- which(group_nm == g)
-      out[, g, , ] <- if(length(cg) == 1) arr4[, cg, , ]
-                      else apply(arr4[, cg, , , drop = FALSE], c(1, 3, 4), sum, na.rm = TRUE)
-    }
-    out
-  }
-
-  # fleet|group level arrays carry a meta attribute parsed from the column names so the
-  # stacked-bar and per-fleet-group panels can map fleets/groups to pool codes for obs overlay.
-  attach_meta <- function(arr4){
-    attr(arr4, "fg_fleet_nm") <- setNames(fleet_nm, common)
-    attr(arr4, "fg_group_nm") <- setNames(group_nm, common)
-    arr4
-  }
-
-  list(dead     = agg_to_group(dd),
-       total    = agg_to_group(dt),
-       surv     = agg_to_group(ds),
-       dead_fg  = attach_meta(dd),
-       total_fg = attach_meta(dt),
-       surv_fg  = attach_meta(ds))
-}
-
-#' @keywords internal
-#' @noRd
-# Parse Ecospace "fleet|group" column names into a data frame of fleet/group name parts.
-.fg_meta <- function(fg_names){
-  parts <- strsplit(fg_names, "\\|")
-  data.frame(fg       = fg_names,
-             fleet_nm = vapply(parts, function(x) trimws(x[1]),       character(1)),
-             group_nm = vapply(parts, function(x) trimws(tail(x, 1)), character(1)),
-             stringsAsFactors = FALSE)
-}
+# .ecospace_dmort_by_year, fn.read_pred_ecospace_discards_split, and fn.fg_meta live in input_output.R.
 
 #' @keywords internal
 #' @noRd
 .read_pred_ecospace_F <- function(dir.out, timestep, regions, styear){
-  catch <- .read_pred_ecospace_wide(dir.out, "Catch",   timestep, regions, styear, aggregate_by_group = TRUE)
-  bio   <- .read_pred_ecospace_wide(dir.out, "Biomass", timestep, regions, styear, aggregate_by_group = FALSE)
+  catch <- fn.read_pred_ecospace_wide(dir.out, "Catch",   timestep, regions, styear, aggregate_by_group = TRUE)
+  bio   <- fn.read_pred_ecospace_wide(dir.out, "Biomass", timestep, regions, styear, aggregate_by_group = FALSE)
   if(is.null(catch) || is.null(bio)) return(NULL)
   al <- .align_by_group(catch, bio); if(is.null(al)) return(NULL)
   f <- al$a / al$b
@@ -810,17 +614,17 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
 
   # 2. read prediction arrays ----------------------------------------------------------------
   pred <- list()
-  if("biomass"  %in% vars) pred$biomass  <- .read_pred_ecospace_wide   (dir.out, "Biomass",  timestep, regions, styear, aggregate_by_group = FALSE)
+  if("biomass"  %in% vars) pred$biomass  <- fn.read_pred_ecospace_wide(dir.out, "Biomass",  timestep, regions, styear, aggregate_by_group = FALSE)
   if("catch"    %in% vars){
-    pred$catch    <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
-    pred$catch_fg <- .read_pred_ecospace_wide   (dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
+    pred$catch    <- fn.read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
+    pred$catch_fg <- fn.read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = FALSE)
   }
   if("landings" %in% vars){
-    pred$landings    <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
-    pred$landings_fg <- .read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
+    pred$landings    <- fn.read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+    pred$landings_fg <- fn.read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = FALSE)
   }
   if("discards" %in% vars){
-    ds_split <- .read_pred_ecospace_discards_split(dir.out, timestep, regions, styear, obs.ts, fleet.names)
+    ds_split <- fn.read_pred_ecospace_discards_split(dir.out, timestep, regions, styear, obs.ts, fleet.names)
     if(!is.null(ds_split)){
       pred$disc_total    <- ds_split$total
       pred$disc_dead     <- ds_split$dead
@@ -1095,7 +899,7 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     if(length(fg_names) == 0) return(invisible(NULL))
     arr_fg <- arr_fg[, fg_names, , , drop = FALSE]
 
-    meta <- .fg_meta(fg_names)
+    meta <- fn.fg_meta(fg_names)
     meta$group_pc <- if(length(norm_gn)) match(norm_name(meta$group_nm),  norm_gn) else NA_integer_
     meta$fleet_pc <- if(length(norm_fn)) match(norm_fleet(meta$fleet_nm), norm_fn) else NA_integer_
 
@@ -1218,7 +1022,7 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     if(length(fg_names) == 0) return(invisible(NULL))
     arr_fg <- arr_fg[, fg_names, , , drop = FALSE]
 
-    meta <- .fg_meta(fg_names)
+    meta <- fn.fg_meta(fg_names)
     meta$group_pc <- if(length(norm_gn)) match(norm_name(meta$group_nm),  norm_gn) else NA_integer_
     meta$fleet_pc <- if(length(norm_fn)) match(norm_fleet(meta$fleet_nm), norm_fn) else NA_integer_
 
