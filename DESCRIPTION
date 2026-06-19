@@ -26,4 +26,17 @@ Imports:
     stats,
     terra,
     viridis
+Suggests:
+    aquamapsdata,
+    DBI,
+    dplyr,
+    knitr,
+    pkgbuild,
+    remotes,
+    rmarkdown,
+    RSQLite
+Remotes:
+    raquamaps/aquamapsdata
+VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
+RoxygenNote: 7.3.3
