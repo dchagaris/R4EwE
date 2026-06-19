@@ -35,7 +35,10 @@ fn.GA <- function(myconfig){
   pen.wt.mult <<- myconfig$pen.wt.mult
   gapop.pardist <<- myconfig$gapop.pardist
   gapop.vuldist <<- myconfig$gapop.vuldist
-  mutate.margin <<- myconfig$mutate.margin
+  gapop.rtdist  <<- if(is.null(myconfig$gapop.rtdist)) "log-uniform" else myconfig$gapop.rtdist
+  gapop.fltdist <<- if(is.null(myconfig$gapop.fltdist)) "normal"      else myconfig$gapop.fltdist
+  selection.method <<- if(is.null(myconfig$selection.method)) "tournament" else myconfig$selection.method
+  tournament.k     <<- if(is.null(myconfig$tournament.k))     3L           else as.integer(myconfig$tournament.k)
   dir.results <<- myconfig$dir.ga_results
 
   # objective function selection (defaults: fn.ecospace_objfxn with fit.abs.catch=FALSE)
@@ -67,10 +70,21 @@ fn.GA <- function(myconfig){
   write.table(myconfig.string,                                                  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
   write.table(t(c("gen","min_LL","max_LL","mean_LL","median_LL","sd_LL","NA_count",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
-  #base run
-  files.cmd <- fn.parvec2cmd(par_vec=est_par_vec,g=999,idx=0)
+  #base run -- run the model with cmd_base alone (no appended parameter taglines).
+  # cmd_base already carries the user-tuned baseline tags; appending another set
+  # from est_par_vec would override those with sensitivity-derived base.val
+  # values that may not match the cmd_base baselines, distorting gen=-1.
+  base_run_dir  <- file.path(run_dir, "run_base")
+  if(!dir.exists(base_run_dir)) dir.create(base_run_dir, recursive = TRUE, showWarnings = FALSE)
+  base_out_dir  <- normalizePath(base_run_dir, winslash = "\\", mustWork = FALSE)
+  cmd_base_run  <- cmd_base
+  cmd_base_run[startsWith(cmd_base_run, "<ECOSPACE_OUTPUT_DIR>")] <-
+    sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", base_out_dir)
+  base_cmd_file <- file.path(base_run_dir, "cmd.txt")
+  writeLines(cmd_base_run, base_cmd_file)
+
   message('Running the base model')
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=-1)
+  fitness <- fn.runEwE.gapop(base_cmd_file, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=-1)
 
   #pipe output
   g=-1
@@ -87,7 +101,8 @@ fn.GA <- function(myconfig){
   
   #initial population.................................
   #message('Running the initial population')
-  gapop <- fn.GApop(pardist=gapop.pardist,vuldist=gapop.vuldist)
+  gapop <- fn.GApop(pardist=gapop.pardist, vuldist=gapop.vuldist,
+                    rtdist=gapop.rtdist, fltdist=gapop.fltdist)
   gapop[1,] <- est_par_vec  #include base run in initial population
   write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
@@ -151,10 +166,13 @@ fn.GA <- function(myconfig){
     elite <- gapop[elite_idx, , drop = FALSE]
     
     # Selection, Crossover, Mutation
-    parents <- select_parents(gapop, fitness) #resamples the population, with replacement, with rank-based probabilities in the sample draws
-    #offspring <- crossover(parents) #offspring are when two parents crossover a part of their parameter vector
-    offspring <- crossover_uniform(parents, group_id=par.groups, p_cross=0.8, p_group=0.5)
-    offspring <- mutate(offspring, margin=mutate.margin) #randomly draw new parameter values to mutate the individual
+    parents <- if(identical(selection.method, "rank")){
+      select_parents(gapop, fitness)
+    } else {
+      tournament_select(gapop, fitness, k = tournament.k)
+    }
+    offspring <- crossover_uniform(parents, group_id=par.groups, p_cross=0.8, p_group=0.3)
+    offspring <- mutate(offspring) #randomly draw new parameter values to mutate the individual
     
     # graphics.off();rm(.SavedPlots);windows(record=T)
     # par(mfrow=c(3,3))
@@ -186,12 +204,30 @@ fn.GA <- function(myconfig){
       new_fitness <- new_fitness+penalties
     }
     
-    # Combine elite + offspring: keep elites and the best (lowest) offspring.
-    # na.last=FALSE pushes NA fitnesses to the front of the decreasing sort so they're
-    # included in worst_offspring_idx and dropped (failed runs shouldn't propagate).
-    worst_offspring_idx <- order(new_fitness, decreasing = TRUE, na.last = FALSE)[1:elitism]
-    gapop   <- rbind(elite, offspring[-worst_offspring_idx, ])
+    # Combine elite + offspring: drop ALL NA-fitness offspring (failed runs should
+    # never propagate, even if there are more of them than elite slots), then drop
+    # enough additional worst non-NA offspring to free up `elitism` slots. If NAs
+    # alone already exceed elitism, the resulting population is short of popSize
+    # and we backfill with elite clones (with a warning); this is extremely rare
+    # given fn.runEwE.gapop's retry loop, but it keeps gapop dimensions stable.
+    na_idx     <- which(is.na(new_fitness))
+    non_na_idx <- which(!is.na(new_fitness))
+    n_drop     <- max(elitism, length(na_idx))
+    worst_non_na <- non_na_idx[order(new_fitness[non_na_idx], decreasing = TRUE)]
+    drop_extra <- worst_non_na[seq_len(max(0L, n_drop - length(na_idx)))]
+    worst_offspring_idx <- c(na_idx, drop_extra)
+
+    gapop   <- rbind(elite, offspring[-worst_offspring_idx, , drop=FALSE])
     fitness <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
+
+    deficit <- myconfig$popSize - nrow(gapop)
+    if(deficit > 0L){
+      warning(sprintf("Gen %d: %d offspring failed beyond what elites can fill; backfilling with %d elite clones.",
+                      gen, length(na_idx), deficit))
+      fill_idx <- rep(seq_len(elitism), length.out = deficit)
+      gapop   <- rbind(gapop,   elite[fill_idx, , drop=FALSE])
+      fitness <- c(fitness, fitness[seq_len(elitism)][fill_idx])
+    }
     
     #plot and save final generation
     if(gen==n_generations){

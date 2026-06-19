@@ -155,10 +155,15 @@ fn.runEwE.parallel <-  function(
     runlist=runlist,
     obj.fxn=1,
     cl.export = list("runlist", "obs.ts"),
-    fit.abs.catch = TRUE
+    fit.abs.catch = TRUE,
+    timeout = 1800,
+    capture_log = TRUE,
+    max_retries = 5,
+    n_cores = NULL
 ){
   t1 <- Sys.time()
-  cl <- makeSOCKcluster(detectCores()-1)
+  if(is.null(n_cores)) n_cores <- max(1L, detectCores()-1L)
+  cl <- makeSOCKcluster(n_cores)
   registerDoSNOW(cl)
   clusterExport(cl, append(cl.export, list(
     "file.console", "fn.runEwE",
@@ -166,7 +171,7 @@ fn.runEwE.parallel <-  function(
     "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
     ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",
     "styear", "enyear", "group.names", "fleet.names", "df.names")))
-  print(paste('Setup',detectCores()-1,'Clusters: Overhead time',round(as.numeric(Sys.time()-t1),2)))
+  print(paste('Setup',n_cores,'Clusters: Overhead time',round(as.numeric(Sys.time()-t1),2)))
 
   pbar <- winProgressBar("Running Ecospace Console",label=paste0("Simulation 0 of ",nrow(runlist)),max=100)
   prog <- function(n) setWinProgressBar(pbar,(n/nrow(runlist)*100),label=paste("Simulation Run", n,"of", nrow(runlist),"Completed"))
@@ -175,31 +180,52 @@ fn.runEwE.parallel <-  function(
   print(paste('Running',nrow(runlist),'Ecospace simulations'))
   t1 <- Sys.time()
   runs <- foreach(i = 1:nrow(runlist), .errorhandling = 'pass', .options.snow = opts) %dopar% {
-    fn.runEwE(cmdfile = runlist$cmd_file[i], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
+    stdo <- if(capture_log) file.path(dirname(runlist$cmd_file[i]), "stdout.txt") else FALSE
+    stde <- if(capture_log) file.path(dirname(runlist$cmd_file[i]), "stderr.txt") else FALSE
+    fn.runEwE(cmdfile = runlist$cmd_file[i], do.obj = obj.fxn,
+              stdout_target = stdo, stderr_target = stde,
+              fit.abs.catch = fit.abs.catch, timeout = timeout)
   }
   close(pbar)
   print(paste('Run time',round(as.numeric(Sys.time()-t1),2)))
 
   ##missing runs----
-  filecheck <- sapply(runlist$dir.out,FUN=function(x)length(list.files(x)))
-  erruns <- which(filecheck<=1)
+  # Treat a run as failed if its dir contains nothing but the cmd file +/- log files
+  # (i.e., no Ecospace CSV output). Just counting files <=1 misses cases where the
+  # stdout/stderr logs exist but EwE didn't write any CSVs.
+  has_ecospace_output <- function(d){
+    f <- list.files(d, pattern = "^Ecospace_.*\\.csv$", ignore.case = TRUE)
+    length(f) > 0L
+  }
+  filecheck <- sapply(runlist$dir.out, has_ecospace_output)
+  erruns <- which(!filecheck)
 
-  while(length(erruns)>=1){
-    message(paste0('Redo missing runs: n=',length(erruns)))
+  tries <- 0L
+  while(length(erruns)>=1 && tries < max_retries){
+    tries <- tries + 1L
+    message(paste0('Redo missing runs (try ', tries, '/', max_retries, '): n=', length(erruns)))
 
     pbar <- winProgressBar("Running Ecospace Console: Missing Runs",label=paste0("Simulation 0 of ",length(erruns)),max=100)
     prog <- function(n) setWinProgressBar(pbar,(n/length(erruns)*100),label=paste("Simulation Run", n,"of", length(erruns),"Completed"))
     opts <- list(progress=prog)
 
     runs.erruns <- foreach(i=1:length(erruns),.errorhandling='pass',.options.snow=opts) %dopar% {
-      fn.runEwE(cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn, fit.abs.catch=fit.abs.catch)
+      stdo <- if(capture_log) file.path(dirname(runlist$cmd_file[erruns[i]]), "stdout.txt") else FALSE
+      stde <- if(capture_log) file.path(dirname(runlist$cmd_file[erruns[i]]), "stderr.txt") else FALSE
+      fn.runEwE(cmdfile=runlist$cmd_file[erruns[i]], do.obj=obj.fxn,
+                stdout_target = stdo, stderr_target = stde,
+                fit.abs.catch=fit.abs.catch, timeout = timeout)
     }
     close(pbar)
-    
+
     for(k in 1:length(erruns)) runs[[erruns[k]]] <- unlist(runs.erruns[k])
-    
-    filecheck <- sapply(runlist$dir.out,FUN=function(x)length(list.files(x)))
-    erruns <- which(filecheck<=1)  #if there are many missing runs, then need to do this in parallel
+
+    filecheck <- sapply(runlist$dir.out, has_ecospace_output)
+    erruns <- which(!filecheck)
+  }
+  if(length(erruns) > 0L){
+    warning(sprintf("fn.runEwE.parallel: %d run(s) still missing Ecospace output after %d retries: %s",
+                    length(erruns), tries, paste(erruns, collapse=", ")))
   }
   
   runlist.out = cbind(runlist, do.call(rbind, runs))

@@ -6,9 +6,16 @@
 #' are assigned in the parent/global environment.
 #' @param do.vuls Logical; include vulnerability parameters.
 #' @param vul_pars Data frame of vulnerability parameters.
-#' @param vul.min Minimum vulnerability (unused placeholder).
-#' @param vul.max Maximum vulnerability (unused placeholder).
-#' @param vul.cv Coefficient of variation for vulnerabilities.
+#' @param vul.min,vul.max Scalar override bounds for the vulnerability search range.
+#'   Only used when \code{vul.bounds.mode = "override"}; ignored under the default
+#'   \code{"formula"} mode.
+#' @param vul.cv Coefficient of variation for vulnerabilities; controls the
+#'   log-scale spread of the formula-derived bounds (effective log-sd =
+#'   \code{exp(2 * vul.cv)}).
+#' @param vul.bounds.mode Character; either \code{"formula"} (default — bounds
+#'   are log-symmetric around each \code{base.val} using \code{vul.cv}) or
+#'   \code{"override"} (use \code{[vul.min, vul.max]} as the bounds for every
+#'   vul parameter, ignoring \code{base.val} and \code{vul.cv}).
 #' @param do.env Logical; include environmental parameters.
 #' @param env_pars Data frame of environmental parameters.
 #' @param env.min Minimum environmental value.
@@ -22,14 +29,38 @@
 #' @param do.med Logical; include mediation parameters.
 #' @param med_pars Data frame of mediation shape parameters.
 #' @param med.xbase.cv CV applied to mediation x-base parameters.
+#' @param do.fltdyn Logical; include fleet dynamics parameters.
+#' @param fltdyn_pars Data frame of fleet parameters with at least \code{base.val}.
+#' @param fltdyn.min,fltdyn.max Safety floor/ceiling for fleet parameters. Under
+#'   the default \code{"adaptive"} bounds mode they are NOT hard limits — the
+#'   per-parameter bounds widen to \code{base.val ± 4 * fltdyn.cv * base.val} so
+#'   the full normal bell fits inside, while \code{fltdyn.min}/\code{fltdyn.max}
+#'   are used as the lower/upper bound only when the bell is tighter than them.
+#'   Under \code{"scalar"} mode every fleet parameter gets these as hard scalar
+#'   bounds (legacy behavior; will clip the bell if \code{base.val} exceeds them).
+#' @param fltdyn.cv CV for fleet parameter draws; also drives the half-width of
+#'   the adaptive bounds (\code{4 * fltdyn.cv * base.val}).
+#' @param fltdyn.bounds.mode Either \code{"adaptive"} (default) or \code{"scalar"}.
+#' @param do.redtide Logical; include red tide environmental response parameters.
+#' @param redtide_pars Data frame of red tide response parameters (shape 11 logistic4params).
+#' @param redtide.min,redtide.max Scalar multiplier bounds applied to both inflection.adj
+#'   and slope.adj for red tide responses. Used as the fallback default when the
+#'   per-parameter overrides below are \code{NULL}.
+#' @param redtide.inf.min,redtide.inf.max Optional per-parameter bounds for the red tide
+#'   \code{inflection.adj} multiplier (\code{NULL} → fall back to redtide.min/max).
+#' @param redtide.slope.min,redtide.slope.max Optional per-parameter bounds for the red tide
+#'   \code{slope.adj} multiplier (\code{NULL} → fall back to redtide.min/max).
+#' @param redtide.cv CV used for red tide parameter draws when sampling with a normal
+#'   distribution.
 #' @return Invisibly returns \code{NULL}. Several objects are set globally.
 #' @export
 fn.makeparvec <- function(
-  do.vuls = TRUE, 
+  do.vuls = TRUE,
   vul_pars = predprey_pars,
   vul.min = 1.01,
   vul.max = 1e6,
   vul.cv = 0.4,
+  vul.bounds.mode = "formula",
   
   do.env = FALSE, 
   env_pars = NULL,
@@ -52,11 +83,16 @@ fn.makeparvec <- function(
   fltdyn.min=0,
   fltdyn.max=5,
   fltdyn.cv=0.2,
+  fltdyn.bounds.mode = "adaptive",
 
   do.redtide = FALSE,
   redtide_pars = NULL,
   redtide.min = 0.5,
   redtide.max = 1.5,
+  redtide.inf.min   = NULL,
+  redtide.inf.max   = NULL,
+  redtide.slope.min = NULL,
+  redtide.slope.max = NULL,
   redtide.cv = 0.2){
   
   # do.vuls=fit.vuls; vul_pars=predprey_pars; vul.min=1.01; vul.max=1e6; vul.cv=0.4; 
@@ -226,12 +262,24 @@ fn.makeparvec <- function(
   fltdyn_pars  <<- fltdyn_pars
   
   # set parameter bounds--------------------------------------------------------
-  ##vulnerabilities - do these on the log scale
+  ##vulnerabilities - log-scale bounds.
+  ## vul.bounds.mode controls how the bounds are derived:
+  ##   "formula"  (default, back-compat): log-symmetric around each base.val using
+  ##              an effective log-sd of exp(2*vul.cv); the scalar vul.min/vul.max
+  ##              are ignored.
+  ##   "override": use [vul.min, vul.max] as the bounds for every vul parameter,
+  ##              ignoring base.val and vul.cv. Useful when you want a single wide
+  ##              search range (e.g., [1.01, 1e6]) rather than per-base ranges.
   lower.vuls <- upper.vuls <- numeric()
   if(do.vuls){
-  lower.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.05))
-  lower.vuls <- ifelse(lower.vuls<=1.0,1.01,lower.vuls)
-  upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))
+    if(identical(vul.bounds.mode, "override")){
+      lower.vuls <- rep(vul.min, length(vul_pars$base.val))
+      upper.vuls <- rep(vul.max, length(vul_pars$base.val))
+    } else {
+      lower.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.05))
+      upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))
+    }
+    lower.vuls <- pmax(lower.vuls, 1.01)
   }
   ##environmental shapes — all supported shapes use uniform [env.min, env.max] multiplier bounds
   lower.env <- upper.env <- numeric()
@@ -253,11 +301,25 @@ fn.makeparvec <- function(
   } #end if env
   }
   
-  ##red tide — uniform [redtide.min, redtide.max] multiplier bounds
+  ##red tide — per-parameter [min, max] multiplier bounds.
+  ## inflection and slope each get their own bounds; redtide.min/max are the
+  ## scalar fallback for back-compat when the per-parameter overrides are NULL.
   lower.redtide <- upper.redtide <- numeric()
   if(do.redtide && length(redtide_vec)>0){
-    lower.redtide <- rep(redtide.min, length(redtide_vec))
-    upper.redtide <- rep(redtide.max, length(redtide_vec))
+    inf_min   <- if(is.null(redtide.inf.min))   redtide.min else redtide.inf.min
+    inf_max   <- if(is.null(redtide.inf.max))   redtide.max else redtide.inf.max
+    slope_min <- if(is.null(redtide.slope.min)) redtide.min else redtide.slope.min
+    slope_max <- if(is.null(redtide.slope.max)) redtide.max else redtide.slope.max
+
+    rt_local_idx <- which(par.idx == 'redtide')
+    rt_labels    <- par.labels[rt_local_idx]
+    is_inf   <- grepl("inflection.adj", rt_labels, fixed = TRUE)
+    is_slope <- grepl("slope.adj",      rt_labels, fixed = TRUE)
+
+    lower.redtide <- ifelse(is_inf, inf_min,
+                     ifelse(is_slope, slope_min, redtide.min))
+    upper.redtide <- ifelse(is_inf, inf_max,
+                     ifelse(is_slope, slope_max, redtide.max))
   }
 
   ##dispersal
@@ -267,11 +329,23 @@ fn.makeparvec <- function(
   upper.disp <- disp_vec+2*disp.cv*disp_vec
   }
   
-  ##fleet dynamics
+  ##fleet dynamics -- bounds derived per-parameter so a base.val above the scalar
+  ##fltdyn.max doesn't get the entire normal bell clipped against the ceiling.
+  ## "adaptive" (default): bounds = base.val +/- 4 * fltdyn.cv * base.val,
+  ##   widened (never shrunk) to honor [fltdyn.min, fltdyn.max] as safety bounds.
+  ## "scalar" (legacy): every fleet param gets the same scalar [fltdyn.min, fltdyn.max].
   lower.flt <- upper.flt <- numeric()
   if(do.fltdyn){
-  lower.flt <- rep(fltdyn.min,length(fleet_vec))
-  upper.flt <- rep(fltdyn.max,length(fleet_vec))
+    if(identical(fltdyn.bounds.mode, "scalar")){
+      lower.flt <- rep(fltdyn.min, length(fleet_vec))
+      upper.flt <- rep(fltdyn.max, length(fleet_vec))
+    } else {
+      sd_flt    <- abs(fltdyn.cv * fleet_vec)
+      # lower: at least fltdyn.min (safety floor), wider only if base-4sd is even higher.
+      # upper: at least fltdyn.max (safety ceiling), wider when base+4sd needs more room.
+      lower.flt <- pmax(fleet_vec - 4 * sd_flt, fltdyn.min)
+      upper.flt <- pmax(fleet_vec + 4 * sd_flt, fltdyn.max)
+    }
   }
   ##mediation
   lower.med <- upper.med <- numeric()  
@@ -336,27 +410,53 @@ fn.makeparvec <- function(
 #' draws centered on existing parameter estimates. Uses several global
 #' objects created elsewhere.
 #' @param run_config List containing GA settings; must include \code{popSize}.
-#' @param pardist Character string; distribution type, either"uniform" (uniform between bounds) or 
+#' @param pardist Character string; distribution type, either"uniform" (uniform between bounds) or
 #' "normal" (normal/gamma hybrid). Default "uniform"
-#' @param vuldist Character string; distribution type for vulnerability parameters, either"uniform" (uniform between bounds) or 
-#' "gamma" withc shape=2 and rate=shape/par. Default "uniform"
+#' @param vuldist Character string; distribution type for vulnerability parameters.
+#' One of \code{"log-uniform"} (default — \code{exp(runif(log(L), log(U)))}, evenly samples
+#' each order of magnitude so the sensitive low end gets equal density), \code{"uniform"}
+#' (linear uniform between bounds; over-weights the high end when bounds span multiple
+#' orders of magnitude), or \code{"gamma"} (shape=2, rate=2/base.val; mode near
+#' \code{base/2}, mass concentrated around the base value).
+#' @param rtdist Character string; distribution type for red tide parameters. Either
+#'   \code{"log-uniform"} (default — symmetric in log space around the baseline of 1; appropriate
+#'   when bounds span more than one order of magnitude) or \code{"uniform"} (same linear
+#'   uniform as the other params, follows \code{pardist}).
+#' @param fltdist Character string; distribution type for fleet dynamics parameters
+#'   (effective power and effort multiplier). One of \code{"normal"} (default —
+#'   \code{rnorm(mean = base.val, sd = fltdyn.cv * base.val)} centered on each parameter's
+#'   base value, then clipped to \code{[L.bounds, U.bounds]}) or \code{"uniform"}
+#'   (linear uniform between the bounds, follows whatever \code{pardist} produced).
+#' @details
+#' When red tide parameters are present, the first 6 rows of the returned matrix are
+#' overwritten with explicit anchor combinations to guarantee corner-case coverage in
+#' the initial population:
+#' \enumerate{
+#'   \item baseline (all RT adj = 1)
+#'   \item gentle, early-onset (inflection.adj = min, slope.adj = min)
+#'   \item steep, late-onset (inflection.adj = max, slope.adj = max)
+#'   \item early crash (inflection.adj = min, slope.adj = max)
+#'   \item late & gradual (inflection.adj = max, slope.adj = min)
+#'   \item RT effectively off (slope.adj = min; inflection.adj as drawn)
+#' }
+#' Non-RT parameters in those rows keep their random draws so the anchors still vary
+#' on the rest of the parameter vector.
 #' @return A numeric matrix of dimension run_config$popSize x n_pars.
 #' @export
-fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='uniform'){
+fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='log-uniform',
+                    rtdist='log-uniform', fltdist='normal'){
   # run_config <- myconfig
   # pardist='uniform'
   # vuldist='gamma'
-  #two things: fix vul so it goes below 2; fix mediation base_x values
+  # rtdist='log-uniform'
   mat <- matrix(NA,nrow=run_config$popSize, ncol=n_pars)
   colnames(mat) <- par.labels
-  
+
   #inspect the parameter set and their bounds
   data.frame(L.bounds, est_par_vec, U.bounds, par_cv_vec,par.groups)
-  #get standard deviation from cv
-  #par_sd = sqrt(par_cv_vec+1)
 
   #population of vulnerabilities, use gamma to get more values at low end with a long tail to some higher values
-  
+
   #other parameters
   if(pardist=='uniform'){
     pop.pars <- matrix(runif(run_config$popSize*(n_pars), min=L.bounds, max=U.bounds),nrow=run_config$popSize, byrow=T)
@@ -372,19 +472,124 @@ fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='uniform'){
   if(vuldist=='uniform'){
     pop.vuls <- round(matrix(runif(run_config$popSize*length(vul.par.idx), min=L.bounds[vul.par.idx],max=U.bounds[vul.par.idx]),nrow=run_config$popSize, byrow=T),4)
   }
+  if(vuldist=='log-uniform'){
+    lo <- L.bounds[vul.par.idx]
+    hi <- U.bounds[vul.par.idx]
+    if(any(lo <= 0)){
+      warning("vuldist='log-uniform' requires positive lower bounds; clipping to 1.01.")
+      lo <- pmax(lo, 1.01)
+    }
+    pop.vuls <- round(matrix(exp(runif(run_config$popSize * length(vul.par.idx),
+                                       min = log(lo), max = log(hi))),
+                             nrow = run_config$popSize, byrow = TRUE), 4)
+  }
   pop.vuls[pop.vuls<1.01] <- 1.01
 
-  mat[] <- pop.pars  
+  mat[] <- pop.pars
   mat[,vul.par.idx] <- pop.vuls
+
+  # --- Red tide log-uniform sampling (option A) -------------------------------
+  # Multipliers spanning multiple orders of magnitude (e.g., [0.01, 100]) sampled
+  # with plain runif are biased toward the high end -- ~99% of draws end up above
+  # the baseline of 1. Sampling on the log scale puts the baseline at the geometric
+  # midpoint and gives symmetric coverage above and below 1.
+  if(rtdist == 'log-uniform' && length(redtide.par.idx) > 0L){
+    lo <- L.bounds[redtide.par.idx]
+    hi <- U.bounds[redtide.par.idx]
+    if(any(lo <= 0)){
+      warning("rtdist='log-uniform' requires positive lower bounds; clipping to 1e-6.")
+      lo <- pmax(lo, 1e-6)
+    }
+    rt_draws <- matrix(exp(runif(run_config$popSize * length(redtide.par.idx),
+                                 min = log(lo), max = log(hi))),
+                       nrow = run_config$popSize, byrow = TRUE)
+    mat[, redtide.par.idx] <- rt_draws
+  }
+
+  # --- Fleet dynamics: normal around base value -------------------------------
+  # Independent of pardist so the fleet shape stays normal-around-base regardless
+  # of what the other parameters do. par_cv_vec[flt.par.idx] is the user's
+  # fltdyn.cv; sd = fltdyn.cv * base.val. The downstream pmin/pmax clip enforces
+  # the declared [fltdyn.min, fltdyn.max] bounds.
+  if(fltdist == 'normal' && length(flt.par.idx) > 0L){
+    mean_flt <- est_par_vec[flt.par.idx]
+    sd_flt   <- abs(par_cv_vec[flt.par.idx] * mean_flt)
+    flt_draws <- matrix(rnorm(run_config$popSize * length(flt.par.idx),
+                              mean = mean_flt, sd = sd_flt),
+                        nrow = run_config$popSize, byrow = TRUE)
+    mat[, flt.par.idx] <- flt_draws
+  }
+
   mat <- round(mat,4)
-  
+
   integer.idx <- grep("xbase",par.labels)
   if(length(integer.idx)>0) mat[,integer.idx] <- round(mat[,integer.idx])
-  mat[,flt.par.idx] <- ifelse(mat[,flt.par.idx]<0,0,mat[,flt.par.idx])
-  mat[,env.par.idx] <- ifelse(mat[,env.par.idx]<0,0,mat[,env.par.idx])
-    
+  # Clip fleet and env draws to their declared per-parameter bounds. Naively
+  # passing a length-k bounds vector to pmin/pmax(matrix, vec) silently recycles
+  # element-wise through the column-major matrix (so cell (r, c) gets bounds at
+  # an index that depends on r AND c, not just c). When bounds are heterogeneous
+  # across columns -- as they are under fltdyn.bounds.mode = "adaptive" -- this
+  # scrambles the per-column bound assignment and produces spurious pile-ups at
+  # the wrong bound. Build full bounds matrices to enforce per-column clipping.
+  if(length(flt.par.idx) > 0L){
+    N    <- nrow(mat)
+    Lmat <- matrix(rep(L.bounds[flt.par.idx], each = N), nrow = N)
+    Umat <- matrix(rep(U.bounds[flt.par.idx], each = N), nrow = N)
+    mat[, flt.par.idx] <- pmin(pmax(mat[, flt.par.idx], Lmat), Umat)
+  }
+  if(length(env.par.idx) > 0L){
+    N    <- nrow(mat)
+    Lmat <- matrix(rep(L.bounds[env.par.idx], each = N), nrow = N)
+    Umat <- matrix(rep(U.bounds[env.par.idx], each = N), nrow = N)
+    mat[, env.par.idx] <- pmin(pmax(mat[, env.par.idx], Lmat), Umat)
+  }
+
+  # --- Red tide anchor seeding (option D) -------------------------------------
+  # Inject explicit corner-case combinations into the first rows so the GA explores
+  # baseline, gentle, steep, early-crash, late-gradual, and RT-off regimes from the
+  # start instead of drifting there.
+  if(length(redtide.par.idx) > 0L && run_config$popSize >= 6L){
+    rt_labels <- par.labels[redtide.par.idx]
+    is_inf    <- grepl("inflection.adj", rt_labels, fixed = TRUE)
+    is_slope  <- grepl("slope.adj",      rt_labels, fixed = TRUE)
+    inf_cols   <- redtide.par.idx[is_inf]
+    slope_cols <- redtide.par.idx[is_slope]
+
+    if(length(inf_cols) > 0L && length(slope_cols) > 0L){
+      inf_lo <- L.bounds[inf_cols]; inf_hi <- U.bounds[inf_cols]
+      slo_lo <- L.bounds[slope_cols]; slo_hi <- U.bounds[slope_cols]
+
+      # 1: baseline (no perturbation)
+      mat[1, redtide.par.idx] <- 1
+      # 2: gentle, early-onset
+      mat[2, inf_cols]   <- inf_lo; mat[2, slope_cols] <- slo_lo
+      # 3: steep, late-onset
+      mat[3, inf_cols]   <- inf_hi; mat[3, slope_cols] <- slo_hi
+      # 4: early crash
+      mat[4, inf_cols]   <- inf_lo; mat[4, slope_cols] <- slo_hi
+      # 5: late & gradual
+      mat[5, inf_cols]   <- inf_hi; mat[5, slope_cols] <- slo_lo
+      # 6: RT effectively off (slope at min; inflection left as drawn)
+      mat[6, slope_cols] <- slo_lo
+
+      mat[1:6, ] <- round(mat[1:6, ], 4)
+    }
+  }
+
+  # --- Vulnerability anchor seeding (option V4) -------------------------------
+  # Two extra anchor rows that explicitly explore the top-down and bottom-up
+  # extremes of the vul search space. Non-vul parameters in these rows keep their
+  # random draws so the rest of the parameter vector still varies.
+  if(length(vul.par.idx) > 0L && run_config$popSize >= 8L){
+    vul_lo <- L.bounds[vul.par.idx]
+    vul_hi <- U.bounds[vul.par.idx]
+    # 7: all vuls at their lower bound -> max top-down control everywhere
+    mat[7, vul.par.idx] <- round(pmax(vul_lo, 1.01), 4)
+    # 8: all vuls at their upper bound -> bottom-up everywhere
+    mat[8, vul.par.idx] <- round(vul_hi, 4)
+  }
+
   return(mat)
-  #matrix(rep(log_par_vec, run_config$popSize), nrow=run_config$popSize, byrow=T)
 } #eof
 
 
@@ -855,15 +1060,26 @@ fn.runEwE.gapop <-  function(
     max_tries=50,
     gen=NULL,
     pardist = if(exists("gapop.pardist", envir=.GlobalEnv)) get("gapop.pardist", envir=.GlobalEnv) else "uniform",
-    vuldist = if(exists("gapop.vuldist", envir=.GlobalEnv)) get("gapop.vuldist", envir=.GlobalEnv) else "uniform"
+    vuldist = if(exists("gapop.vuldist", envir=.GlobalEnv)) get("gapop.vuldist", envir=.GlobalEnv) else "uniform",
+    rtdist  = if(exists("gapop.rtdist",  envir=.GlobalEnv)) get("gapop.rtdist",  envir=.GlobalEnv) else "log-uniform",
+    fltdist = if(exists("gapop.fltdist", envir=.GlobalEnv)) get("gapop.fltdist", envir=.GlobalEnv) else "normal"
 ){
   t1 <- Sys.time()
 
-  # console progress bar; requires doSNOW backend (see ensure_cluster)
+  # Windowed progress bar so the per-generation summary lines remain readable in
+  # the console. Title carries the generation tag; label shows the live count.
+  # Requires doSNOW backend (see ensure_cluster).
   gen_label <- if(is.null(gen)) "GA pop" else sprintf("Gen %d", gen)
-  cat(sprintf("\n[%s] %d simulations\n", gen_label, length(files.cmd)))
-  pbar <- utils::txtProgressBar(min = 0, max = length(files.cmd), style = 3)
-  prog <- function(n) utils::setTxtProgressBar(pbar, n)
+  n_runs    <- length(files.cmd)
+  pbar <- utils::winProgressBar(
+    title = sprintf("Ecospace GA - %s  (%d runs)", gen_label, n_runs),
+    label = sprintf("0 / %d completed (0%%)", n_runs),
+    min   = 0, max = n_runs, initial = 0, width = 420)
+  on.exit(try(close(pbar), silent = TRUE), add = TRUE)
+  prog <- function(i){
+    utils::setWinProgressBar(pbar, i,
+      label = sprintf("%d / %d completed (%.1f%%)", i, n_runs, 100 * i / n_runs))
+  }
   opts <- list(progress = prog)
 
   runLL.out <- foreach(i = seq_along(files.cmd),
@@ -885,13 +1101,21 @@ fn.runEwE.gapop <-  function(
   while(length(erruns)>=1 && tries<max_tries){
     tries <- tries+1
 
-    gapop.err <- fn.GApop(pardist=pardist, vuldist=vuldist)
+    gapop.err <- fn.GApop(pardist=pardist, vuldist=vuldist, rtdist=rtdist, fltdist=fltdist)
     files.cmd.err <- lapply(erruns,function(i) fn.parvec2cmd(par_vec=gapop.err[i,], g=0, idx=i))
     files.cmd.err <- unlist(files.cmd.err, use.names=F)
 
-    cat(sprintf("\n[%s retry %d] %d failed runs\n", gen_label, tries, length(erruns)))
-    pbar.err <- utils::txtProgressBar(min = 0, max = length(erruns), style = 3)
-    prog.err <- function(n) utils::setTxtProgressBar(pbar.err, n)
+    n_err <- length(erruns)
+    cat(sprintf("\n[%s retry %d] %d failed runs\n", gen_label, tries, n_err))
+    pbar.err <- utils::winProgressBar(
+      title = sprintf("Ecospace GA - %s retry %d  (%d runs)", gen_label, tries, n_err),
+      label = sprintf("0 / %d completed (0%%)", n_err),
+      min   = 0, max = n_err, initial = 0, width = 420)
+    on.exit(try(close(pbar.err), silent = TRUE), add = TRUE)
+    prog.err <- function(i){
+      utils::setWinProgressBar(pbar.err, i,
+        label = sprintf("%d / %d completed (%.1f%%)", i, n_err, 100 * i / n_err))
+    }
     opts.err <- list(progress = prog.err)
 
     runLL.err.out <- foreach(i = seq_along(erruns),
@@ -934,25 +1158,64 @@ fn.runEwE.gapop <-  function(
 
 
 # === Selection ===
-#' @title Select parents by rank-based sampling
+#' @title Select parents by rank-based sampling (minimization)
 #' @description
-#' Ranks individuals by fitness (higher is better), converts ranks to selection
-#' probabilities, and samples a new parent population with replacement.
+#' Ranks individuals by fitness for a MINIMIZATION objective (lower = better),
+#' converts ranks to selection probabilities, and samples a new parent population
+#' with replacement. The lowest-fitness individual receives the highest rank and
+#' therefore the highest probability of being chosen.
 #'
 #' @param gapop Matrix or data frame of individuals (rows = individuals, columns = parameters).
-#' @param fitness Numeric vector of fitness values (length equals nrow(gapop)); higher is better.
+#' @param fitness Numeric vector of fitness values (length equals nrow(gapop)); lower is better.
 #'
 #' @details
-#' Ranks are computed with ties broken at random, then normalized to probabilities.
-#' Parents are sampled with replacement to keep population size constant.
+#' Ranks are computed via \code{rank(-fitness, ties.method='random')} so the smallest
+#' fitness gets rank \code{nrow(gapop)} (i.e., the highest selection weight). Selection
+#' pressure is roughly linear: the best individual is only ~2x more likely than the
+#' median to be picked. Use \code{\link{tournament_select}} for stronger pressure.
 #'
-#' @return Matrix of selected parents with the same dimensions as `gapop`.
+#' @return Matrix of selected parents with the same dimensions as \code{gapop}.
 #' @export
 select_parents <- function(gapop, fitness) {
   ranks <- rank(-fitness, ties.method='random')
   probs <- ranks / sum(ranks)
   selected <- gapop[sample(1:nrow(gapop), nrow(gapop), replace = TRUE, prob = probs), ]
   return(selected)
+}
+
+#' @title Select parents by tournament (minimization)
+#' @description
+#' Tournament selection for a MINIMIZATION objective. For each parent slot, draw
+#' \code{k} individuals at random (without replacement) and keep the one with the
+#' lowest fitness. Stronger and more tunable selection pressure than rank-based
+#' sampling: larger \code{k} pushes harder toward the current best, \code{k=2} is
+#' near-rank-equivalent.
+#'
+#' @param gapop Matrix or data frame of individuals (rows = individuals, columns = parameters).
+#' @param fitness Numeric vector of fitness values (lower is better). NA fitnesses
+#'   are treated as worst (lose every tournament unless all contenders are NA, in
+#'   which case a random contender wins).
+#' @param k Tournament size. Default 3.
+#'
+#' @return Matrix of selected parents with the same dimensions as \code{gapop}.
+#' @export
+tournament_select <- function(gapop, fitness, k = 3){
+  n <- nrow(gapop)
+  if(k < 1L) stop("tournament_select: k must be >= 1")
+  if(k > n)  k <- n
+  parents <- gapop[integer(0L), , drop = FALSE]
+  parents <- gapop[rep(1L, n), , drop = FALSE]   # preserves colnames/types
+  for(i in seq_len(n)){
+    contenders <- sample.int(n, k, replace = FALSE)
+    f <- fitness[contenders]
+    if(all(is.na(f))){
+      winner <- contenders[sample.int(k, 1L)]
+    } else {
+      winner <- contenders[which.min(f)]          # ignores NAs
+    }
+    parents[i, ] <- gapop[winner, ]
+  }
+  parents
 }
 
 # === Crossover ===
@@ -1052,44 +1315,79 @@ crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, 
 # === Mutation ===
 #' @title Mutate population with parameter-wise random resets
 #' @description
-#' Mutates individuals by redrawing selected genes from a range informed by the
-#' current population, with a configurable margin.
+#' For each gene of each individual, with probability \code{mutation_rate} redraw
+#' the value within parameter-specific bounds. The vulnerability bounds adapt to
+#' the current population mean (so the search drifts up or down with the population)
+#' and vul and red tide draws are log-uniform to match the initial-population
+#' sampling philosophy. All other parameters use fixed \code{L.bounds}/\code{U.bounds}
+#' with linear-uniform draws.
 #'
-#' @param population Matrix of individuals on the log scale (rows = individuals, columns = 
-#' parameters).
-#' @param margin Fractional expansion applied to the min–max range per parameter (on orig scale).
+#' @param population Matrix of individuals (rows = individuals, columns = parameters).
 #'
 #' @details
-#' The algorithm:
-#' 1) Convert each parameter to original scale (exp), compute min and max across the population.  
-#' 2) Expand bounds by `margin` (lower reduced, upper increased); enforce vulnerability
-#'    parameters `vul.par.idx` to be strictly > 1.  
-#' 3) Transform bounds back to log scale and, for each individual, redraw genes indicated
-#'    by a Bernoulli mask (`mutation_rate`) uniformly within the parameter-specific bounds.
+#' Adaptive vul bounds: \code{Gamma(shape=2, mean=pop_mean)}; bounds are the 1\% and
+#' 99\% quantiles, clipped to \code{[1.01, 1e6]}. So as selection pulls the population
+#' mean upward (or downward), so does the mutation search window. Vul draws inside
+#' those bounds are log-uniform.
 #'
-#' Requires global variables: `n_pars`, `mutation_rate`, and `vul.par.idx`.
+#' Red tide draws are log-uniform over the fixed \code{[L.bounds, U.bounds]} for
+#' \code{redtide.par.idx} (symmetric around the baseline of 1 in log space, matching
+#' \code{fn.GApop(rtdist='log-uniform')}).
 #'
-#' @return Mutated population matrix (same dimensions as `population`).
+#' Requires global variables: \code{n_pars}, \code{mutation_rate}, \code{vul.par.idx},
+#' \code{redtide.par.idx}, \code{par.labels}, \code{L.bounds}, \code{U.bounds}.
+#'
+#' @return Mutated population matrix (same dimensions as \code{population}).
 #' @export
-mutate <- function(population, margin=0.2) {
-  low = L.bounds
-  upp = U.bounds
-  #for vuls allow to creep up/down with gamma draws
-  avg = apply(population,2,mean)
-  low[vul.par.idx] <- qgamma(0.01, shape = 2, rate = 2/avg[vul.par.idx])
-  upp[vul.par.idx] <- qgamma(0.99, shape = 2, rate = 2/avg[vul.par.idx])
-  
-  low[vul.par.idx] <- ifelse(low[vul.par.idx]<=1.0,1.01,low[vul.par.idx])
-  upp[vul.par.idx] <- ifelse(upp[vul.par.idx]>1e6,1e6,upp[vul.par.idx])
-  #back to log scale
-  #low = log(low)
-  #upp = log(upp)
-  for (i in 1:nrow(population)) {
-        mask <- runif(n_pars) < mutation_rate #mask are the parameters to mutate
-        population[i, mask] <- round(runif(sum(mask), low[mask], upp[mask]),4)
+mutate <- function(population) {
+  low <- L.bounds
+  upp <- U.bounds
+
+  # --- Adaptive vul bounds (drift with population mean) ----------------------
+  # Gamma(shape=2, rate=2/avg) has mean=avg and a right-skewed shape with a wide
+  # 1%-99% range (~avg/40 to ~avg*3.3). Clipped to [1.01, 1e6] for safety.
+  if(length(vul.par.idx) > 0L){
+    avg <- colMeans(population)
+    low[vul.par.idx] <- qgamma(0.01, shape = 2, rate = 2/avg[vul.par.idx])
+    upp[vul.par.idx] <- qgamma(0.99, shape = 2, rate = 2/avg[vul.par.idx])
+    low[vul.par.idx] <- pmax(low[vul.par.idx], 1.01)
+    upp[vul.par.idx] <- pmin(upp[vul.par.idx], 1e6)
   }
-  integer.idx <- grep("xbase",par.labels)
-  population[,integer.idx] <- round(population[,integer.idx])
+
+  # --- Per-individual mutation -----------------------------------------------
+  # Default: linear-uniform within [low, upp]. For vuls and red tide, override
+  # to log-uniform so the draws aren't biased toward the high end of bounds that
+  # span multiple orders of magnitude.
+  for (i in seq_len(nrow(population))) {
+    mask <- runif(n_pars) < mutation_rate
+    if(!any(mask)) next
+
+    # baseline linear-uniform draws for all masked genes
+    draws <- runif(sum(mask), low[mask], upp[mask])
+
+    # locate which masked genes are vul / RT (positions within the masked subset)
+    mask_idx <- which(mask)
+    is_vul_in_mask <- mask_idx %in% vul.par.idx
+    is_rt_in_mask  <- mask_idx %in% redtide.par.idx
+
+    if(any(is_vul_in_mask)){
+      vul_genes <- mask_idx[is_vul_in_mask]
+      lo <- pmax(low[vul_genes], 1.01)
+      hi <- pmax(upp[vul_genes], lo * 1.0001)
+      draws[is_vul_in_mask] <- exp(runif(length(vul_genes), log(lo), log(hi)))
+    }
+    if(any(is_rt_in_mask)){
+      rt_genes <- mask_idx[is_rt_in_mask]
+      lo <- pmax(low[rt_genes], 1e-6)
+      hi <- pmax(upp[rt_genes], lo * 1.0001)
+      draws[is_rt_in_mask] <- exp(runif(length(rt_genes), log(lo), log(hi)))
+    }
+
+    population[i, mask] <- round(draws, 4)
+  }
+
+  integer.idx <- grep("xbase", par.labels)
+  if(length(integer.idx) > 0L) population[, integer.idx] <- round(population[, integer.idx])
   return(population)
 } #eof
 
