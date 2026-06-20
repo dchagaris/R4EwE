@@ -1069,7 +1069,7 @@ fn.runEwE.gapop <-  function(
   # Windowed progress bar so the per-generation summary lines remain readable in
   # the console. Title carries the generation tag; label shows the live count.
   # Requires doSNOW backend (see ensure_cluster).
-  gen_label <- if(is.null(gen)) "GA pop" else sprintf("Gen %d", gen)
+  gen_label <- if(is.null(gen)) "GA pop" else sprintf("Gen %s", as.character(gen))
   n_runs    <- length(files.cmd)
   pbar <- utils::winProgressBar(
     title = sprintf("Ecospace GA - %s  (%d runs)", gen_label, n_runs),
