@@ -891,6 +891,15 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
   if(!is.null(env_pars))     env_pars     <- .normalize_env_pars(env_pars)
   if(!is.null(redtide_pars)) redtide_pars <- .normalize_env_pars(redtide_pars)
 
+  # Defensive coercion: callers may pass highlight_pars / est_par_vec as a 1-row
+  # data.frame (e.g. gapop.final[which.min(fitness), ] when gapop.final is a
+  # data.frame). Indexing such an object with [j] returns a 1-col data.frame
+  # instead of a scalar, which silently breaks the env/rt response-curve math
+  # (numeric_vec * 1-col-df preserves the data.frame class and yields a length-1
+  # column, mismatching x in the lines() call).
+  if(!is.null(highlight_pars)) highlight_pars <- unlist(highlight_pars, use.names = TRUE)
+  if(!is.null(est_par_vec))    est_par_vec    <- unlist(est_par_vec,    use.names = TRUE)
+
   # Each panel gets up to two reference markers:
   #   RED  = est_par_vec (the baseline / starting values)
   #   BLUE = highlight_pars (e.g. the min-LL individual from the final gen)
