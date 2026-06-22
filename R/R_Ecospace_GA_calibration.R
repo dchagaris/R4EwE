@@ -873,12 +873,15 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
 #' @param redtide_pars Same as \code{env_pars} for red-tide responses. May be \code{NULL}.
 #' @param file Output PDF path.
 #' @param dims Panel grid \code{c(rows, cols)}. Default \code{c(3, 3)}.
-#' @param highlight_pars Numeric vector of length \code{ncol(gapop)} whose values get the
-#'   blue highlight (vline on histograms, overlaid curve on env/rt panels). If
-#'   \code{NULL} (default), \code{est_par_vec} is used — i.e. the baseline is highlighted,
-#'   matching the original behavior used for the initial-population plot. Pass the
-#'   min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the final-population
-#'   posterior plot.
+#' @param highlight_pars Numeric vector of length \code{ncol(gapop)} drawn in BLUE
+#'   (dashed vline on histograms; overlaid response curve on env/rt panels). If
+#'   \code{NULL} (default — initial-pop plot use case), only the red baseline is drawn.
+#'   Pass the min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the
+#'   final-population plot to overlay best-fit on top of the baseline + ensemble.
+#' @section Markers:
+#'   RED: \code{est_par_vec} — baseline / starting values; on env/rt panels the red
+#'   curve uses adj = 1 (i.e. the natural EwE curve).
+#'   BLUE: \code{highlight_pars} (only when supplied) — typically the gen-N best-fit.
 #' @return Invisibly returns \code{file}.
 #' @export
 fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
@@ -888,11 +891,13 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
   if(!is.null(env_pars))     env_pars     <- .normalize_env_pars(env_pars)
   if(!is.null(redtide_pars)) redtide_pars <- .normalize_env_pars(redtide_pars)
 
-  # When no highlight set is provided, fall back to the baseline est_par_vec so existing
-  # callers (initial-pop plot) keep their current behavior. For env/rt curves a NULL
-  # highlight means the blue curve is the BASE curve (adj1 = adj2 = 1), which matches
-  # the original "baseline curve highlighted in blue" behavior.
-  hl <- if(is.null(highlight_pars)) est_par_vec else highlight_pars
+  # Each panel gets up to two reference markers:
+  #   RED  = est_par_vec (the baseline / starting values)
+  #   BLUE = highlight_pars (e.g. the min-LL individual from the final gen)
+  # Initial-pop plots pass highlight_pars = NULL -- only the red baseline is drawn.
+  # Final-pop plots pass highlight_pars = best-fit individual -- both red+blue drawn.
+  show_blue <- !is.null(highlight_pars)
+  hl <- if(show_blue) highlight_pars else est_par_vec
 
   alpha_col <- grDevices::rgb(0, 0, 0, alpha = 0.15)
 
@@ -903,7 +908,9 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
   draw_hists <- function(col_idx){
     for(j in col_idx){
       graphics::hist(gapop[, j], breaks = 50, main = par.labels[j], xlab = 'value')
-      graphics::abline(v = hl[j], col = 'blue', lty = 2)
+      graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
+      if(show_blue)
+        graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
     }
   }
 
@@ -925,9 +932,10 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
     adj1 <- gapop[, col_idx[1]]
     adj2 <- if(length(col_idx) >= 2) gapop[, col_idx[2]] else rep(1, nrow(gapop))
 
-    # Highlight curve adj values: 1,1 when no override (= base curve), else from highlight_pars.
-    h_adj1 <- if(is.null(highlight_pars)) 1 else highlight_pars[col_idx[1]]
-    h_adj2 <- if(is.null(highlight_pars) || length(col_idx) < 2) 1 else highlight_pars[col_idx[2]]
+    # Baseline curve uses adj=1 (env/rt GA pars are MULTIPLIERS on the natural curve),
+    # so red curve == natural EwE curve. Blue curve uses highlight_pars when supplied.
+    h_adj1 <- if(show_blue) highlight_pars[col_idx[1]] else 1
+    h_adj2 <- if(show_blue && length(col_idx) >= 2) highlight_pars[col_idx[2]] else 1
 
     if(shape_type == 11){
       # Logistic 4-params: par1=XMin, par2=XMax, par3=Inflection, par4=Slope
@@ -941,7 +949,9 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
                      main = grp, xlab = "x", ylab = "response")
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(Inf.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
-      graphics::lines(x, ycurve(Inf.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+      graphics::lines(x, ycurve(Inf.base, Slope.base), col = 'red',  lwd = 2)
+      if(show_blue)
+        graphics::lines(x, ycurve(Inf.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
 
     } else if(shape_type == 9){
       # Trapezoid: par1=LB, par2=LT, par3=RT, par4=RB. GA: mid.adj, width.adj.
@@ -963,8 +973,12 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       for(k in seq_len(nrow(gapop))){
         p <- trap_pts(adj1[k], adj2[k]); graphics::lines(p$x, p$y, col = alpha_col)
       }
-      hp <- trap_pts(h_adj1, h_adj2)
-      graphics::lines(hp$x, hp$y, col = 'blue', lwd = 2)
+      rp <- trap_pts(1, 1)
+      graphics::lines(rp$x, rp$y, col = 'red', lwd = 2)
+      if(show_blue){
+        hp <- trap_pts(h_adj1, h_adj2)
+        graphics::lines(hp$x, hp$y, col = 'blue', lwd = 2)
+      }
 
     } else if(shape_type == 6){
       # Normal: par1=SDLeft, par3=SDRight, par4=Mean, par5=Max. GA: mean.adj, width.adj.
@@ -987,11 +1001,14 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
                                   SDLeft.base * adj2[k],
                                   SDRight.base * adj2[k],
                                   Max.base), col = alpha_col)
-      graphics::lines(x, norm_y(Mean.base * h_adj1,
-                                SDLeft.base * h_adj2,
-                                SDRight.base * h_adj2,
-                                Max.base),
-                      col = 'blue', lwd = 2)
+      graphics::lines(x, norm_y(Mean.base, SDLeft.base, SDRight.base, Max.base),
+                      col = 'red',  lwd = 2)
+      if(show_blue)
+        graphics::lines(x, norm_y(Mean.base * h_adj1,
+                                  SDLeft.base * h_adj2,
+                                  SDRight.base * h_adj2,
+                                  Max.base),
+                        col = 'blue', lwd = 2)
 
     } else if(shape_type == 10){
       # Sigmoid: par1=XMin, par2=XMax, par3=XMid, par5=Slope, par6=Scalar. GA: xmid.adj, slope.adj.
@@ -1006,7 +1023,9 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
                      main = grp, xlab = "x", ylab = "response")
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(XMid.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
-      graphics::lines(x, ycurve(XMid.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+      graphics::lines(x, ycurve(XMid.base, Slope.base), col = 'red', lwd = 2)
+      if(show_blue)
+        graphics::lines(x, ycurve(XMid.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
 
     } else {
       draw_hists(col_idx)
