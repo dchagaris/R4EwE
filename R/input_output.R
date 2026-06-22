@@ -942,3 +942,151 @@ fn.M0_loss_rate_summary <- function(dir.out  = NULL,
   }
   long
 }
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#fn.akaike_weights--------------------------------------------------------------------------------
+#' @title Akaike-style weights from a vector of LL values
+#' @description
+#' Convenience helper to convert a vector of per-run LL (negative log-likelihood)
+#' values into Akaike-style weights for use with \code{\link{fn.weighted_mrt_summary}}.
+#' The weight for run \code{i} is
+#' \code{w_i = exp(-(LL_i - min(LL)) / scale)} normalized to sum to 1.
+#'
+#' @param LL Numeric vector of LL values, one per run.
+#' @param scale Scaling factor in the exponent. Default 2, mimicking the standard
+#'   AIC-weight convention that treats LL as \code{-2 log L}. Increase \code{scale}
+#'   to flatten the weights (broader ensemble); decrease it to concentrate on the
+#'   very best fits. For a wide LL spread you may want \code{scale = 2 * df_eff}
+#'   where \code{df_eff} is some effective degrees of freedom.
+#' @return Numeric vector of weights summing to 1 (same length as \code{LL}).
+#' @examples
+#' \dontrun{
+#' # From a GA fitness vector (final-gen min_LL = best individual)
+#' w <- fn.akaike_weights(fitness_g20, scale = 2)
+#' summary(w); sum(w)   # should sum to 1
+#' }
+#' @export
+fn.akaike_weights <- function(LL, scale = 2){
+  if(!is.numeric(LL)) stop("`LL` must be numeric.")
+  if(scale <= 0)      stop("`scale` must be > 0.")
+  delta <- LL - min(LL, na.rm = TRUE)
+  w     <- exp(-delta / scale)
+  w / sum(w, na.rm = TRUE)
+}
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#fn.weighted_mrt_summary--------------------------------------------------------------------------
+#' @title Weighted Mrt ensemble summary
+#' @description
+#' Long-form ensemble summary of per-run Mrt using arbitrary per-run weights
+#' (e.g. Akaike-style weights derived from each individual's LL). Mirrors
+#' \code{\link{fn.M0_loss_rate_summary}} but replaces the plain ensemble mean
+#' and quantiles with weighted versions, so individuals with better fit
+#' contribute more to the band.
+#'
+#' Weighted mean per (year, group):
+#'   \code{sum(x_i * w_i) / sum(w_i)} (NA-safe; runs with NA at that cell drop).
+#' Weighted quantiles per (year, group): linear interpolation on the empirical
+#'   weighted CDF (\code{cumsum(w_sorted) / sum(w_sorted)}).
+#'
+#' @param mrt 3-D array \code{[years x groups x runs]} of per-run Mrt values
+#'   (typically built by stacking outputs of \code{\link{fn.M0_loss_rate}}).
+#'   A 2-D \code{[years x groups]} matrix is also accepted (degenerate
+#'   single-run case).
+#' @param weights Numeric vector of length \code{dim(mrt)[3]} (one weight per
+#'   run). Non-positive and NA weights are dropped before summarizing. The
+#'   function normalizes the remaining weights internally; you do not need to
+#'   normalize beforehand.
+#' @param probs Numeric vector of percentiles in [0,1]. Default
+#'   \code{c(0.05, 0.5, 0.95)}.
+#' @param styear Optional integer start year. If supplied, the \code{year}
+#'   column becomes \code{styear, styear+1, ...}; otherwise the year labels
+#'   come from \code{dimnames(mrt)[[1]]} (see \code{\link{fn.M0_loss_rate}}).
+#' @param out.file Optional path; if supplied, the long-form summary is written
+#'   to CSV.
+#' @return Data frame with columns \code{year, group, weighted_mean}, then one
+#'   column per requested percentile (\code{q05}, \code{median}, \code{q95}, ...).
+#' @examples
+#' \dontrun{
+#' # Stack per-run Mrt into a 3-D array
+#' mrt <- abind::abind(lapply(final_pop_dirs, fn.M0_loss_rate, write = FALSE),
+#'                     along = 3)
+#'
+#' # Akaike-style weights from GA fitness vector
+#' w <- fn.akaike_weights(fitness_g20, scale = 2)
+#'
+#' fn.weighted_mrt_summary(mrt, weights = w,
+#'                         probs = c(0.05, 0.5, 0.95),
+#'                         out.file = "mrt_weighted_summary.csv")
+#' }
+#' @export
+fn.weighted_mrt_summary <- function(mrt,
+                                    weights,
+                                    probs    = c(0.05, 0.5, 0.95),
+                                    styear   = NULL,
+                                    out.file = NULL){
+  # Promote single-run matrix to a degenerate 3-D array.
+  if(length(dim(mrt)) == 2L){
+    mrt <- array(mrt,
+                 dim = c(dim(mrt), 1L),
+                 dimnames = c(dimnames(mrt), list("run1")))
+  }
+  if(length(dim(mrt)) != 3L)
+    stop("`mrt` must be a 2-D matrix or 3-D array (years x groups x runs).")
+  if(length(weights) != dim(mrt)[3])
+    stop(sprintf("length(weights) (%d) must equal dim(mrt)[3] (%d, number of runs).",
+                 length(weights), dim(mrt)[3]))
+
+  ok <- !is.na(weights) & weights > 0
+  if(!any(ok)) stop("No positive non-NA weights -- nothing to summarize.")
+  mrt_use <- mrt[, , ok, drop = FALSE]
+  w       <- weights[ok]
+
+  group_cols <- dimnames(mrt_use)[[2]]
+  years <- if(!is.null(styear)){
+    styear + seq_len(dim(mrt_use)[1]) - 1L
+  } else {
+    rn <- suppressWarnings(as.numeric(dimnames(mrt_use)[[1]]))
+    if(length(rn) == dim(mrt_use)[1] && !anyNA(rn)) rn else seq_len(dim(mrt_use)[1])
+  }
+
+  # Weighted mean per (year, group). NA-safe: skip runs with NA at that cell.
+  wtd_mean <- apply(mrt_use, c(1, 2), function(x){
+    keep <- !is.na(x)
+    if(!any(keep)) return(NA_real_)
+    sum(x[keep] * w[keep]) / sum(w[keep])
+  })
+
+  # Weighted quantiles per (year, group), all percentiles in one pass per cell.
+  q_cube <- apply(mrt_use, c(1, 2), function(x){
+    keep <- !is.na(x)
+    if(!any(keep)) return(rep(NA_real_, length(probs)))
+    xs <- x[keep]; ws <- w[keep]
+    ord <- order(xs)
+    xs <- xs[ord]; ws <- ws[ord]
+    cw <- cumsum(ws) / sum(ws)
+    stats::approx(cw, xs, xout = probs, ties = "ordered", rule = 2)$y
+  })
+  # Force 3-D shape (n_probs, n_years, n_groups) even when length(probs) == 1.
+  if(is.matrix(q_cube)) dim(q_cube) <- c(1L, dim(q_cube))
+
+  agg <- list(weighted_mean = wtd_mean)
+  for(i in seq_along(probs)){
+    p  <- probs[i]
+    nm <- if(isTRUE(all.equal(p, 0.5))) "median" else sprintf("q%02d", round(p * 100))
+    agg[[nm]] <- q_cube[i, , , drop = TRUE]
+  }
+
+  long <- do.call(rbind, lapply(group_cols, function(g){
+    df <- data.frame(year = years, group = g, stringsAsFactors = FALSE)
+    for(nm in names(agg)) df[[nm]] <- agg[[nm]][, g]
+    df
+  }))
+
+  if(!is.null(out.file)){
+    utils::write.csv(long, out.file, row.names = FALSE)
+  }
+  long
+}
