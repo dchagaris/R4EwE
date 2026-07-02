@@ -706,6 +706,20 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     sel_match_mask <- obs.ts$ts.head$Type %in% select_type_codes   # series used to pick groups
     obs_groups_col <- if(obs_group_via == "Poolcode2") obs.ts$ts.head$Poolcode2 else obs.ts$ts.head$Poolcode
 
+    # v5+ multi-pool / multi-region series aggregate across groups or regions;
+    # they don't map cleanly onto per-group per-region panels. Filter them out
+    # of the per-panel overlay (still contribute to the objective function).
+    if(all(c("Poolcodes", "Regions") %in% names(obs.ts$ts.head))){
+      is_single <- lengths(obs.ts$ts.head$Poolcodes) <= 1L &
+                   lengths(obs.ts$ts.head$Regions)   <= 1L
+      n_agg <- sum(!is_single & (obs_match_mask | sel_match_mask))
+      if(n_agg > 0)
+        message(sprintf("[fn.ecospace_plot_fits] %d multi-pool/-region series excluded from per-panel overlay (still in LL).",
+                        n_agg))
+      obs_match_mask <- obs_match_mask & is_single
+      sel_match_mask <- sel_match_mask & is_single
+    }
+
     # determine columns to plot
     arr_cols <- seq_along(eco_grp_names)
     plot_cols <-
@@ -1192,8 +1206,105 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
     .pad_page(length(plot_cols))
   }
 
+  # 5b. per-aggregate-series panel routine (v5+ multi-pool / multi-region obs) ---------------
+  # Iterates only rows whose Poolcodes or Regions list has >1 element. For each,
+  # sums the predicted biomass across the listed pool codes x regions for
+  # scale2run and overlays the obs points (q-rescaled if not absolute). Renders
+  # on the same plt.dims grid as the per-group panels.
+  panel_aggregate_series <- function(arr, var_label, obs_type_codes, y_lab){
+    if(is.null(arr)) return(invisible(NULL))
+    if(!all(c("Poolcodes", "Regions") %in% names(obs.ts$ts.head))) return(invisible(NULL))
+
+    th <- obs.ts$ts.head
+    agg_rows <- which(th$Type %in% obs_type_codes &
+                      (lengths(th$Poolcodes) > 1L | lengths(th$Regions) > 1L))
+    if(length(agg_rows) == 0) return(invisible(NULL))
+
+    graphics::par(mfrow = plt.dims, mar = c(2, 4, 3, 1), oma = c(4, 0, 2, 1),
+                  xpd = FALSE)
+
+    xtime         <- as.numeric(dimnames(arr)[[1]])
+    eco_grp_names <- dimnames(arr)[[2]]
+    region_labels <- dimnames(arr)[[3]]
+    region_ids    <- as.integer(sub("R", "", region_labels))
+    col_to_pc     <- if(length(norm_gn))
+                       match(norm_name(eco_grp_names), norm_gn)
+                     else rep(NA_integer_, length(eco_grp_names))
+    r0_idx        <- if(0L %in% region_ids) which(region_ids == 0L) else 1L
+
+    obs_yrs    <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    common_idx <- match(obs_yrs, xtime)
+    n_drawn    <- 0L
+
+    for(j in agg_rows){
+      poolcodes_j <- th$Poolcodes[[j]]
+      regions_j   <- th$Regions[[j]]
+      if(length(regions_j) == 0) regions_j <- 0L
+
+      reg_idxs <- if(any(regions_j == 0L)) r0_idx else match(regions_j, region_ids)
+      if(anyNA(reg_idxs)){ next }
+
+      cols <- vapply(poolcodes_j, function(p){
+        hits <- which(col_to_pc == p)
+        if(length(hits) == 0) NA_integer_ else hits[1]
+      }, integer(1))
+      if(length(cols) == 0 || anyNA(cols)){ next }
+
+      # sum predicted biomass across (pool code x region) for scale2run
+      pred_v <- rep(0, length(xtime))
+      for(ci in cols) for(ri in reg_idxs){
+        v <- arr[, ci, ri, scale2run]
+        v[is.na(v)] <- 0
+        pred_v <- pred_v + v
+      }
+
+      obs_v <- as.numeric(obs.ts$ts[, j])
+      obs_v[obs_v <= 0] <- NA
+      abs_flag <- isTRUE(th$Absolute[j])
+
+      # q rescale for non-absolute series (or when scale.abs forces rescaling)
+      q <- 1
+      if(scale.abs || !abs_flag){
+        obs_nonna <- !is.na(obs_v)
+        pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
+        if(length(pi) > 0){
+          mo <- mean(obs_v[obs_nonna], na.rm = TRUE)
+          mp <- mean(pred_v[pi],       na.rm = TRUE)
+          if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+        }
+      }
+      obs_scaled <- obs_v / q
+
+      ylim_top <- max(c(pred_v, obs_scaled), na.rm = TRUE) * 1.2
+      if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+
+      main_lab <- th$Title[j]
+      sub_lab  <- sprintf("pcs: %s | R: %s",
+                          paste(poolcodes_j, collapse = ","),
+                          paste(regions_j,   collapse = ","))
+
+      graphics::plot(xtime, pred_v, type = "l", lwd = 2, col = "red",
+                     ylim = c(0, ylim_top), main = main_lab,
+                     xlab = "", ylab = y_lab)
+      graphics::mtext(sub_lab, side = 3, line = 0.2, cex = 0.7, col = "gray30")
+      graphics::points(obs_yrs, obs_scaled, pch = 21, col = "black", bg = "white",
+                       cex = 1.1, lwd = 0.5)
+
+      n_drawn <- n_drawn + 1L
+      if(n_drawn == 1L || ((n_drawn - 1L) %% n_per_page == 0L))
+        graphics::mtext(var_label, side = 3, line = 0.5, outer = TRUE,
+                        cex = 1.2, font = 2)
+    }
+    if(n_drawn > 0) .pad_page(n_drawn)
+  }
+
   # 6. draw each requested variable ----------------------------------------------------------
-  if("biomass"  %in% vars) panel_by_group_regions(pred$biomass,  "Biomass",                        c(0, 1),    "biomass")
+  if("biomass"  %in% vars){
+    panel_by_group_regions(pred$biomass, "Biomass", c(0, 1), "biomass")
+    panel_aggregate_series(pred$biomass,
+                           "Biomass (aggregated multi-pool / multi-region)",
+                           c(0, 1), "biomass (aggregated)")
+  }
   if("catch"    %in% vars){
     panel_by_group_regions       (pred$catch,    "Catch (group)",                 c(6, 61, -6), "catch")
     panel_stacked_by_group_regions(pred$catch_fg, "Catch (group, fleets stacked)", "catch", c(6, 61, -6), obs_group_via = "Poolcode")

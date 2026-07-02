@@ -323,6 +323,12 @@ fn.ecospace_objfxn <- function(dir.pred,
                                fit.abs.catch = TRUE,
                                types         = NULL,
                                eps           = NULL,
+                               spatial.obs   = if(exists("spatial.obs",    envir = .GlobalEnv))
+                                                 get("spatial.obs",       envir = .GlobalEnv) else NULL,
+                               spatial.weight= if(exists("spatial.weight", envir = .GlobalEnv))
+                                                 get("spatial.weight",    envir = .GlobalEnv) else 1,
+                               model_styear  = if(exists("model_styear",   envir = .GlobalEnv))
+                                                 get("model_styear",      envir = .GlobalEnv) else 1985,
                                return        = c("both", "vector", "detail")){
   return_mode <- match.arg(return)
   timestep    <- "annual"
@@ -435,31 +441,76 @@ fn.ecospace_objfxn <- function(dir.pred,
       abs_flag <- isTRUE(th$Absolute[j])
       pc1      <- th$Poolcode[j]
       pc2      <- th$Poolcode2[j]
-      reg_obs  <- th$Region[j]
 
-      # region routing: no region tag -> first region; tagged but unknown -> skip
-      if(is.na(reg_obs)){
-        reg_idx <- 1L
+      # Multi-pool / multi-region aggregation is enabled for group-kind biomass
+      # (types 0, 1). Fleet|group types (12, 13) and single-group catch types
+      # (6, 61, 19, 20) keep scalar semantics.
+      is_group_agg <- sel$kind == "group" && tc %in% c(0, 1)
+
+      if(is_group_agg){
+        # list-column Poolcodes / Regions parsed by fn.read_ecosim_timeseries;
+        # back-compat: empty list -> scalar Poolcode / Region.
+        poolcodes_j <- if("Poolcodes" %in% names(th)) th$Poolcodes[[j]] else integer(0)
+        if(length(poolcodes_j) == 0)
+          poolcodes_j <- if(is.na(pc1)) integer(0) else as.integer(pc1)
+        regions_j <- if("Regions" %in% names(th)) th$Regions[[j]] else integer(0)
+        if(length(regions_j) == 0){
+          reg_obs   <- th$Region[j]
+          regions_j <- if(is.na(reg_obs)) integer(0) else as.integer(reg_obs)
+        }
+
+        # region resolution:
+        #   empty      -> whole-grid R0 if present, else first region (legacy)
+        #   0          -> whole-grid R0
+        #   otherwise  -> match to region_ids
+        r0_idx <- if(0L %in% region_ids) which(region_ids == 0L) else 1L
+        if(length(regions_j) == 0 || all(is.na(regions_j))){
+          reg_idxs <- r0_idx
+        } else if(any(regions_j == 0L)){
+          reg_idxs <- r0_idx
+        } else {
+          reg_idxs <- match(regions_j, region_ids)
+          if(anyNA(reg_idxs)) next
+        }
+
+        # pool code resolution -> group column indices
+        cols <- vapply(poolcodes_j,
+                       function(p) group_col(sel$arr, p),
+                       integer(1))
+        if(length(cols) == 0 || anyNA(cols)) next
+
+        # sum predicted biomass across all (pool code, region) combinations
+        pred_v <- rep(0, length(common_idx))
+        for(ci in cols) for(ri in reg_idxs)
+          pred_v <- pred_v + sel$arr[, ci, ri, run.idx][common_idx]
+
+        gpc <- poolcodes_j[1]      # first pool code labels the LL row
+        col <- cols[1]
+        reg_idx <- reg_idxs[1]
       } else {
-        reg_idx <- match(reg_obs, region_ids)
-        if(is.na(reg_idx)) next
+        # scalar path for fleet|group and single-group catch types
+        reg_obs <- th$Region[j]
+        if(is.na(reg_obs)){
+          reg_idx <- 1L
+        } else {
+          reg_idx <- match(reg_obs, region_ids)
+          if(is.na(reg_idx)) next
+        }
+        if(sel$kind == "group"){
+          gpc <- pc1
+          col <- group_col(sel$arr, gpc)
+        } else { # fg: Poolcode = fleet, Poolcode2 = group
+          if(is.null(sel$meta)) next
+          m <- which(sel$meta$fleet_pc == pc1 & sel$meta$group_pc == pc2)
+          col <- if(length(m) == 0) NA_integer_ else sel$meta$col_idx[m[1]]
+          gpc <- pc2
+        }
+        if(is.na(col)) next
+        pred_v <- sel$arr[, col, reg_idx, run.idx][common_idx]
       }
-
-      # locate pred column
-      if(sel$kind == "group"){
-        gpc <- pc1
-        col <- group_col(sel$arr, gpc)
-      } else { # fg: Poolcode = fleet, Poolcode2 = group
-        if(is.null(sel$meta)) next
-        m <- which(sel$meta$fleet_pc == pc1 & sel$meta$group_pc == pc2)
-        col <- if(length(m) == 0) NA_integer_ else sel$meta$col_idx[m[1]]
-        gpc <- pc2
-      }
-      if(is.na(col)) next
 
       obs_v <- ts_data[, j]
       obs_v[obs_v <= 0] <- NA
-      pred_v <- sel$arr[, col, reg_idx, run.idx][common_idx]
 
       # q rescale decision
       q <- 1
@@ -531,6 +582,32 @@ fn.ecospace_objfxn <- function(dir.pred,
 
   outvec <- round(c(sum(lk.vec, na.rm = TRUE), lk.vec), 2)
   names(outvec) <- c("LL.total", paste0("LL.", group.names))
+
+  # ---- optional spatial LL component (phase 2 task 7c) ----
+  spatial_vec <- numeric(0)
+  spatial_total <- 0
+  if(!is.null(spatial.obs) && is.data.frame(spatial.obs) && nrow(spatial.obs) > 0){
+    sp <- tryCatch(
+      fn.spatial_LL(dir.pred      = dir.pred[1],
+                    spatial.obs   = spatial.obs,
+                    spatial.weight = spatial.weight,
+                    group.names   = group.names,
+                    model_styear  = model_styear),
+      error = function(e){
+        warning("fn.spatial_LL failed: ", conditionMessage(e))
+        NULL
+      })
+    if(!is.null(sp)){
+      spatial_total <- sp$total
+      spatial_vec   <- round(sp$per_species, 4)
+      names(spatial_vec) <- paste0("LL.spatial.", names(sp$per_species))
+    }
+  }
+
+  # rebuild outvec with spatial contribution injected
+  ll_total  <- round(outvec[["LL.total"]] + spatial_total, 2)
+  outvec[["LL.total"]] <- ll_total
+  outvec <- c(outvec, spatial_vec)
 
   switch(return_mode,
          both   = list(LL = outvec, detail = lk.detail),

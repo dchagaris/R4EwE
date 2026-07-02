@@ -1439,7 +1439,7 @@ cluster_is_ok <- function() {
 #' @return Character vector of object names.
 #' @export
 .r4ewe_worker_exports <- function(){
-  c(
+  required <- c(
     # console + objective functions
     "file.console",
     "safe_runEwE", "fn.runEwE",
@@ -1449,12 +1449,24 @@ cluster_is_ok <- function() {
     ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",
     # legacy single-region readers (still used by fn.objfxn1)
     "fn.ecospace_predB_ts2array", "fn.ecospace_predC_ts2array",
+    # spatial LL package helpers (phase 2 task 7c) - always needed for the
+    # worker to be able to run the spatial component
+    "fn.spatial_LL", "fn.ecospace_spatial_pred",
+    ".parse_ecospace_map_csv", ".read_asc", ".normalise_map",
     # data the objective functions need
     "obs.ts", "group.names", "fleet.names", "df.names",
     # model years and run context
     "styear", "enyear",
     "cmd_base", "myconfig", "run_dir"
   )
+  # Optional session objects: only export if they exist in .GlobalEnv (or
+  # search path). Lets a phase-1 session (no spatial fit configured) run
+  # without needing to define these.
+  optional <- c("spatial.obs", "spatial.weight", "model_styear")
+  optional <- optional[vapply(optional,
+                              function(nm) exists(nm, envir = .GlobalEnv),
+                              logical(1))]
+  c(required, optional)
 }
 
 #' @keywords internal

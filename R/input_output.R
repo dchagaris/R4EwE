@@ -109,12 +109,50 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
   }, character(1))
   names(hdr) <- std_names
 
+  # preserve raw character strings for potentially comma-separated cells
+  # BEFORE numeric coercion drops them to NA. Enables multi-pool / multi-region
+  # type-0/1 series (v5+ format).
+  raw_poolcode <- if("Poolcode" %in% names(hdr)) as.character(hdr$Poolcode) else NULL
+  raw_region   <- if("Region"   %in% names(hdr)) as.character(hdr$Region)   else NULL
+
   # coerce non-Title columns to numeric
   for(j in setdiff(names(hdr), "Title")){
     hdr[[j]] <- suppressWarnings(as.numeric(hdr[[j]]))
   }
   if(!"Poolcode2" %in% names(hdr)) hdr$Poolcode2 <- NA_real_
   if(!"Region"    %in% names(hdr)) hdr$Region    <- NA_integer_
+
+  # parse comma-separated pool codes / regions into list-columns. Scalar
+  # Poolcode / Region are set from the first element (back-compat for
+  # type-12/13/61 paths). Empty cells -> integer(0).
+  .parse_int_list <- function(x){
+    lapply(x, function(s){
+      if(is.null(s) || is.na(s) || !nzchar(trimws(s))) return(integer(0))
+      v <- suppressWarnings(as.integer(strsplit(trimws(s), "\\s*,\\s*")[[1]]))
+      v[!is.na(v)]
+    })
+  }
+  hdr$Poolcodes <- if(!is.null(raw_poolcode)) .parse_int_list(raw_poolcode)
+                   else rep(list(integer(0)), nrow(hdr))
+  hdr$Regions   <- if(!is.null(raw_region))   .parse_int_list(raw_region)
+                   else rep(list(integer(0)), nrow(hdr))
+
+  # rewrite scalar Poolcode / Region from first parsed element (so legacy
+  # code paths still see a single value; multi-cell entries kept only in the
+  # list-columns).
+  hdr$Poolcode <- vapply(hdr$Poolcodes,
+                         function(v) if(length(v)) as.numeric(v[1]) else NA_real_,
+                         numeric(1))
+  hdr$Region   <- vapply(hdr$Regions,
+                         function(v) if(length(v)) as.integer(v[1]) else NA_integer_,
+                         integer(1))
+
+  # report multi-value counts (v5+ diagnostic)
+  n_multi_pc <- sum(lengths(hdr$Poolcodes) > 1)
+  n_multi_r  <- sum(lengths(hdr$Regions)   > 1)
+  if(n_multi_pc + n_multi_r > 0)
+    message(sprintf("[fn.read_ecosim_timeseries] multi-value entries: %d series with multi Pool code, %d series with multi Region.",
+                    n_multi_pc, n_multi_r))
 
   # ---- 3. read data block ----
   dat <- utils::read.csv(filename, header = FALSE, skip = nhead, stringsAsFactors = FALSE)
