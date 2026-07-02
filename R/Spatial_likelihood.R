@@ -247,10 +247,12 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
   for(i in seq_along(pool_codes)){
     pc <- pool_codes[i]
     if(is.na(pc) || pc < 1 || pc > length(group.names)) next
-    species <- group.names[pc]
+    # Ecospace writes group names to the CSV filename with SPACES; R4EwE
+    # group.names is stored with UNDERSCORES. Convert on the fly.
+    species <- gsub("_", " ", group.names[pc])
 
-    pat <- paste0("^EcospaceMap", variable, "-", gsub("\\+", "\\\\+",
-                                                       gsub(" ", " ", species)),
+    pat <- paste0("^EcospaceMap", variable, "-",
+                  gsub("\\+", "\\\\+", species),
                   "\\.csv$")
     hits <- grep(pat, basename(all_csv))
     if(length(hits) == 0){
