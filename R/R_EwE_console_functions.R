@@ -165,12 +165,12 @@ fn.runEwE.parallel <-  function(
   if(is.null(n_cores)) n_cores <- max(1L, detectCores()-1L)
   cl <- makeSOCKcluster(n_cores)
   registerDoSNOW(cl)
-  clusterExport(cl, append(cl.export, list(
-    "file.console", "fn.runEwE",
-    "fn.objfxn1", "fn.objfxn2", "fn.ecospace_objfxn",
-    "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
-    ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",
-    "styear", "enyear", "group.names", "fleet.names", "df.names")))
+  # Merge caller-provided cl.export (typically the runlist) with the canonical
+  # R4EwE worker-export list (auto-filtered against .GlobalEnv, so optional
+  # objects like spatial.obs are only pulled if the caller has loaded them).
+  exports <- unique(c(as.character(unlist(cl.export)),
+                      .r4ewe_worker_exports()))
+  clusterExport(cl, exports)
   print(paste('Setup',n_cores,'Clusters: Overhead time',round(as.numeric(Sys.time()-t1),2)))
 
   pbar <- winProgressBar("Running Ecospace Console",label=paste0("Simulation 0 of ",nrow(runlist)),max=100)
