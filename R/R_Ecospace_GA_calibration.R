@@ -1457,12 +1457,14 @@ cluster_is_ok <- function() {
     "obs.ts", "group.names", "fleet.names", "df.names",
     # model years and run context
     "styear", "enyear",
-    "cmd_base", "myconfig", "run_dir"
+    "cmd_base"
   )
   # Optional session objects: only export if they exist in .GlobalEnv (or
-  # search path). Lets a phase-1 session (no spatial fit configured) run
-  # without needing to define these.
-  optional <- c("spatial.obs", "spatial.weight", "model_styear")
+  # search path). Lets a phase-1 session (no spatial fit configured) or a
+  # sensitivity-only session (no GA myconfig / run_dir) run without needing
+  # to define these.
+  optional <- c("spatial.obs", "spatial.weight", "model_styear",
+                "myconfig", "run_dir")
   optional <- optional[vapply(optional,
                               function(nm) exists(nm, envir = .GlobalEnv),
                               logical(1))]

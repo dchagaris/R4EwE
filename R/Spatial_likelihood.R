@@ -230,9 +230,13 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
                                      variable     = "Biomass",
                                      nrows        = 66L,
                                      ncols        = 78L){
-  csv_dir <- file.path(dir.pred, "csv")
-  if(!dir.exists(csv_dir))
-    stop("Ecospace csv/ subfolder not found under ", dir.pred)
+  # GUI-run outputs put per-species map CSVs in a csv/ subfolder;
+  # CLI-run (EcoSpace Console) writes them at the top level of dir.pred.
+  # Support both.
+  csv_dir <- if(dir.exists(file.path(dir.pred, "csv"))) file.path(dir.pred, "csv") else dir.pred
+  if(length(list.files(csv_dir, pattern = "^EcospaceMap.*\\.csv$")) == 0)
+    stop("No EcospaceMap<Var>-<species>.csv files found in ", csv_dir,
+         " (nor a csv/ subfolder under ", dir.pred, ")")
 
   # convert target calendar years -> model fractional-year window.
   # Ecospace's CSV Year field is fractional years from model start (step*dt).
