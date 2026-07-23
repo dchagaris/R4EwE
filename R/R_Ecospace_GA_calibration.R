@@ -576,18 +576,11 @@ fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='log-uniform
     }
   }
 
-  # --- Vulnerability anchor seeding (option V4) -------------------------------
-  # Two extra anchor rows that explicitly explore the top-down and bottom-up
-  # extremes of the vul search space. Non-vul parameters in these rows keep their
-  # random draws so the rest of the parameter vector still varies.
-  if(length(vul.par.idx) > 0L && run_config$popSize >= 8L){
-    vul_lo <- L.bounds[vul.par.idx]
-    vul_hi <- U.bounds[vul.par.idx]
-    # 7: all vuls at their lower bound -> max top-down control everywhere
-    mat[7, vul.par.idx] <- round(pmax(vul_lo, 1.01), 4)
-    # 8: all vuls at their upper bound -> bottom-up everywhere
-    mat[8, vul.par.idx] <- round(vul_hi, 4)
-  }
+  # Note: the base run is included in the initial population by fn.GA (which
+  # overwrites gapop[1, ] with est_par_vec after this function returns), so we
+  # do not seed a baseline row here. All rows returned from this function are
+  # random draws (subject only to the red-tide corner-case anchors in rows 1-6
+  # if the RT block above fired).
 
   return(mat)
 } #eof
@@ -662,9 +655,75 @@ safe_make_run_dir_tempfile <- function(base_dir,
 #' @param g Generation number, used for file tracking in a genetic algorithm loop. Default 0
 #' @param idx Index for run identifier.
 #' @param out_dir Output directory, where the command file will be saved along with model output.#'
+#' @keywords internal
+#' @noRd
+.gen_dir <- function(base_run_dir, g)
+  file.path(base_run_dir, sprintf("gen%02d", as.integer(g)))
+
+#' @keywords internal
+#' @noRd
+#' Move elite run directories forward into the next generation's folder,
+#' preserving their original folder names (which encode gen-of-origin +
+#' offspring index for traceability), and rewriting the
+#' <ECOSPACE_OUTPUT_DIR> line inside each moved cmd.txt so the cmd file
+#' remains re-runnable from its new location.
+#'
+#' @param elite_cmd_paths Character vector of cmd.txt paths for the elites
+#'   in their CURRENT (source) generation folder.
+#' @param dst_gen_dir Destination generation folder (created if missing).
+#' @return Character vector of new cmd.txt paths, aligned with input.
+.move_elite_dirs <- function(elite_cmd_paths, dst_gen_dir){
+  if(!dir.exists(dst_gen_dir))
+    dir.create(dst_gen_dir, recursive = TRUE, showWarnings = FALSE)
+
+  new_paths <- character(length(elite_cmd_paths))
+  for(k in seq_along(elite_cmd_paths)){
+    old_dir <- dirname(elite_cmd_paths[k])
+    if(!dir.exists(old_dir)){
+      warning(sprintf("Elite dir missing on disk: %s (leaving cmd path unchanged)", old_dir))
+      new_paths[k] <- elite_cmd_paths[k]
+      next
+    }
+    new_dir <- file.path(dst_gen_dir, basename(old_dir))
+    if(dir.exists(new_dir)){
+      # Same-name dir already in destination — shouldn't happen given the
+      # random-hash suffix on run folders, but handle defensively.
+      warning(sprintf("Destination exists (leaving in place): %s", new_dir))
+      new_paths[k] <- elite_cmd_paths[k]
+      next
+    }
+    moved <- suppressWarnings(file.rename(old_dir, new_dir))
+    if(!moved){
+      # Cross-device fallback (rare — gens should share one filesystem).
+      dir.create(new_dir, recursive = TRUE, showWarnings = FALSE)
+      copied <- file.copy(list.files(old_dir, full.names = TRUE, recursive = FALSE),
+                          new_dir, overwrite = TRUE, recursive = TRUE)
+      if(all(copied)){
+        unlink(old_dir, recursive = TRUE)
+      } else {
+        stop(sprintf("Failed to move elite dir from %s to %s", old_dir, new_dir))
+      }
+    }
+    new_cmd <- file.path(new_dir, "cmd.txt")
+    new_paths[k] <- new_cmd
+    if(file.exists(new_cmd)){
+      L <- readLines(new_cmd)
+      new_out <- normalizePath(new_dir, winslash = "\\", mustWork = FALSE)
+      out_line <- startsWith(L, "<ECOSPACE_OUTPUT_DIR>")
+      if(any(out_line))
+        L[out_line] <- sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", new_out)
+      writeLines(L, new_cmd)
+    }
+  }
+  new_paths
+}
+
 #' @return Path to the written command file.
 #' @export
-fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0, out_dir=run_dir){
+fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0,
+                          out_dir=.gen_dir(run_dir, g)){
+  if(!dir.exists(out_dir))
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   
   # par_vec = est_par_vec
   # g = 999
@@ -910,6 +969,29 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
 
   alpha_col <- grDevices::rgb(0, 0, 0, alpha = 0.15)
 
+  # Small inline legend for each panel. Line style matches how the marker is
+  # drawn: dashed vline on histograms, solid line on response curves. Only
+  # includes the blue "best-fit" entry when highlight_pars was supplied.
+  .add_legend <- function(kind = c("hist", "curve"),
+                          where = "topright"){
+    kind <- match.arg(kind)
+    lty  <- if(kind == "hist") 2   else 1
+    lwd  <- if(kind == "hist") 1.5 else 2
+    if(show_blue){
+      graphics::legend(where,
+                       legend = c("baseline (est_par_vec)", "best-fit"),
+                       col = c("red", "blue"), lty = lty, lwd = lwd,
+                       bty = "o", box.col = "gray70", bg = "white",
+                       cex = 0.65, inset = 0.01)
+    } else {
+      graphics::legend(where,
+                       legend = "baseline (est_par_vec)",
+                       col = "red", lty = lty, lwd = lwd,
+                       bty = "o", box.col = "gray70", bg = "white",
+                       cex = 0.65, inset = 0.01)
+    }
+  }
+
   grDevices::pdf(file, onefile = TRUE)
   on.exit(grDevices::dev.off(), add = TRUE)
   graphics::par(mfrow = dims, mar = c(3, 3, 2, 1), mgp = c(1.6, 0.5, 0))
@@ -920,6 +1002,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
       if(show_blue)
         graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
+      .add_legend("hist")
     }
   }
 
@@ -961,6 +1044,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       graphics::lines(x, ycurve(Inf.base, Slope.base), col = 'red',  lwd = 2)
       if(show_blue)
         graphics::lines(x, ycurve(Inf.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+      .add_legend("curve", where = "topleft")
 
     } else if(shape_type == 9){
       # Trapezoid: par1=LB, par2=LT, par3=RT, par4=RB. GA: mid.adj, width.adj.
@@ -988,6 +1072,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
         hp <- trap_pts(h_adj1, h_adj2)
         graphics::lines(hp$x, hp$y, col = 'blue', lwd = 2)
       }
+      .add_legend("curve", where = "bottomright")
 
     } else if(shape_type == 6){
       # Normal: par1=SDLeft, par3=SDRight, par4=Mean, par5=Max. GA: mean.adj, width.adj.
@@ -1018,6 +1103,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
                                   SDRight.base * h_adj2,
                                   Max.base),
                         col = 'blue', lwd = 2)
+      .add_legend("curve", where = "topright")
 
     } else if(shape_type == 10){
       # Sigmoid: par1=XMin, par2=XMax, par3=XMid, par5=Slope, par6=Scalar. GA: xmid.adj, slope.adj.
@@ -1035,6 +1121,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       graphics::lines(x, ycurve(XMid.base, Slope.base), col = 'red', lwd = 2)
       if(show_blue)
         graphics::lines(x, ycurve(XMid.base * h_adj1, Slope.base * h_adj2), col = 'blue', lwd = 2)
+      .add_legend("curve", where = "topleft")
 
     } else {
       draw_hists(col_idx)
@@ -1119,22 +1206,33 @@ fn.runEwE.gapop <-  function(
   runLL <- unlist(runLL.out)
   
   ##missing runs----------------------------------------------------------------
-  #tmp.errs = sample(1:340,10)
-  #runLL[11:15] <- NA_real_ 
+  # Retry generates a FRESH random parvec (via fn.GApop) for each failed run —
+  # rationale: failures usually indicate a bad parameter combination, so a new
+  # draw is more likely to succeed than a rerun of the same parvec. The new
+  # cmd file replaces the failed one in files.cmd, and the substituted parvec
+  # is recorded so the caller can update its population matrix accordingly.
+  substituted <- list()   # names = character(index); values = numeric parvecs
   erruns <- which(is.na(runLL))
-  #filecheck <- sapply(dirname(files.cmd),FUN=function(x)length(list.files(x)))
-  unlink(dirname(files.cmd[erruns]), recursive=T)
-  #erruns <- which(filecheck<=1)  
-  tries <- 0
-  while(length(erruns)>=1 && tries<max_tries){
-    tries <- tries+1
+  # Delete any dirs from the initial (first-attempt) failures before retrying.
+  if(length(erruns) > 0L) unlink(dirname(files.cmd[erruns]), recursive = TRUE)
 
-    gapop.err <- fn.GApop(pardist=pardist, vuldist=vuldist, rtdist=rtdist, fltdist=fltdist)
-    files.cmd.err <- lapply(erruns,function(i) fn.parvec2cmd(par_vec=gapop.err[i,], g=0, idx=i))
-    files.cmd.err <- unlist(files.cmd.err, use.names=F)
-
+  tries  <- 0
+  while(length(erruns) >= 1L && tries < max_tries){
+    tries <- tries + 1L
     n_err <- length(erruns)
-    cat(sprintf("\n[%s retry %d] %d failed runs\n", gen_label, tries, n_err))
+
+    # Fresh random population; only the rows at `erruns` indices are used.
+    gapop.err <- fn.GApop(pardist=pardist, vuldist=vuldist, rtdist=rtdist, fltdist=fltdist)
+    # Retry cmd files land in the CURRENT gen's folder so they live alongside
+    # their siblings and get cleaned up together. If `gen` isn't numeric (e.g.
+    # base run label -1 or a string), fall back to 0.
+    retry_g <- if(is.numeric(gen) && length(gen) == 1L && is.finite(gen)) as.integer(gen) else 0L
+    new_cmd <- vapply(erruns, function(i)
+      fn.parvec2cmd(par_vec = gapop.err[i, ], g = retry_g, idx = i),
+      character(1L))
+
+    cat(sprintf("\n[%s retry %d] %d failed runs (fresh random parvec)\n",
+                gen_label, tries, n_err))
     pbar.err <- utils::winProgressBar(
       title = sprintf("Ecospace GA - %s retry %d  (%d runs)", gen_label, tries, n_err),
       label = sprintf("0 / %d completed (0%%)", n_err),
@@ -1146,40 +1244,53 @@ fn.runEwE.gapop <-  function(
     }
     opts.err <- list(progress = prog.err)
 
-    runLL.err.out <- foreach(i = seq_along(erruns),
+    runLL.err.out <- foreach(k = seq_along(erruns),
                              .errorhandling = 'pass',
                              .options.snow  = opts.err) %dopar% {
-      safe_runEwE(cmdfile=files.cmd.err[i], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
+      safe_runEwE(cmdfile = new_cmd[k], do.obj = obj.fxn, fit.abs.catch = fit.abs.catch)
     }
     close(pbar.err)
     runLL.err <- unlist(runLL.err.out)
-    
-    #for(k in 1:length(erruns)) runs[[erruns[k]]] <- unlist(runs.erruns[k])
-    for (k in seq_along(erruns)) runLL[erruns[k]] <- runLL.err[k]
 
-    # Preserve the index map: point files.cmd at the new retry cmd files for the
-    # indices we just re-ran, so the next round's unlink targets the correct run dirs.
-    # Do NOT re-list run_dir here — list.files() returns alphabetical order, which
-    # breaks the runLL <-> files.cmd index alignment.
-    for (k in seq_along(erruns)) files.cmd[erruns[k]] <- files.cmd.err[k]
+    # Update state: swap in the retry cmd path for every slot we tried this
+    # round (so a subsequent retry deletes the CURRENT attempt's dir, not the
+    # original). For slots that succeeded, record the substituted parvec.
+    for(k in seq_along(erruns)){
+      idx <- erruns[k]
+      runLL[idx]      <- runLL.err[k]
+      files.cmd[idx]  <- new_cmd[k]
+      if(!is.na(runLL.err[k]))
+        substituted[[as.character(idx)]] <- gapop.err[idx, ]
+    }
+
+    still_failing <- which(is.na(runLL[erruns]))
+    if(length(still_failing) > 0L)
+      unlink(dirname(files.cmd[erruns[still_failing]]), recursive = TRUE)
     erruns <- which(is.na(runLL))
-    if(length(erruns)>0) unlink(dirname(files.cmd[erruns]), recursive=T)
   }
-  
-  
+
   # Optional: warn if some runs still missing after retries
   if (length(erruns) > 0) {
     warning(sprintf("Incomplete: %d runs still missing after %d retries at indices: %s",
                     length(erruns), tries, paste(erruns, collapse = ", ")))
   }
   
-  # Clean up any generated output directories, if applicable
-  if (delete.output && exists("run_dir")) {
-    unlink(list.dirs(run_dir, full.names = TRUE, recursive = FALSE), recursive = TRUE)
+  # Delete only the directories this call created (dirname of each cmd file),
+  # not everything under run_dir. Prevents blowing away sibling gen<N>/ folders
+  # or elite dirs that were moved forward for the next generation.
+  if (delete.output && length(files.cmd) > 0L) {
+    unlink(dirname(files.cmd), recursive = TRUE)
   }
   
-  # Return fitness vector (total log-likelihoods to minimize)
+  # Return fitness with two sync attributes so the caller (fn.GA) can keep
+  # its parallel arrays consistent after any retry substitutions:
+  #   cmd.files     -- updated paths (retry cmd files replace failed originals)
+  #   substituted   -- named list; names are character(index), values are the
+  #                    fresh random parvecs that replaced failed originals.
+  #                    Empty list if no substitutions occurred.
   fitness <- runLL
+  attr(fitness, "cmd.files")   <- files.cmd
+  attr(fitness, "substituted") <- substituted
   # print(paste('Run time', round(as.numeric(Sys.time() - t1), 2)))
   return(fitness)
 } # eof

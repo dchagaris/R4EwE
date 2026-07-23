@@ -45,18 +45,16 @@ fn.GA <- function(myconfig){
   obj.fxn       <- if(is.null(myconfig$obj.fxn))       3L    else as.integer(myconfig$obj.fxn)
   fit.abs.catch <- if(is.null(myconfig$fit.abs.catch)) FALSE else as.logical(myconfig$fit.abs.catch)
 
-  # If TRUE, every individual in the final-generation gapop ends up with a preserved
-  # Ecospace output directory so downstream per-run aggregation (e.g. fn.M0_loss_rate
-  # across the final pop to derive Mrt uncertainty bounds) has full coverage.
-  # Implementation:
-  #   1) gen == n_generations runs with delete.output=FALSE, so the offspring runs
-  #      that survive into gapop stay on disk at zero extra cost.
-  #   2) The elite rows in the final gapop were carried over from gen N-1 and have
-  #      no run on disk; they get re-evaluated in a small extra batch (~elitism
-  #      runs) after the loop. EwE.exe is deterministic for a given param vector,
-  #      so this regenerates the deterministic output rather than adding a new run.
-  # A mapping CSV (final_ga_runs_<ts>.csv) records each gapop row's role and its
-  # cmd file path. Default FALSE for backward compatibility.
+  # Phase-3 elite-carry design: every generation's runs live in a per-gen
+  # subfolder run_dir/gen<NN>/. At each gen boundary, the top-`elitism` dirs
+  # are MOVED into the next gen's folder (folder names unchanged for
+  # traceability back to gen-of-origin), and the rest of the previous gen's
+  # dirs are deleted. Elite output on disk is the ORIGINAL evaluation that
+  # earned the fitness -- no reruns, no stochastic drift. The final-gen
+  # folder therefore already holds all `popSize` dirs, and the mapping CSV
+  # is written from the tracked cmd.files array (no g=998 rerun step).
+  # `preserve.final.output` is now effectively always TRUE and the flag is
+  # retained only for backward compatibility (ignored).
   preserve.final.output <- isTRUE(myconfig$preserve.final.output)
   
   #create results file
@@ -84,7 +82,10 @@ fn.GA <- function(myconfig){
   writeLines(cmd_base_run, base_cmd_file)
 
   message('Running the base model')
-  fitness <- fn.runEwE.gapop(base_cmd_file, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=-1)
+  # Keep base run on disk for reference/comparison. It lives in run_dir/run_base/
+  # and is never touched by the gen-loop cleanup (which only operates on
+  # run_dir/gen<NN>/ folders).
+  fitness <- fn.runEwE.gapop(base_cmd_file, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=-1)
 
   #pipe output
   g=-1
@@ -111,9 +112,23 @@ fn.GA <- function(myconfig){
                            file = file.path(dir.results,
                                   paste0('init_ga_pop_distributions_', timestamp, '.pdf')))
 
+  # Initial population goes into run_dir/gen00/. Keep on disk (delete.output=F)
+  # so gen-1's elite carry can move the top-`elitism` dirs into run_dir/gen01/.
   files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i))
   files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=T, gen=0)
+  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=0)
+  # Sync files.cmd + gapop with any retry substitutions (fresh random parvecs
+  # replacing failed originals). Keeps gapop[i,] <-> files.cmd[i] alignment.
+  if(!is.null(attr(fitness, "cmd.files")))
+    files.cmd <- attr(fitness, "cmd.files")
+  subs <- attr(fitness, "substituted")
+  if(!is.null(subs) && length(subs) > 0L){
+    for(idx_str in names(subs))
+      gapop[as.integer(idx_str), ] <- subs[[idx_str]]
+  }
+  # cmd.files tracks each gapop row's cmd path across gens. Rebuilt after every
+  # gen boundary as c(elite.cmd.moved, this-gen's surviving offspring cmds).
+  cmd.files <- files.cmd
 
   #calculate penalty for parameter bounds violations
   if(do.penalty){
@@ -142,8 +157,9 @@ fn.GA <- function(myconfig){
   
   for (gen in 1:n_generations) {
     #gen=1
-    if(gen==1) unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
-    
+    # NOTE: no blanket unlink here. Gen dirs are managed explicitly below
+    # (elites moved forward, dropped offspring deleted after fitness known).
+
     #reset workers after every 5 generations - this didn't help but we'll keep it jic
     if(n_generations>5){
     if(gen %in% seq(6,n_generations,5)){
@@ -163,8 +179,21 @@ fn.GA <- function(myconfig){
     }
     # Elitism - keep the top n runs
     elite_idx <- order(fitness, decreasing=F)[1:elitism]
-    elite <- gapop[elite_idx, , drop = FALSE]
-    
+    elite     <- gapop[elite_idx, , drop = FALSE]
+    elite.cmd <- cmd.files[elite_idx]   # cmd paths in prior gen's folder
+
+    # Move elite dirs into this gen's folder (folder names unchanged for
+    # traceability back to the elite's gen-of-origin + offspring idx).
+    # Cmd files' <ECOSPACE_OUTPUT_DIR> is rewritten to the new path.
+    dst_gen_dir     <- .gen_dir(run_dir, gen)
+    elite.cmd.moved <- .move_elite_dirs(elite.cmd, dst_gen_dir)
+
+    # Now delete the previous gen's folder (all surviving offspring from that
+    # gen that were NOT promoted to elite are no longer needed).
+    prev_gen_dir <- .gen_dir(run_dir, gen - 1L)
+    if(dir.exists(prev_gen_dir))
+      unlink(prev_gen_dir, recursive = TRUE)
+
     # Selection, Crossover, Mutation
     parents <- if(identical(selection.method, "rank")){
       select_parents(gapop, fitness)
@@ -182,14 +211,24 @@ fn.GA <- function(myconfig){
     # }
 
     
-    # Evaluate new population
+    # Evaluate new population -- always keep offspring dirs on disk. Selective
+    # cleanup of the dropped-worst offspring happens after fitness is known
+    # (see below), and elite dirs persist across gens via .move_elite_dirs.
     ensure_cluster(workers = myconfig$workers)  # optional but recommended
-    files.cmd <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i))
-    files.cmd <- unlist(files.cmd, use.names=F)
-    # On the last gen, keep the offspring run dirs so downstream per-run aggregation
-    # (e.g. Mrt across the final pop) can read each individual's Ecospace output.
-    del.this.gen <- !(preserve.final.output && gen == n_generations)
-    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=del.this.gen, gen=gen)
+    files.cmd   <- lapply(1:nrow(offspring),function(i) fn.parvec2cmd(par_vec=offspring[i,], g=gen, idx=i))
+    files.cmd   <- unlist(files.cmd, use.names=F)
+    new_fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=gen)
+    # Sync files.cmd + offspring with any retry substitutions (fresh random
+    # parvecs that replaced failed originals). Updating `offspring` here means
+    # the substituted parvec flows into the new gapop via the rbind below --
+    # so the population matrix stays consistent with what actually ran.
+    if(!is.null(attr(new_fitness, "cmd.files")))
+      files.cmd <- attr(new_fitness, "cmd.files")
+    subs <- attr(new_fitness, "substituted")
+    if(!is.null(subs) && length(subs) > 0L){
+      for(idx_str in names(subs))
+        offspring[as.integer(idx_str), ] <- subs[[idx_str]]
+    }
     
     #calculate penalty for parameter bounds violations
     # pen.wt = abs(diff(range(fitness)))*0.1
@@ -217,16 +256,25 @@ fn.GA <- function(myconfig){
     drop_extra <- worst_non_na[seq_len(max(0L, n_drop - length(na_idx)))]
     worst_offspring_idx <- c(na_idx, drop_extra)
 
-    gapop   <- rbind(elite, offspring[-worst_offspring_idx, , drop=FALSE])
-    fitness <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
+    # Delete dropped-offspring dirs from this gen's folder before rebuilding.
+    dropped_cmd <- files.cmd[worst_offspring_idx]
+    if(length(dropped_cmd) > 0L)
+      unlink(dirname(dropped_cmd), recursive = TRUE)
+
+    gapop     <- rbind(elite, offspring[-worst_offspring_idx, , drop=FALSE])
+    fitness   <- c(fitness[elite_idx], new_fitness[-worst_offspring_idx])
+    cmd.files <- c(elite.cmd.moved, files.cmd[-worst_offspring_idx])
 
     deficit <- myconfig$popSize - nrow(gapop)
     if(deficit > 0L){
       warning(sprintf("Gen %d: %d offspring failed beyond what elites can fill; backfilling with %d elite clones.",
                       gen, length(na_idx), deficit))
-      fill_idx <- rep(seq_len(elitism), length.out = deficit)
-      gapop   <- rbind(gapop,   elite[fill_idx, , drop=FALSE])
-      fitness <- c(fitness, fitness[seq_len(elitism)][fill_idx])
+      fill_idx  <- rep(seq_len(elitism), length.out = deficit)
+      gapop     <- rbind(gapop,   elite[fill_idx, , drop=FALSE])
+      fitness   <- c(fitness, fitness[seq_len(elitism)][fill_idx])
+      # Backfilled slots point at the same elite dir on disk (harmless: elite
+      # is a genome duplicate). Downstream ensemble should dedup on cmd path.
+      cmd.files <- c(cmd.files, elite.cmd.moved[fill_idx])
     }
     
     #plot and save final generation
@@ -242,39 +290,22 @@ fn.GA <- function(myconfig){
                                       paste0('final_ga_pop_distributions_', timestamp, '.pdf')))
       write.csv(gapop, file.path(dir.results, paste0('final_ga_pop', timestamp, '.csv')))
 
-      if(preserve.final.output){
-        # gapop layout after rebuild: rows 1..elitism are elites (carried over from
-        # gen N-1, no output dir on disk); rows elitism+1..popSize are this gen's
-        # surviving offspring (output dirs kept because del.this.gen=FALSE above).
-        offspring_rows_kept <- setdiff(seq_len(nrow(offspring)), worst_offspring_idx)
-        offspring_cmd       <- files.cmd[offspring_rows_kept]
-
-        # Re-run the elite slots to materialize their output dirs. EwE.exe is
-        # deterministic so this regenerates the same outputs gen N-1 produced.
-        elite_cmd <- character(0L)
-        if(elitism > 0L){
-          elite_cmd <- vapply(seq_len(elitism),
-                              function(i) fn.parvec2cmd(par_vec=gapop[i,], g=998, idx=i),
-                              character(1L))
-          cat(sprintf("\n[final-pop] Re-running %d elite individuals to preserve their Ecospace output\n", elitism))
-          .ignored <- fn.runEwE.gapop(elite_cmd, obj.fxn=obj.fxn,
-                                      fit.abs.catch=fit.abs.catch,
-                                      delete.output=FALSE, gen="elite")
-        }
-
-        mapping <- data.frame(
-          gapop_row = seq_len(nrow(gapop)),
-          role      = c(rep("elite",     elitism),
-                        rep("offspring", length(offspring_cmd))),
-          cmd_file  = c(elite_cmd, offspring_cmd),
-          fitness   = fitness,
-          stringsAsFactors = FALSE
-        )
-        map_path <- file.path(dir.results, paste0("final_ga_runs_", timestamp, ".csv"))
-        write.csv(mapping, map_path, row.names=FALSE)
-        message(sprintf("Final-pop output preserved: %d/%d individuals on disk; mapping at %s",
-                        sum(!is.na(mapping$cmd_file)), nrow(gapop), map_path))
-      }
+      # Elite dirs have been carried forward via .move_elite_dirs on every gen
+      # boundary, so run_dir/gen<n_generations>/ already holds all `popSize`
+      # dirs. The mapping CSV is written directly from the tracked cmd.files
+      # array -- no g=998 rerun step needed.
+      mapping <- data.frame(
+        gapop_row = seq_len(nrow(gapop)),
+        role      = c(rep("elite",     elitism),
+                      rep("offspring", nrow(gapop) - elitism)),
+        cmd_file  = cmd.files,
+        fitness   = fitness,
+        stringsAsFactors = FALSE
+      )
+      map_path <- file.path(dir.results, paste0("final_ga_runs_", timestamp, ".csv"))
+      write.csv(mapping, map_path, row.names=FALSE)
+      message(sprintf("Final-pop mapping written: %d individuals on disk in %s\n  %s",
+                      nrow(mapping), .gen_dir(run_dir, gen), map_path))
     }
     
     

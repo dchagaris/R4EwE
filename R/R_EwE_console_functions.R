@@ -544,10 +544,9 @@ fn.envresp_offval_tags <- function(env.base){
   out$par3 <- 0
   out$par4 <- 0
 
-  # Drop any par5/par6 (or Param.5/Param.6) — linear uses only 2 params and the CLI tag
-  # carries 4 slots, so anything beyond par4 is irrelevant to the off tag.
-  for(col in c("par5", "par6", "Param.5", "Param.6"))
-    if(col %in% names(out)) out[[col]] <- NULL
+  # Preserve par5/par6 (or Param.5/Param.6) as passthrough — the linear "off" tag
+  # only uses par1..par4, but downstream consumers (GA env_pars, response plots)
+  # need par5 (normal Max, sigmoid Slope) and par6 (sigmoid Scalar).
 
   out$tag <- paste("<ECOSPACE_ENVIRONMENTAL_RESPONSE_INDEXED>(", idx_vec, "),",
                    out$shape.idx, out$par1, out$par2, out$par3, out$par4,
