@@ -11,9 +11,12 @@
 #     can be compared against year-matched model output.
 #   - Prediction reader uses the per-species CSV (denser than the per-step
 #     .asc files).
-#   - LL formulation: SSE on unit-sum normalised maps over the shared valid
-#     (non-NODATA) mask. Scaled by a single myconfig$spatial.weight so the
-#     spatial term doesn't swamp the timeseries LL.
+#   - LL formulation: cross-entropy -sum(obs * log(pred)) on unit-sum
+#     normalised maps over the shared valid (non-NODATA) mask. This is the
+#     multinomial negative log-likelihood kernel (constant term -sum(o log o)
+#     absorbed), so the spatial component is additive with the lognormal
+#     timeseries NLL. Scaled by a single myconfig$spatial.weight (interpretable
+#     as a prior precision on the spatial fit).
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 #' @title Read an ASCII grid, returning a numeric matrix + NODATA value.
@@ -284,22 +287,23 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
 #' @description Per row of \code{spatial.obs}: builds predicted map for that
 #'   pool code, averages over the row's own \code{styear}..\code{endyear}
 #'   window, unit-sum normalises both obs and pred on the shared valid mask
-#'   (non-NA in both), and accumulates SSE. Returns weighted total plus a
-#'   per-species named vector so callers can inspect the breakdown.
+#'   (non-NA in both), and accumulates cross-entropy
+#'   \eqn{-\sum \tilde o \log \tilde p} (multinomial NLL kernel). Returns
+#'   weighted total plus a per-species named vector.
 #' @param dir.pred Path to an Ecospace output folder (parent of \code{csv/}).
 #' @param spatial.obs Output of \code{fn.load_gfisher_maxn} (or similar), with
 #'   columns \code{pc, species, styear, endyear} and list-col \code{map_norm}.
-#' @param spatial.weight Numeric scalar multiplier applied to the summed SSE
-#'   to keep the spatial term commensurate with the timeseries LL.
+#' @param spatial.weight Numeric scalar multiplier applied to the summed cross
+#'   entropy (interpretable as a prior precision on the spatial fit).
 #' @param group.names Character vector indexed by pool code (needed by
 #'   \code{fn.ecospace_spatial_pred}).
 #' @param model_styear Calendar year corresponding to Ecospace step 1
 #'   (default 1985).
 #' @return List with:
-#'   \code{total}  = weighted total SSE (scalar),
-#'   \code{per_species} = named numeric vector, one weighted SSE per row of
-#'     \code{spatial.obs}. NA entries indicate rows that could not be scored
-#'     (missing prediction, empty window, all-NODATA overlap).
+#'   \code{total}  = weighted total cross-entropy (scalar),
+#'   \code{per_species} = named numeric vector, one weighted cross-entropy per
+#'     row of \code{spatial.obs}. NA entries indicate rows that could not be
+#'     scored (missing prediction, empty window, all-NODATA overlap).
 #' @export
 fn.spatial_LL <- function(dir.pred, spatial.obs,
                           spatial.weight = 1,
@@ -352,7 +356,10 @@ fn.spatial_LL <- function(dir.pred, spatial.obs,
     if(!is.finite(sp) || sp <= 0) next
     pred_v <- pred_v / sp
 
-    per[i] <- sum((pred_v - obs_v)^2, na.rm = TRUE)
+    # Cross-entropy (multinomial NLL kernel). eps floor on pred prevents
+    # log(0) blow-up where obs has probability mass in a cell pred zeroed out.
+    eps    <- .Machine$double.eps^0.5
+    per[i] <- -sum(obs_v * log(pmax(pred_v, eps)), na.rm = TRUE)
   }
 
   total <- spatial.weight * sum(per, na.rm = TRUE)

@@ -1139,6 +1139,17 @@ safe_runEwE <- function(cmdfile, do.obj, fit.abs.catch = TRUE) {
     fn.runEwE(cmdfile = cmdfile, do.obj = do.obj, fit.abs.catch = fit.abs.catch),
     error = function(e) NA_real_)
   if (is.numeric(out) && length(out) >= 1 && is.finite(out[1])){
+    # Reject artificially low scores from Ecospace runs that aborted mid-write
+    # (only Region_0 CSVs on disk). fn.ecospace_objfxn quietly skips obs series
+    # whose region file is missing, so the returned fitness is finite but
+    # systematically low. When `expected_regions` is defined in .GlobalEnv
+    # (e.g. 0:16 for phase-3 WFS MICE), require every listed region's annual
+    # biomass CSV to be on disk with real content; otherwise return NA so the
+    # gapop retry loop swaps in a fresh random parvec.
+    expected_regions <- if(exists("expected_regions", envir = .GlobalEnv))
+                          get("expected_regions", envir = .GlobalEnv) else NULL
+    if(!.check_ecospace_output(dirname(cmdfile), expected_regions))
+      return(NA_real_)
     out[1]
   } else {
     NA_real_
@@ -1553,7 +1564,7 @@ cluster_is_ok <- function() {
   required <- c(
     # console + objective functions
     "file.console",
-    "safe_runEwE", "fn.runEwE",
+    "safe_runEwE", "fn.runEwE", ".check_ecospace_output",
     "fn.objfxn1", "fn.objfxn2", "fn.ecospace_objfxn",
     # per-region prediction readers and their internal helpers
     "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
@@ -1575,7 +1586,7 @@ cluster_is_ok <- function() {
   # sensitivity-only session (no GA myconfig / run_dir) run without needing
   # to define these.
   optional <- c("spatial.obs", "spatial.weight", "model_styear",
-                "myconfig", "run_dir")
+                "myconfig", "run_dir", "expected_regions")
   optional <- optional[vapply(optional,
                               function(nm) exists(nm, envir = .GlobalEnv),
                               logical(1))]

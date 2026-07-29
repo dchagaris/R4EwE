@@ -23,6 +23,38 @@
 # }
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Shared post-run output check.
+# -----------------------------------------------------------------------------
+# Detects the "partial output" failure mode observed in phase 3: an Ecospace
+# worker aborts mid-write after the first region's CSVs are on disk. The GA
+# retry logic keys off is.na(fitness); a run with partial output still returns
+# a finite (but artificially low) score because fn.ecospace_objfxn silently
+# skips obs series whose region file is absent. Verifying the expected region
+# set is present forces such runs to NA and triggers the retry substitution.
+#
+# expected_regions: integer vector of region IDs (e.g. 0:16). NULL keeps the
+# legacy "any Ecospace_*.csv" check for backward compatibility with sessions
+# that never defined it.
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' @keywords internal
+#' @noRd
+.check_ecospace_output <- function(d, expected_regions = NULL){
+  if(!dir.exists(d)) return(FALSE)
+  f <- list.files(d, pattern = "^Ecospace_.*\\.csv$", ignore.case = TRUE)
+  if(length(f) == 0L) return(FALSE)
+  if(is.null(expected_regions)) return(TRUE)
+  needed <- sprintf("Ecospace_Annual_Average_Region_%d_Biomass.csv",
+                    as.integer(expected_regions))
+  paths  <- file.path(d, needed)
+  ok     <- file.exists(paths)
+  # header-only CSVs are ~a few hundred bytes; a real annual grid over 40y is
+  # tens of kB. 500 B safely separates "aborted after opening the file" from
+  # "wrote actual data".
+  if(all(ok)) ok <- ok & (file.size(paths) > 500)
+  all(ok)
+}
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #fn.runEwE-----------------------------------------------------------------------------------------
 #' Run one Ecospace job (system2 version)
 #' @param cmdfile Character: full path to the command file Ecospace consumes
@@ -190,13 +222,15 @@ fn.runEwE.parallel <-  function(
   print(paste('Run time',round(as.numeric(Sys.time()-t1),2)))
 
   ##missing runs----
-  # Treat a run as failed if its dir contains nothing but the cmd file +/- log files
-  # (i.e., no Ecospace CSV output). Just counting files <=1 misses cases where the
-  # stdout/stderr logs exist but EwE didn't write any CSVs.
-  has_ecospace_output <- function(d){
-    f <- list.files(d, pattern = "^Ecospace_.*\\.csv$", ignore.case = TRUE)
-    length(f) > 0L
-  }
+  # Treat a run as failed if its dir contains no Ecospace CSV output OR (when
+  # expected_regions is defined in .GlobalEnv, e.g. 0:16 for phase-3 WFS MICE)
+  # is missing any per-region annual biomass file. The region check catches
+  # the "aborted mid-write" failure mode where Region_0 output reached disk
+  # but downstream regions did not, which otherwise slips through as a
+  # non-NA but artificially low fitness.
+  expected_regions <- if(exists("expected_regions", envir = .GlobalEnv))
+                        get("expected_regions", envir = .GlobalEnv) else NULL
+  has_ecospace_output <- function(d) .check_ecospace_output(d, expected_regions)
   filecheck <- sapply(runlist$dir.out, has_ecospace_output)
   erruns <- which(!filecheck)
 
