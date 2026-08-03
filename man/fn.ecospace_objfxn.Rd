@@ -14,6 +14,12 @@ fn.ecospace_objfxn(
   fit.abs.catch = TRUE,
   types = NULL,
   eps = NULL,
+  spatial.obs = if (exists("spatial.obs", envir = .GlobalEnv)) get("spatial.obs", envir =
+    .GlobalEnv) else NULL,
+  spatial.weight = if (exists("spatial.weight", envir = .GlobalEnv))
+    get("spatial.weight", envir = .GlobalEnv) else 1,
+  model_styear = if (exists("model_styear", envir = .GlobalEnv)) get("model_styear",
+    envir = .GlobalEnv) else 1985,
   return = c("both", "vector", "detail")
 )
 }

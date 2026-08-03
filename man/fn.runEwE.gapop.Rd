@@ -14,7 +14,11 @@ fn.runEwE.gapop(
   pardist = if (exists("gapop.pardist", envir = .GlobalEnv)) get("gapop.pardist", envir =
     .GlobalEnv) else "uniform",
   vuldist = if (exists("gapop.vuldist", envir = .GlobalEnv)) get("gapop.vuldist", envir =
-    .GlobalEnv) else "uniform"
+    .GlobalEnv) else "uniform",
+  rtdist = if (exists("gapop.rtdist", envir = .GlobalEnv)) get("gapop.rtdist", envir =
+    .GlobalEnv) else "log-uniform",
+  fltdist = if (exists("gapop.fltdist", envir = .GlobalEnv)) get("gapop.fltdist", envir =
+    .GlobalEnv) else "normal"
 )
 }
 \arguments{

@@ -8,7 +8,11 @@ fn.runEwE.parallel(
   runlist = runlist,
   obj.fxn = 1,
   cl.export = list("runlist", "obs.ts"),
-  fit.abs.catch = TRUE
+  fit.abs.catch = TRUE,
+  timeout = 1800,
+  capture_log = TRUE,
+  max_retries = 5,
+  n_cores = NULL
 )
 }
 \arguments{

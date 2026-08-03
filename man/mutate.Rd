@@ -4,30 +4,32 @@
 \alias{mutate}
 \title{Mutate population with parameter-wise random resets}
 \usage{
-mutate(population, margin = 0.2)
+mutate(population)
 }
 \arguments{
-\item{population}{Matrix of individuals on the log scale (rows = individuals, columns =
-parameters).}
-
-\item{margin}{Fractional expansion applied to the min–max range per parameter (on orig scale).}
+\item{population}{Matrix of individuals (rows = individuals, columns = parameters).}
 }
 \value{
 Mutated population matrix (same dimensions as \code{population}).
 }
 \description{
-Mutates individuals by redrawing selected genes from a range informed by the
-current population, with a configurable margin.
+For each gene of each individual, with probability \code{mutation_rate} redraw
+the value within parameter-specific bounds. The vulnerability bounds adapt to
+the current population mean (so the search drifts up or down with the population)
+and vul and red tide draws are log-uniform to match the initial-population
+sampling philosophy. All other parameters use fixed \code{L.bounds}/\code{U.bounds}
+with linear-uniform draws.
 }
 \details{
-The algorithm:
-\enumerate{
-\item Convert each parameter to original scale (exp), compute min and max across the population.
-\item Expand bounds by \code{margin} (lower reduced, upper increased); enforce vulnerability
-parameters \code{vul.par.idx} to be strictly > 1.
-\item Transform bounds back to log scale and, for each individual, redraw genes indicated
-by a Bernoulli mask (\code{mutation_rate}) uniformly within the parameter-specific bounds.
-}
+Adaptive vul bounds: \code{Gamma(shape=2, mean=pop_mean)}; bounds are the 1\\% and
+99\\% quantiles, clipped to \code{[1.01, 1e6]}. So as selection pulls the population
+mean upward (or downward), so does the mutation search window. Vul draws inside
+those bounds are log-uniform.
 
-Requires global variables: \code{n_pars}, \code{mutation_rate}, and \code{vul.par.idx}.
+Red tide draws are log-uniform over the fixed \code{[L.bounds, U.bounds]} for
+\code{redtide.par.idx} (symmetric around the baseline of 1 in log space, matching
+\code{fn.GApop(rtdist='log-uniform')}).
+
+Requires global variables: \code{n_pars}, \code{mutation_rate}, \code{vul.par.idx},
+\code{redtide.par.idx}, \code{par.labels}, \code{L.bounds}, \code{U.bounds}.
 }

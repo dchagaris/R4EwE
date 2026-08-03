@@ -10,6 +10,7 @@ fn.makeparvec(
   vul.min = 1.01,
   vul.max = 1e+06,
   vul.cv = 0.4,
+  vul.bounds.mode = "formula",
   do.env = FALSE,
   env_pars = NULL,
   env.min = 0.25,
@@ -28,10 +29,15 @@ fn.makeparvec(
   fltdyn.min = 0,
   fltdyn.max = 5,
   fltdyn.cv = 0.2,
+  fltdyn.bounds.mode = "adaptive",
   do.redtide = FALSE,
   redtide_pars = NULL,
   redtide.min = 0.5,
   redtide.max = 1.5,
+  redtide.inf.min = NULL,
+  redtide.inf.max = NULL,
+  redtide.slope.min = NULL,
+  redtide.slope.max = NULL,
   redtide.cv = 0.2
 )
 }
@@ -40,11 +46,18 @@ fn.makeparvec(
 
 \item{vul_pars}{Data frame of vulnerability parameters.}
 
-\item{vul.min}{Minimum vulnerability (unused placeholder).}
+\item{vul.min, vul.max}{Scalar override bounds for the vulnerability search range.
+Only used when \code{vul.bounds.mode = "override"}; ignored under the default
+\code{"formula"} mode.}
 
-\item{vul.max}{Maximum vulnerability (unused placeholder).}
+\item{vul.cv}{Coefficient of variation for vulnerabilities; controls the
+log-scale spread of the formula-derived bounds (effective log-sd =
+\code{exp(2 * vul.cv)}).}
 
-\item{vul.cv}{Coefficient of variation for vulnerabilities.}
+\item{vul.bounds.mode}{Character; either \code{"formula"} (default — bounds
+are log-symmetric around each \code{base.val} using \code{vul.cv}) or
+\code{"override"} (use \code{[vul.min, vul.max]} as the bounds for every
+vul parameter, ignoring \code{base.val} and \code{vul.cv}).}
 
 \item{do.env}{Logical; include environmental parameters.}
 
@@ -71,6 +84,40 @@ fn.makeparvec(
 \item{med_pars}{Data frame of mediation shape parameters.}
 
 \item{med.xbase.cv}{CV applied to mediation x-base parameters.}
+
+\item{do.fltdyn}{Logical; include fleet dynamics parameters.}
+
+\item{fltdyn_pars}{Data frame of fleet parameters with at least \code{base.val}.}
+
+\item{fltdyn.min, fltdyn.max}{Safety floor/ceiling for fleet parameters. Under
+the default \code{"adaptive"} bounds mode they are NOT hard limits — the
+per-parameter bounds widen to \code{base.val ± 4 * fltdyn.cv * base.val} so
+the full normal bell fits inside, while \code{fltdyn.min}/\code{fltdyn.max}
+are used as the lower/upper bound only when the bell is tighter than them.
+Under \code{"scalar"} mode every fleet parameter gets these as hard scalar
+bounds (legacy behavior; will clip the bell if \code{base.val} exceeds them).}
+
+\item{fltdyn.cv}{CV for fleet parameter draws; also drives the half-width of
+the adaptive bounds (\code{4 * fltdyn.cv * base.val}).}
+
+\item{fltdyn.bounds.mode}{Either \code{"adaptive"} (default) or \code{"scalar"}.}
+
+\item{do.redtide}{Logical; include red tide environmental response parameters.}
+
+\item{redtide_pars}{Data frame of red tide response parameters (shape 11 logistic4params).}
+
+\item{redtide.min, redtide.max}{Scalar multiplier bounds applied to both inflection.adj
+and slope.adj for red tide responses. Used as the fallback default when the
+per-parameter overrides below are \code{NULL}.}
+
+\item{redtide.inf.min, redtide.inf.max}{Optional per-parameter bounds for the red tide
+\code{inflection.adj} multiplier (\code{NULL} → fall back to redtide.min/max).}
+
+\item{redtide.slope.min, redtide.slope.max}{Optional per-parameter bounds for the red tide
+\code{slope.adj} multiplier (\code{NULL} → fall back to redtide.min/max).}
+
+\item{redtide.cv}{CV used for red tide parameter draws when sampling with a normal
+distribution.}
 }
 \value{
 Invisibly returns \code{NULL}. Several objects are set globally.

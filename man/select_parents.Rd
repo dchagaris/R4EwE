@@ -2,23 +2,27 @@
 % Please edit documentation in R/R_Ecospace_GA_calibration.R
 \name{select_parents}
 \alias{select_parents}
-\title{Select parents by rank-based sampling}
+\title{Select parents by rank-based sampling (minimization)}
 \usage{
 select_parents(gapop, fitness)
 }
 \arguments{
 \item{gapop}{Matrix or data frame of individuals (rows = individuals, columns = parameters).}
 
-\item{fitness}{Numeric vector of fitness values (length equals nrow(gapop)); higher is better.}
+\item{fitness}{Numeric vector of fitness values (length equals nrow(gapop)); lower is better.}
 }
 \value{
 Matrix of selected parents with the same dimensions as \code{gapop}.
 }
 \description{
-Ranks individuals by fitness (higher is better), converts ranks to selection
-probabilities, and samples a new parent population with replacement.
+Ranks individuals by fitness for a MINIMIZATION objective (lower = better),
+converts ranks to selection probabilities, and samples a new parent population
+with replacement. The lowest-fitness individual receives the highest rank and
+therefore the highest probability of being chosen.
 }
 \details{
-Ranks are computed with ties broken at random, then normalized to probabilities.
-Parents are sampled with replacement to keep population size constant.
+Ranks are computed via \code{rank(-fitness, ties.method='random')} so the smallest
+fitness gets rank \code{nrow(gapop)} (i.e., the highest selection weight). Selection
+pressure is roughly linear: the best individual is only ~2x more likely than the
+median to be picked. Use \code{\link{tournament_select}} for stronger pressure.
 }

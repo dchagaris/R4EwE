@@ -34,12 +34,11 @@ schema, see \code{\link{fn.makeparvec}}). May be \code{NULL}.}
 
 \item{dims}{Panel grid \code{c(rows, cols)}. Default \code{c(3, 3)}.}
 
-\item{highlight_pars}{Numeric vector of length \code{ncol(gapop)} whose values get the
-blue highlight (vline on histograms, overlaid curve on env/rt panels). If
-\code{NULL} (default), \code{est_par_vec} is used — i.e. the baseline is highlighted,
-matching the original behavior used for the initial-population plot. Pass the
-min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the final-population
-posterior plot.}
+\item{highlight_pars}{Numeric vector of length \code{ncol(gapop)} drawn in BLUE
+(dashed vline on histograms; overlaid response curve on env/rt panels). If
+\code{NULL} (default — initial-pop plot use case), only the red baseline is drawn.
+Pass the min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the
+final-population plot to overlay best-fit on top of the baseline + ensemble.}
 }
 \value{
 Invisibly returns \code{file}.
@@ -57,3 +56,10 @@ a vertical dashed line at the highlighted value.
 }
 Writes the panels to a multipage PDF.
 }
+\section{Markers}{
+
+RED: \code{est_par_vec} — baseline / starting values; on env/rt panels the red
+curve uses adj = 1 (i.e. the natural EwE curve).
+BLUE: \code{highlight_pars} (only when supplied) — typically the gen-N best-fit.
+}
+

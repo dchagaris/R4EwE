@@ -1329,6 +1329,406 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' @title One-panel-per-series Ecospace prediction-vs-observation plots.
+#' @description Obs-centric counterpart to \code{\link{fn.ecospace_plot_fits}}: draws one panel per
+#'   observation series in \code{obs.ts$ts.head} with the matching predicted series overlaid, rather
+#'   than one panel per group with every matching obs series stacked on top of each other. The
+#'   predicted series is constructed on the fly by summing the appropriate prediction array over the
+#'   pool codes (\code{Poolcodes}) and regions (\code{Regions}) that the obs row calls for, so
+#'   multi-pool / multi-region surveys plot cleanly against the aggregated prediction they are
+#'   fit to. Type routing:
+#'   \itemize{
+#'     \item types 0, 1 (relative / absolute biomass) -> per-region \code{Biomass}, summed across
+#'       the listed pool codes and regions;
+#'     \item types 6, 61, -6 (catch) -> group-aggregated \code{Catch};
+#'     \item type 12 (landings) -> group-aggregated \code{Landings}, group taken from
+#'       \code{Poolcode2};
+#'     \item type 13 (fleet-specific dead discards obs; matched against \strong{total} discards
+#'       predicted at \code{fleet|group} resolution -- see the
+#'       \code{[[project_mice_ts_discards]]} note) -> \code{disc_total_fg} column
+#'       \code{<fleet_name>|<group_name>};
+#'     \item types 19, 20 (total-discards obs) -> group-aggregated \code{disc_total};
+#'     \item types 4, 104 (fishing mortality) -> \code{catch / biomass} per region.
+#'   }
+#'   Any other type is skipped with a message. For relative series, obs are rescaled to the baseline
+#'   run's prediction by \code{q = mean(obs[overlap]) / mean(pred[overlap, scale2run])} (as in
+#'   \code{fn.ecospace_plot_fits}); absolute series are plotted at their literal values unless
+#'   \code{scale.abs = TRUE}.
+#' @param dir.out Path to an Ecospace run folder (or vector of them).
+#' @param obs.ts Output of \code{\link{fn.read_ecosim_timeseries}}.
+#' @param timestep \code{"annual"} or \code{"monthly"}.
+#' @param regions Integer vector of region IDs to load. \code{NULL} (default) auto-detects.
+#' @param styear Calendar start year (defaults to earliest year in \code{obs.ts$ts}).
+#' @param scale2run Integer index of the run used as the obs-scaling baseline (1..nruns).
+#' @param types Optional integer vector of \code{Type} codes to restrict to (e.g. \code{c(0, 1)} for
+#'   biomass only). \code{NULL} = all supported.
+#' @param groups Group filter. \code{"all"} (default) keeps every obs series whose group codes map
+#'   to at least one prediction column; an integer vector keeps only obs whose group set intersects
+#'   it. "Group codes" here means \code{Poolcodes} for most types and \code{Poolcode2} for types 12
+#'   and 13 (see the type routing above).
+#' @param series Optional integer vector of row indices into \code{obs.ts$ts.head}. When supplied,
+#'   \code{types} and \code{groups} are ignored and exactly these rows are plotted.
+#' @param scale.abs Logical, default \code{FALSE}. When \code{TRUE}, the \code{q} rescaling is also
+#'   applied to absolute series.
+#' @param group.names Character vector indexed by group pool code. Required so obs pool codes can
+#'   be mapped to Ecospace prediction columns.
+#' @param fleet.names Character vector indexed by fleet pool code. Required for type-13 (fleet x
+#'   group) obs to build the \code{fleet|group} column key.
+#' @param output One of \code{"pdf"} (single combined multi-page PDF at
+#'   \code{file.path(dir.plts, paste0("ecospace series fits_", run.label, ".pdf"))}),
+#'   \code{"png"} (one PNG per series under
+#'   \code{file.path(dir.plts, paste0("ecospace series fits_", run.label))}), or \code{"device"}
+#'   (draw to the currently open device).
+#' @param plt.dims Panel grid \code{c(rows, cols)} for the PDF and device outputs. Ignored for PNG.
+#' @param dir.plts Directory to write PDF / PNG output.
+#' @param run.label String appended to the PDF filename / PNG subfolder. Defaults to today's date.
+#' @param run.colors Vector of line colors per run (in run order). Default is a MATLAB-like palette.
+#' @param sim.labels Multi-run labels used in the run legend. Default = run subfolder basenames.
+#' @return Invisibly returns a \code{data.frame} (one row per plotted series) with columns
+#'   \code{row_idx, title, type, poolcodes, poolcode2, regions, n_obs, q, rss}.
+#' @seealso \code{\link{fn.ecospace_plot_fits}} for the group-centric layout.
+#' @examples
+#' \dontrun{
+#' ts <- fn.read_ecosim_timeseries("ts_mice_v4_discards_ecospace_regions.csv")
+#' fn.ecospace_plot_series_fits(dir.out = "sp00_5min_init", obs.ts = ts,
+#'                              group.names = mygroupnames, fleet.names = myfleetnames,
+#'                              output = "pdf")
+#' }
+#' @export
+fn.ecospace_plot_series_fits <- function(dir.out, obs.ts,
+                                         timestep    = "annual",
+                                         regions     = NULL,
+                                         styear      = NULL,
+                                         scale2run   = 1,
+                                         types       = NULL,
+                                         groups      = "all",
+                                         series      = NULL,
+                                         scale.abs   = FALSE,
+                                         group.names = NULL,
+                                         fleet.names = NULL,
+                                         output      = c("pdf", "png", "device"),
+                                         plt.dims    = c(3, 3),
+                                         dir.plts    = dir.out[1],
+                                         run.label   = Sys.Date(),
+                                         run.colors  = NULL,
+                                         sim.labels  = NULL){
+
+  output <- match.arg(output)
+
+  # 1. detect regions and styear ---------------------------------------------------------------
+  if(is.null(regions)) regions <- .detect_ecospace_regions(dir.out, timestep)
+  if(length(regions) == 0)
+    stop("No Ecospace per-region output files found under: ", paste(dir.out, collapse = ", "))
+  if(is.null(styear)){
+    yrs_obs <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+    styear  <- min(yrs_obs[is.finite(yrs_obs)])
+    if(!is.finite(styear)) stop("Could not infer styear from obs.ts; please pass styear = <year>.")
+  }
+
+  th <- obs.ts$ts.head
+  if(!"Poolcodes" %in% names(th)) th$Poolcodes <- lapply(th$Poolcode, function(x) if(is.na(x)) integer(0) else as.integer(x))
+  if(!"Regions"   %in% names(th)) th$Regions   <- lapply(th$Region,   function(x) if(is.na(x)) integer(0) else as.integer(x))
+
+  # 2. type routing ----------------------------------------------------------------------------
+  # For each supported type code, remember which pred array we need and which obs column supplies
+  # the group id (Poolcodes -> most; Poolcode2 -> type 12; Poolcode2 -> type 13 group, Poolcode ->
+  # type 13 fleet).
+  type_route <- function(t){
+    if(t %in% c(0, 1))    return(list(kind = "region_group", pred_key = "biomass",    y_lab = "biomass"))
+    if(t %in% c(6, 61,-6))return(list(kind = "region_group", pred_key = "catch",      y_lab = "catch"))
+    if(t == 12)           return(list(kind = "region_group", pred_key = "landings",   y_lab = "landings",       group_from = "Poolcode2"))
+    if(t %in% c(19, 20))  return(list(kind = "region_group", pred_key = "disc_total", y_lab = "total discards"))
+    if(t == 13)           return(list(kind = "fleet_group",  pred_key = "disc_total_fg", y_lab = "total discards"))
+    if(t %in% c(4, 104))  return(list(kind = "region_group", pred_key = "fmort",      y_lab = "F (catch/biomass)"))
+    NULL
+  }
+
+  # 3. filter obs rows -------------------------------------------------------------------------
+  n_series <- nrow(th)
+  if(!is.null(series)){
+    keep_rows <- as.integer(series)
+    if(any(keep_rows < 1 | keep_rows > n_series))
+      stop("series contains row indices outside 1..", n_series)
+  } else {
+    routes <- lapply(th$Type, type_route)
+    keep_rows <- which(!vapply(routes, is.null, logical(1)))
+    if(!is.null(types))
+      keep_rows <- keep_rows[th$Type[keep_rows] %in% as.integer(types)]
+
+    if(!identical(groups, "all")){
+      grp_want <- as.integer(groups)
+      group_of <- function(j){
+        rt <- routes[[j]]; if(is.null(rt)) return(integer(0))
+        if(!is.null(rt$group_from) && rt$group_from == "Poolcode2")
+          return(as.integer(th$Poolcode2[j]))
+        as.integer(th$Poolcodes[[j]])
+      }
+      keep_rows <- keep_rows[vapply(keep_rows,
+                                    function(j) length(intersect(group_of(j), grp_want)) > 0,
+                                    logical(1))]
+    }
+  }
+  if(length(keep_rows) == 0)
+    stop("No obs series match the requested types/groups/series filter.")
+
+  # 4. figure out which pred arrays we actually need & load them once --------------------------
+  routes_kept <- lapply(th$Type[keep_rows], type_route)
+  need_keys   <- unique(vapply(routes_kept, function(rt) rt$pred_key, character(1)))
+
+  pred <- list()
+  if("biomass"    %in% need_keys) pred$biomass    <- fn.read_pred_ecospace_wide(dir.out, "Biomass",  timestep, regions, styear, aggregate_by_group = FALSE)
+  if("catch"      %in% need_keys) pred$catch      <- fn.read_pred_ecospace_wide(dir.out, "Catch",    timestep, regions, styear, aggregate_by_group = TRUE)
+  if("landings"   %in% need_keys) pred$landings   <- fn.read_pred_ecospace_wide(dir.out, "Landings", timestep, regions, styear, aggregate_by_group = TRUE)
+  if("disc_total" %in% need_keys || "disc_total_fg" %in% need_keys){
+    ds_split <- fn.read_pred_ecospace_discards_split(dir.out, timestep, regions, styear, obs.ts, fleet.names)
+    if(!is.null(ds_split)){
+      pred$disc_total    <- ds_split$total
+      pred$disc_total_fg <- ds_split$total_fg
+    }
+  }
+  if("fmort"      %in% need_keys) pred$fmort      <- .read_pred_ecospace_F(dir.out, timestep, regions, styear)
+
+  pred <- pred[!vapply(pred, is.null, logical(1))]
+  if(length(pred) == 0)
+    stop("No prediction files found under: ", paste(dir.out, collapse = ", "))
+
+  # array dimnames + run metadata (all pred arrays share the year / region / run axes)
+  ref_arr    <- pred[[1]]
+  xtime      <- as.numeric(dimnames(ref_arr)[[1]])
+  obs_yrs    <- suppressWarnings(as.numeric(rownames(obs.ts$ts)))
+  common_idx <- match(obs_yrs, xtime)
+  region_ids <- as.integer(sub("R", "", dimnames(ref_arr)[[3]]))
+  nruns      <- dim(ref_arr)[4]
+  run_labels <- dimnames(ref_arr)[[4]]
+  if(is.null(run.colors)) run.colors <- .matlab_palette(nruns)
+  if(is.null(sim.labels)) sim.labels <- run_labels
+  if(scale2run < 1 || scale2run > nruns)
+    stop("scale2run = ", scale2run, " is out of range (", nruns, " run(s) found).")
+
+  # group name -> pool code lookup (same normalization as fn.ecospace_plot_fits)
+  norm_name  <- function(x) gsub("\\s+", "_", trimws(gsub('"', "", as.character(x))))
+  norm_gn    <- if(!is.null(group.names)) norm_name(group.names) else character(0)
+  norm_fleet <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
+  norm_fn    <- if(!is.null(fleet.names)) norm_fleet(fleet.names) else character(0)
+
+  # 5. build one predicted vector + one obs vector per kept row --------------------------------
+  build_series <- function(j){
+    rt <- type_route(th$Type[j]); if(is.null(rt)) return(NULL)
+    arr <- pred[[rt$pred_key]]
+    if(is.null(arr)) return(NULL)
+
+    eco_grp_names <- dimnames(arr)[[2]]
+
+    pred_v <- matrix(0, nrow = length(xtime), ncol = nruns,
+                     dimnames = list(dimnames(arr)[[1]], run_labels))
+
+    if(rt$kind == "region_group"){
+      # translate Poolcodes[[j]] (or Poolcode2 for type 12) into column indices via group.names
+      grp_pcs <- if(!is.null(rt$group_from) && rt$group_from == "Poolcode2")
+                   as.integer(th$Poolcode2[j])
+                 else as.integer(th$Poolcodes[[j]])
+      if(length(grp_pcs) == 0 || anyNA(grp_pcs)) return(NULL)
+
+      if(length(norm_gn) == 0) return(NULL)
+      col_idx <- vapply(grp_pcs, function(pc){
+        nm <- norm_gn[pc]
+        hit <- which(norm_name(eco_grp_names) == nm)
+        if(length(hit) == 0) NA_integer_ else hit[1]
+      }, integer(1))
+      if(anyNA(col_idx)) return(NULL)
+
+      regs_j <- as.integer(th$Regions[[j]]); if(length(regs_j) == 0) regs_j <- 0L
+      reg_idx <- match(regs_j, region_ids)
+      if(anyNA(reg_idx)) return(NULL)
+
+      for(ci in col_idx) for(ri in reg_idx){
+        slab <- arr[, ci, ri, , drop = FALSE]      # [year, 1, 1, run]
+        m    <- matrix(slab, nrow = length(xtime), ncol = nruns)
+        m[is.na(m)] <- 0
+        pred_v <- pred_v + m
+      }
+
+    } else if(rt$kind == "fleet_group"){
+      # type 13: obs row has Poolcode=fleet, Poolcode2=group. Predicted column
+      # name is "<fleet_name>|<group_name>" in disc_total_fg.
+      fpc <- as.integer(th$Poolcode[j]); gpc <- as.integer(th$Poolcode2[j])
+      if(is.na(fpc) || is.na(gpc)) return(NULL)
+      if(length(norm_fn) == 0 || length(norm_gn) == 0) return(NULL)
+      f_nm <- norm_fleet(fleet.names[fpc]); g_nm <- norm_name(group.names[gpc])
+      if(is.na(f_nm) || is.na(g_nm)) return(NULL)
+
+      meta <- fn.fg_meta(eco_grp_names)
+      hit  <- which(norm_fleet(meta$fleet_nm) == f_nm & norm_name(meta$group_nm) == g_nm)
+      if(length(hit) == 0) return(NULL)
+      ci <- hit[1]
+
+      regs_j <- as.integer(th$Regions[[j]]); if(length(regs_j) == 0) regs_j <- 0L
+      reg_idx <- match(regs_j, region_ids)
+      if(anyNA(reg_idx)) return(NULL)
+
+      for(ri in reg_idx){
+        slab <- arr[, ci, ri, , drop = FALSE]
+        m    <- matrix(slab, nrow = length(xtime), ncol = nruns)
+        m[is.na(m)] <- 0
+        pred_v <- pred_v + m
+      }
+
+    } else return(NULL)
+
+    obs_v <- as.numeric(obs.ts$ts[, j])
+    obs_v[obs_v < 0] <- NA
+    if(all(is.na(obs_v))) return(NULL)
+
+    # q rescale against the baseline run
+    abs_flag <- isTRUE(th$Absolute[j])
+    q <- 1
+    if(scale.abs || !abs_flag){
+      obs_nonna <- !is.na(obs_v)
+      pi <- common_idx[obs_nonna]; pi <- pi[!is.na(pi)]
+      if(length(pi) > 0){
+        mo <- mean(obs_v[obs_nonna], na.rm = TRUE)
+        mp <- mean(pred_v[pi, scale2run], na.rm = TRUE)
+        if(is.finite(mo) && is.finite(mp) && mp > 0) q <- mo / mp
+      }
+    }
+    obs_scaled <- obs_v / q
+
+    # rss on the baseline run (informative diagnostic)
+    fitted_at_obs <- pred_v[common_idx, scale2run]
+    resid         <- obs_scaled - fitted_at_obs
+    rss           <- sum(resid^2, na.rm = TRUE)
+
+    list(pred_v = pred_v, obs_v = obs_scaled, q = q, rss = rss, y_lab = rt$y_lab,
+         title = th$Title[j],
+         subtitle = sprintf("type=%s  pcs=%s  pc2=%s  R=%s  q=%.3g",
+                            as.character(th$Type[j]),
+                            paste(as.integer(th$Poolcodes[[j]]), collapse = ","),
+                            if(is.na(th$Poolcode2[j])) "-" else as.character(as.integer(th$Poolcode2[j])),
+                            paste(as.integer(th$Regions[[j]]), collapse = ","),
+                            q),
+         n_obs = sum(!is.na(obs_v)))
+  }
+
+  built <- lapply(keep_rows, build_series)
+  ok    <- !vapply(built, is.null, logical(1))
+  if(!any(ok)){
+    warning("None of the requested obs series resolved to a valid prediction (missing pool codes, ",
+            "missing regions, or all-NA obs). Nothing plotted.")
+    return(invisible(NULL))
+  }
+  if(any(!ok))
+    message(sprintf("[fn.ecospace_plot_series_fits] %d/%d series skipped (unresolved pool codes / regions or all-NA obs).",
+                    sum(!ok), length(built)))
+  built     <- built[ok]
+  keep_rows <- keep_rows[ok]
+
+  # 6. draw ------------------------------------------------------------------------------------
+  draw_panel <- function(b, standalone_legend = FALSE){
+    ylim_top <- max(c(b$pred_v, b$obs_v), na.rm = TRUE) * 1.2
+    if(!is.finite(ylim_top) || ylim_top == 0) ylim_top <- 1
+    graphics::par(xpd = FALSE)
+    graphics::matplot(xtime, b$pred_v, type = "l", lty = 1, lwd = 2,
+                      ylim = c(0, ylim_top), main = b$title,
+                      col = run.colors, xlab = "", ylab = b$y_lab)
+    graphics::mtext(b$subtitle, side = 3, line = 0.2, cex = 0.7, col = "gray30")
+    graphics::points(obs_yrs, b$obs_v, pch = 21, col = "black", bg = "white",
+                     cex = 1.1, lwd = 0.5)
+    if(standalone_legend && nruns > 1)
+      graphics::legend("topleft", legend = sim.labels, lty = 1, lwd = 2,
+                       col = run.colors, bty = "n", cex = 0.7)
+  }
+
+  page_legend <- function(){
+    if(nruns <= 1) return(invisible(NULL))
+    graphics::par(xpd = NA)
+    x_dev <- graphics::grconvertX(0.5, from = "ndc", to = "user")
+    y_dev <- graphics::grconvertY(0.02, from = "ndc", to = "user")
+    graphics::legend(x = x_dev, y = y_dev, legend = sim.labels, lty = 1, lwd = 2,
+                     col = run.colors, bty = "n", xpd = NA, xjust = 0.5, yjust = 0,
+                     ncol = min(4, length(sim.labels)))
+  }
+
+  n_per_page <- prod(plt.dims)
+  pad_page <- function(n_drawn){
+    rem <- (n_per_page - (n_drawn %% n_per_page)) %% n_per_page
+    if(rem > 0) for(k in seq_len(rem)) graphics::plot.new()
+  }
+
+  if(output == "pdf"){
+    if(!dir.exists(dir.plts)) dir.create(dir.plts, recursive = TRUE, showWarnings = FALSE)
+    pdf_path <- file.path(dir.plts, paste0("ecospace series fits_", run.label, ".pdf"))
+    grDevices::pdf(pdf_path, onefile = TRUE, width = 11, height = 8.5)
+    on.exit(grDevices::dev.off(), add = TRUE)
+    graphics::par(mfrow = plt.dims, mar = c(3, 4, 3, 1), oma = c(4, 0, 2, 1))
+    for(i in seq_along(built)){
+      draw_panel(built[[i]])
+      if(i %% n_per_page == 0 || i == length(built)) page_legend()
+    }
+    pad_page(length(built))
+    message("Wrote ", pdf_path)
+
+  } else if(output == "png"){
+    png_dir <- file.path(dir.plts, paste0("ecospace series fits_", run.label))
+    if(!dir.exists(png_dir)) dir.create(png_dir, recursive = TRUE, showWarnings = FALSE)
+    safe <- function(s) gsub("[^A-Za-z0-9._-]+", "_", s)
+    # Windows caps total path at 260 chars (MAX_PATH); dir.plts + title can overrun.
+    # Trim the title portion to whatever room remains, keeping at least 8 chars.
+    max_path  <- 250L
+    room_for_title <- max_path - nchar(png_dir) - nchar("/000_.png")
+    n_written <- 0L
+    for(i in seq_along(built)){
+      t_safe <- safe(built[[i]]$title)
+      if(nchar(t_safe) > max(8L, room_for_title))
+        t_safe <- substr(t_safe, 1L, max(8L, room_for_title))
+      fn_i <- file.path(png_dir, sprintf("%03d_%s.png", i, t_safe))
+      ok <- tryCatch({
+        grDevices::png(fn_i, width = 1000, height = 750, res = 120)
+        graphics::par(mar = c(4, 4, 3, 1))
+        draw_panel(built[[i]], standalone_legend = TRUE)
+        grDevices::dev.off()
+        TRUE
+      }, error = function(e){
+        try(grDevices::dev.off(), silent = TRUE)
+        message(sprintf("  png write failed for row %d (\"%s\"): %s",
+                        keep_rows[i], built[[i]]$title, conditionMessage(e)))
+        FALSE
+      })
+      if(ok) n_written <- n_written + 1L
+    }
+    message("Wrote ", n_written, "/", length(built), " PNG(s) to ", png_dir)
+
+  } else {
+    # device: assume caller has an open device; respect plt.dims but do not open one
+    graphics::par(mfrow = plt.dims, mar = c(3, 4, 3, 1), oma = c(4, 0, 2, 1))
+    for(i in seq_along(built)){
+      draw_panel(built[[i]])
+      if(i %% n_per_page == 0 || i == length(built)) page_legend()
+    }
+    pad_page(length(built))
+  }
+
+  # 7. return per-series diagnostic table -------------------------------------------------------
+  summary_df <- data.frame(
+    row_idx    = keep_rows,
+    title      = vapply(built, function(b) b$title, character(1)),
+    type       = th$Type[keep_rows],
+    poolcodes  = vapply(keep_rows,
+                        function(j) paste(as.integer(th$Poolcodes[[j]]), collapse = ","),
+                        character(1)),
+    poolcode2  = as.integer(th$Poolcode2[keep_rows]),
+    regions    = vapply(keep_rows,
+                        function(j) paste(as.integer(th$Regions[[j]]), collapse = ","),
+                        character(1)),
+    n_obs      = vapply(built, function(b) b$n_obs, integer(1)),
+    q          = vapply(built, function(b) b$q,     numeric(1)),
+    rss        = vapply(built, function(b) b$rss,   numeric(1)),
+    stringsAsFactors = FALSE
+  )
+  invisible(summary_df)
+}#eof
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #' @title Multipanel Ecosim prediction-vs-observation plots, single combined PDF.
 #' @description Reads predicted biomass, catch, landings (group-aggregated and fleet x group),
 #'   and fishing mortality from one or more Ecosim output folders, overlays the matching observed

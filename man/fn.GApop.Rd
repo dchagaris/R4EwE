@@ -4,7 +4,13 @@
 \alias{fn.GApop}
 \title{Generate an initial GA population matrix}
 \usage{
-fn.GApop(run_config = myconfig, pardist = "uniform", vuldist = "uniform")
+fn.GApop(
+  run_config = myconfig,
+  pardist = "uniform",
+  vuldist = "log-uniform",
+  rtdist = "log-uniform",
+  fltdist = "normal"
+)
 }
 \arguments{
 \item{run_config}{List containing GA settings; must include \code{popSize}.}
@@ -12,8 +18,23 @@ fn.GApop(run_config = myconfig, pardist = "uniform", vuldist = "uniform")
 \item{pardist}{Character string; distribution type, either"uniform" (uniform between bounds) or
 "normal" (normal/gamma hybrid). Default "uniform"}
 
-\item{vuldist}{Character string; distribution type for vulnerability parameters, either"uniform" (uniform between bounds) or
-"gamma" withc shape=2 and rate=shape/par. Default "uniform"}
+\item{vuldist}{Character string; distribution type for vulnerability parameters.
+One of \code{"log-uniform"} (default — \code{exp(runif(log(L), log(U)))}, evenly samples
+each order of magnitude so the sensitive low end gets equal density), \code{"uniform"}
+(linear uniform between bounds; over-weights the high end when bounds span multiple
+orders of magnitude), or \code{"gamma"} (shape=2, rate=2/base.val; mode near
+\code{base/2}, mass concentrated around the base value).}
+
+\item{rtdist}{Character string; distribution type for red tide parameters. Either
+\code{"log-uniform"} (default — symmetric in log space around the baseline of 1; appropriate
+when bounds span more than one order of magnitude) or \code{"uniform"} (same linear
+uniform as the other params, follows \code{pardist}).}
+
+\item{fltdist}{Character string; distribution type for fleet dynamics parameters
+(effective power and effort multiplier). One of \code{"normal"} (default —
+\code{rnorm(mean = base.val, sd = fltdyn.cv * base.val)} centered on each parameter's
+base value, then clipped to \code{[L.bounds, U.bounds]}) or \code{"uniform"}
+(linear uniform between the bounds, follows whatever \code{pardist} produced).}
 }
 \value{
 A numeric matrix of dimension run_config$popSize x n_pars.
@@ -23,4 +44,19 @@ Creates the initial population for a genetic algorithm using either
 uniform draws within parameter bounds or (optionally) normal/gamma
 draws centered on existing parameter estimates. Uses several global
 objects created elsewhere.
+}
+\details{
+When red tide parameters are present, the first 6 rows of the returned matrix are
+overwritten with explicit anchor combinations to guarantee corner-case coverage in
+the initial population:
+\enumerate{
+\item baseline (all RT adj = 1)
+\item gentle, early-onset (inflection.adj = min, slope.adj = min)
+\item steep, late-onset (inflection.adj = max, slope.adj = max)
+\item early crash (inflection.adj = min, slope.adj = max)
+\item late & gradual (inflection.adj = max, slope.adj = min)
+\item RT effectively off (slope.adj = min; inflection.adj as drawn)
+}
+Non-RT parameters in those rows keep their random draws so the anchors still vary
+on the rest of the parameter vector.
 }

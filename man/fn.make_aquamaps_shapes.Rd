@@ -18,7 +18,7 @@ used; pass a path to use a copy kept elsewhere (see
 }
 \value{
 A data frame with 11 columns: \code{Function name}, \code{Function
-type}, \code{Param 1}-\code{Param 6}, \code{var}, \code{fg num}, and
+  type}, \code{Param 1}-\code{Param 6}, \code{var}, \code{fg num}, and
 \code{source}. Parameter columns (\code{Function type}, \code{Param 1-6},
 \code{fg num}) are numeric and rounded to 3 decimal places.
 }
