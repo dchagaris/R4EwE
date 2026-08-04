@@ -1128,3 +1128,163 @@ fn.weighted_mrt_summary <- function(mrt,
   }
   long
 }
+
+
+#' Slim-copy a generation of Ecospace GA run folders
+#'
+#' Copies a directory of Ecospace GA run folders (e.g. `gen30/`) into a sibling
+#' output directory (default `<dir.in>_small`) that keeps only annual timeseries
+#' plus spatial biomass/catch maps for a chosen set of groups, and optionally
+#' effort maps for a chosen set of fleets. Folder and file names are preserved
+#' verbatim so downstream R4EwE readers work unchanged. Files are copied byte-
+#' for-byte (no re-parse).
+#'
+#' What gets copied per run folder:
+#' \itemize{
+#'   \item `Ecospace_Annual_Average_*.csv` — all kept.
+#'   \item `Ecospace_Average_*.csv` (monthly averages) — dropped.
+#'   \item `EcospaceMap(Biomass|Catch)-<group> <stanza>.csv` — kept for groups in `groups`.
+#'   \item `EcospaceMapEffort-<fleet>.csv` — kept for fleets in `fleets` (exact
+#'     match on the trailing token, or `fleets = "all"` for every effort map;
+#'     NULL drops them all).
+#'   \item `cmd.txt` — kept if `keep.cmd`.
+#'   \item Anything else (e.g. `M0_loss_rate.csv`) — kept if `keep.misc`.
+#' }
+#'
+#' @param dir.in    Character. Directory of run folders (e.g. `.../gen30`).
+#' @param dir.out   Character. Output directory. Default `paste0(dir.in, "_small")`.
+#' @param groups    Character vector of group name stems (matched against the
+#'   `EcospaceMap...-<stem> <stanza>.csv` filename). Default gag + red grouper.
+#' @param fleets    Character vector of exact fleet names for effort maps,
+#'   or the string `"all"`, or `NULL` (default) to drop every effort map.
+#' @param map.kinds Character vector of spatial map kinds to consider for the
+#'   group filter. Default `c("Biomass", "Catch")`. Effort is controlled by
+#'   `fleets`, not this argument.
+#' @param keep.cmd  Logical. Copy `cmd.txt` per run. Default TRUE.
+#' @param keep.misc Logical. Copy any leftover files (e.g. `M0_loss_rate.csv`)
+#'   that are neither annual TS nor spatial maps nor cmd.txt. Default TRUE.
+#' @param overwrite Logical. If `dir.out` already exists non-empty, delete it
+#'   before copying. Default FALSE (function errors out).
+#' @param verbose   Logical. Print progress + summary. Default TRUE.
+#'
+#' @return Invisibly, a list with `dir.out`, `n_dirs`, `n_files_in`,
+#'   `n_files_out`, `bytes_in`, `bytes_out`, and any `warnings` collected
+#'   (e.g. fleets requested that no run dir contained).
+#' @export
+fn.gen_slim_copy <- function(dir.in,
+                             dir.out    = paste0(dir.in, "_small"),
+                             groups     = c("gag", "red grouper"),
+                             fleets     = NULL,
+                             map.kinds  = c("Biomass", "Catch"),
+                             keep.cmd   = TRUE,
+                             keep.misc  = TRUE,
+                             overwrite  = FALSE,
+                             verbose    = TRUE){
+
+  if(!dir.exists(dir.in))
+    stop("dir.in does not exist: ", dir.in)
+  if(!length(groups))
+    stop("groups must be non-empty")
+
+  subs <- list.dirs(dir.in, recursive = FALSE, full.names = FALSE)
+  if(!length(subs))
+    stop("dir.in contains no subdirectories: ", dir.in)
+
+  if(dir.exists(dir.out)){
+    existing <- list.files(dir.out, all.files = TRUE, no.. = TRUE)
+    if(length(existing)){
+      if(!isTRUE(overwrite))
+        stop("dir.out exists and is non-empty; pass overwrite = TRUE: ", dir.out)
+      unlink(dir.out, recursive = TRUE, force = TRUE)
+    }
+  }
+  dir.create(dir.out, recursive = TRUE, showWarnings = FALSE)
+
+  re_annual <- "^Ecospace_Annual_Average_.*\\.csv$"
+  re_spatial_grp <- paste0(
+    "^EcospaceMap(", paste(map.kinds, collapse = "|"), ")-(",
+    paste(vapply(groups, function(g) gsub("([][{}()+*^$.|?\\\\])", "\\\\\\1", g),
+                 character(1)), collapse = "|"),
+    ") [0-9]+\\+?\\.csv$"
+  )
+  effort_all <- identical(fleets, "all")
+  effort_set <- if(effort_all || is.null(fleets)) character(0)
+                else paste0("EcospaceMapEffort-", fleets, ".csv")
+
+  keep_file <- function(f){
+    if(grepl(re_annual, f))                          return(TRUE)
+    if(grepl(re_spatial_grp, f))                     return(TRUE)
+    if(grepl("^EcospaceMapEffort-.*\\.csv$", f)){
+      if(effort_all)              return(TRUE)
+      if(f %in% effort_set)       return(TRUE)
+      return(FALSE)
+    }
+    if(keep.cmd && identical(f, "cmd.txt"))          return(TRUE)
+    if(grepl("^EcospaceMap(Biomass|Catch)-", f))     return(FALSE)
+    if(grepl("^Ecospace_Average_", f))               return(FALSE)
+    isTRUE(keep.misc)
+  }
+
+  worst_src  <- max(nchar(list.files(file.path(dir.in, subs[1L]))), na.rm = TRUE)
+  worst_path <- nchar(file.path(dir.out, subs[which.max(nchar(subs))], "x")) - 1L + worst_src
+  if(worst_path > 259L)
+    warning("Worst-case output path is ", worst_path,
+            " chars (> Windows MAX_PATH 259). Choose a shorter dir.out.")
+
+  n_files_in <- n_files_out <- 0L
+  bytes_in <- bytes_out <- 0
+  warn_missing_fleets <- character(0)
+
+  pb <- if(isTRUE(verbose)) utils::txtProgressBar(min = 0, max = length(subs), style = 3) else NULL
+  for(i in seq_along(subs)){
+    sub_src <- file.path(dir.in,  subs[i])
+    sub_dst <- file.path(dir.out, subs[i])
+    dir.create(sub_dst, recursive = TRUE, showWarnings = FALSE)
+
+    files <- list.files(sub_src, full.names = FALSE)
+    n_files_in <- n_files_in + length(files)
+    bytes_in   <- bytes_in + sum(file.info(file.path(sub_src, files))$size, na.rm = TRUE)
+
+    keep <- files[vapply(files, keep_file, logical(1))]
+    if(!length(keep)) next
+
+    if(!is.null(fleets) && !effort_all){
+      missing_here <- setdiff(effort_set, files)
+      if(length(missing_here))
+        warn_missing_fleets <- unique(c(warn_missing_fleets, missing_here))
+    }
+
+    src <- file.path(sub_src, keep)
+    dst <- file.path(sub_dst, keep)
+    ok  <- file.copy(src, dst, overwrite = TRUE, copy.date = TRUE)
+    if(any(!ok))
+      warning("Failed to copy ", sum(!ok), " file(s) in ", subs[i])
+
+    n_files_out <- n_files_out + sum(ok)
+    bytes_out   <- bytes_out + sum(file.info(dst[ok])$size, na.rm = TRUE)
+    if(!is.null(pb)) utils::setTxtProgressBar(pb, i)
+  }
+  if(!is.null(pb)){ close(pb); cat("\n") }
+
+  if(length(warn_missing_fleets))
+    warning("Requested fleet effort map(s) not present in any run dir: ",
+            paste(gsub("^EcospaceMapEffort-|\\.csv$", "", warn_missing_fleets),
+                  collapse = ", "))
+
+  if(isTRUE(verbose)){
+    mb <- function(x) sprintf("%.1f MB", x / 1024^2)
+    cat(sprintf("[slim-copy] %d dirs  %d -> %d files  %s -> %s (%.0f%% saved)\n",
+                length(subs), n_files_in, n_files_out,
+                mb(bytes_in), mb(bytes_out),
+                100 * (1 - bytes_out / max(bytes_in, 1))))
+    cat("[slim-copy] out: ", dir.out, "\n", sep = "")
+  }
+
+  invisible(list(dir.out = dir.out,
+                 n_dirs = length(subs),
+                 n_files_in = n_files_in,
+                 n_files_out = n_files_out,
+                 bytes_in = bytes_in,
+                 bytes_out = bytes_out,
+                 warnings = warn_missing_fleets))
+}
