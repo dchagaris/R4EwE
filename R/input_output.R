@@ -1165,6 +1165,10 @@ fn.weighted_mrt_summary <- function(mrt,
 #'   that are neither annual TS nor spatial maps nor cmd.txt. Default TRUE.
 #' @param overwrite Logical. If `dir.out` already exists non-empty, delete it
 #'   before copying. Default FALSE (function errors out).
+#' @param ncores    Integer. Number of worker processes to run the per-subdir
+#'   copy in parallel. Default 1 (sequential). On Windows the outer loop is
+#'   the bottleneck; setting `ncores = 8`-`16` typically gives near-linear
+#'   speedup until disk saturates.
 #' @param verbose   Logical. Print progress + summary. Default TRUE.
 #'
 #' @return Invisibly, a list with `dir.out`, `n_dirs`, `n_files_in`,
@@ -1179,6 +1183,7 @@ fn.gen_slim_copy <- function(dir.in,
                              keep.cmd   = TRUE,
                              keep.misc  = TRUE,
                              overwrite  = FALSE,
+                             ncores     = 1L,
                              verbose    = TRUE){
 
   if(!dir.exists(dir.in))
@@ -1211,18 +1216,19 @@ fn.gen_slim_copy <- function(dir.in,
   effort_set <- if(effort_all || is.null(fleets)) character(0)
                 else paste0("EcospaceMapEffort-", fleets, ".csv")
 
-  keep_file <- function(f){
-    if(grepl(re_annual, f))                          return(TRUE)
-    if(grepl(re_spatial_grp, f))                     return(TRUE)
-    if(grepl("^EcospaceMapEffort-.*\\.csv$", f)){
-      if(effort_all)              return(TRUE)
-      if(f %in% effort_set)       return(TRUE)
-      return(FALSE)
-    }
-    if(keep.cmd && identical(f, "cmd.txt"))          return(TRUE)
-    if(grepl("^EcospaceMap(Biomass|Catch)-", f))     return(FALSE)
-    if(grepl("^Ecospace_Average_", f))               return(FALSE)
-    isTRUE(keep.misc)
+  # Vectorized filter: one grepl per rule across all filenames.
+  filter_mask <- function(files){
+    m_ann  <- grepl(re_annual,       files)
+    m_grp  <- grepl(re_spatial_grp,  files)
+    m_eff  <- grepl("^EcospaceMapEffort-.*\\.csv$", files)
+    m_cmd  <- isTRUE(keep.cmd)  & files == "cmd.txt"
+    m_bcx  <- grepl("^EcospaceMap(Biomass|Catch)-", files)
+    m_avg  <- grepl("^Ecospace_Average_", files)
+    if(effort_all)             m_eff_keep <- m_eff
+    else if(length(effort_set)) m_eff_keep <- m_eff & (files %in% effort_set)
+    else                        m_eff_keep <- rep(FALSE, length(files))
+    m_misc <- isTRUE(keep.misc) & !(m_ann | m_grp | m_eff | m_cmd | m_bcx | m_avg)
+    m_ann | m_grp | m_eff_keep | m_cmd | m_misc
   }
 
   worst_src  <- max(nchar(list.files(file.path(dir.in, subs[1L]))), na.rm = TRUE)
@@ -1231,40 +1237,74 @@ fn.gen_slim_copy <- function(dir.in,
     warning("Worst-case output path is ", worst_path,
             " chars (> Windows MAX_PATH 259). Choose a shorter dir.out.")
 
-  n_files_in <- n_files_out <- 0L
-  bytes_in <- bytes_out <- 0
-  warn_missing_fleets <- character(0)
-
-  pb <- if(isTRUE(verbose)) utils::txtProgressBar(min = 0, max = length(subs), style = 3) else NULL
-  for(i in seq_along(subs)){
-    sub_src <- file.path(dir.in,  subs[i])
-    sub_dst <- file.path(dir.out, subs[i])
+  # Per-subdir worker: returns list of stats (no side channels via <<-,
+  # so this is safe under parLapply). Bytes taken from source, not dest,
+  # since file.copy is byte-perfect.
+  copy_one <- function(sub){
+    sub_src <- file.path(dir.in,  sub)
+    sub_dst <- file.path(dir.out, sub)
     dir.create(sub_dst, recursive = TRUE, showWarnings = FALSE)
 
     files <- list.files(sub_src, full.names = FALSE)
-    n_files_in <- n_files_in + length(files)
-    bytes_in   <- bytes_in + sum(file.info(file.path(sub_src, files))$size, na.rm = TRUE)
+    if(!length(files))
+      return(list(n_in = 0L, n_out = 0L, b_in = 0, b_out = 0, missing = character(0)))
 
-    keep <- files[vapply(files, keep_file, logical(1))]
-    if(!length(keep)) next
+    inf   <- file.info(file.path(sub_src, files))
+    keep_m <- filter_mask(files)
+    kept   <- files[keep_m]
 
-    if(!is.null(fleets) && !effort_all){
-      missing_here <- setdiff(effort_set, files)
-      if(length(missing_here))
-        warn_missing_fleets <- unique(c(warn_missing_fleets, missing_here))
-    }
+    missing_here <- if(!is.null(fleets) && !effort_all)
+                      setdiff(effort_set, files) else character(0)
 
-    src <- file.path(sub_src, keep)
-    dst <- file.path(sub_dst, keep)
-    ok  <- file.copy(src, dst, overwrite = TRUE, copy.date = TRUE)
-    if(any(!ok))
-      warning("Failed to copy ", sum(!ok), " file(s) in ", subs[i])
+    if(!length(kept))
+      return(list(n_in = length(files), n_out = 0L,
+                  b_in = sum(inf$size, na.rm = TRUE), b_out = 0,
+                  missing = missing_here))
 
-    n_files_out <- n_files_out + sum(ok)
-    bytes_out   <- bytes_out + sum(file.info(dst[ok])$size, na.rm = TRUE)
-    if(!is.null(pb)) utils::setTxtProgressBar(pb, i)
+    ok <- file.copy(file.path(sub_src, kept), file.path(sub_dst, kept),
+                    overwrite = TRUE, copy.date = TRUE)
+
+    list(n_in  = length(files),
+         n_out = sum(ok),
+         b_in  = sum(inf$size, na.rm = TRUE),
+         b_out = sum(inf$size[keep_m][ok], na.rm = TRUE),
+         missing = missing_here,
+         failed  = sum(!ok))
   }
-  if(!is.null(pb)){ close(pb); cat("\n") }
+
+  # Dispatch: sequential with progress bar, or parallel via parLapply.
+  ncores <- max(1L, as.integer(ncores))
+  if(ncores == 1L){
+    pb <- if(isTRUE(verbose)) utils::txtProgressBar(min = 0, max = length(subs), style = 3) else NULL
+    res <- vector("list", length(subs))
+    for(i in seq_along(subs)){
+      res[[i]] <- copy_one(subs[i])
+      if(!is.null(pb)) utils::setTxtProgressBar(pb, i)
+    }
+    if(!is.null(pb)){ close(pb); cat("\n") }
+  } else {
+    if(isTRUE(verbose))
+      cat(sprintf("[slim-copy] parallel: %d workers x %d dirs\n", ncores, length(subs)))
+    cl <- parallel::makeCluster(min(ncores, length(subs)))
+    on.exit(parallel::stopCluster(cl), add = TRUE)
+    parallel::clusterExport(cl,
+      c("dir.in", "dir.out", "re_annual", "re_spatial_grp",
+        "effort_all", "effort_set", "keep.cmd", "keep.misc",
+        "fleets", "filter_mask"),
+      envir = environment())
+    res <- parallel::parLapply(cl, subs, copy_one)
+  }
+
+  # Fold results.
+  n_files_in  <- sum(vapply(res, `[[`, integer(1), "n_in"))
+  n_files_out <- sum(vapply(res, `[[`, integer(1), "n_out"))
+  bytes_in    <- sum(vapply(res, `[[`, numeric(1), "b_in"))
+  bytes_out   <- sum(vapply(res, `[[`, numeric(1), "b_out"))
+  n_failed    <- sum(vapply(res, function(x) if(is.null(x$failed)) 0L else as.integer(x$failed), integer(1)))
+  warn_missing_fleets <- unique(unlist(lapply(res, `[[`, "missing")))
+
+  if(n_failed > 0L)
+    warning("Failed to copy ", n_failed, " file(s) across all subdirs.")
 
   if(length(warn_missing_fleets))
     warning("Requested fleet effort map(s) not present in any run dir: ",

@@ -13,6 +13,7 @@ fn.gen_slim_copy(
   keep.cmd = TRUE,
   keep.misc = TRUE,
   overwrite = FALSE,
+  ncores = 1L,
   verbose = TRUE
 )
 }
@@ -38,6 +39,11 @@ that are neither annual TS nor spatial maps nor cmd.txt. Default TRUE.}
 
 \item{overwrite}{Logical. If \code{dir.out} already exists non-empty, delete it
 before copying. Default FALSE (function errors out).}
+
+\item{ncores}{Integer. Number of worker processes to run the per-subdir
+copy in parallel. Default 1 (sequential). On Windows the outer loop is
+the bottleneck; setting \code{ncores = 8}-\code{16} typically gives near-linear
+speedup until disk saturates.}
 
 \item{verbose}{Logical. Print progress + summary. Default TRUE.}
 }
