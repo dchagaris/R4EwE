@@ -1169,6 +1169,11 @@ fn.weighted_mrt_summary <- function(mrt,
 #'   copy in parallel. Default 1 (sequential). On Windows the outer loop is
 #'   the bottleneck; setting `ncores = 8`-`16` typically gives near-linear
 #'   speedup until disk saturates.
+#' @param long.paths Logical. On Windows, prefix `dir.in`/`dir.out` internally
+#'   with the `\\?\` extended-length path escape so files under long parent
+#'   paths (e.g. deep OneDrive folders) copy past the 259-char MAX_PATH limit.
+#'   The user-facing `dir.out` in the return value is left unprefixed. Ignored
+#'   on non-Windows. Default TRUE.
 #' @param verbose   Logical. Print progress + summary. Default TRUE.
 #'
 #' @return Invisibly, a list with `dir.out`, `n_dirs`, `n_files_in`,
@@ -1184,6 +1189,7 @@ fn.gen_slim_copy <- function(dir.in,
                              keep.misc  = TRUE,
                              overwrite  = FALSE,
                              ncores     = 1L,
+                             long.paths = TRUE,
                              verbose    = TRUE){
 
   if(!dir.exists(dir.in))
@@ -1204,6 +1210,27 @@ fn.gen_slim_copy <- function(dir.in,
     }
   }
   dir.create(dir.out, recursive = TRUE, showWarnings = FALSE)
+
+  # Extended-length path escape hatch (Windows-only). Turns
+  #   C:/deep/long/path -> \\?\C:\deep\long\path  (or \\?\UNC\srv\share\...)
+  # so file.copy / list.files / file.info bypass the 259-char MAX_PATH limit.
+  use_long <- isTRUE(long.paths) && .Platform$OS.type == "windows"
+  .ext_path <- function(p){
+    if(!use_long) return(p)
+    if(startsWith(p, "\\\\?\\")) return(p)
+    ap <- suppressWarnings(normalizePath(p, winslash = "\\", mustWork = FALSE))
+    if(startsWith(ap, "\\\\")) paste0("\\\\?\\UNC\\", substring(ap, 3))
+    else                        paste0("\\\\?\\", ap)
+  }
+  # Only dir.out actually exceeds MAX_PATH in practice (a deep OneDrive dest
+  # under a short filename-prefix source dir). Prefix ONLY the dest side and
+  # keep list.files / file.info on the source with plain paths — R's Windows
+  # list.files uses the CRT _wfindfirst, which doesn't accept the \\?\ escape.
+  dir_out_ext <- .ext_path(dir.out)
+  # \\?\ paths require backslash separators; file.path on Windows uses "/".
+  # Under long.paths, join dest parts with paste(sep="\\") to keep them pure.
+  join_dst <- if(use_long) function(a, b) paste(a, b, sep = "\\")
+              else                          function(a, b) file.path(a, b)
 
   re_annual <- "^Ecospace_Annual_Average_.*\\.csv$"
   re_spatial_grp <- paste0(
@@ -1231,18 +1258,20 @@ fn.gen_slim_copy <- function(dir.in,
     m_ann | m_grp | m_eff_keep | m_cmd | m_misc
   }
 
-  worst_src  <- max(nchar(list.files(file.path(dir.in, subs[1L]))), na.rm = TRUE)
-  worst_path <- nchar(file.path(dir.out, subs[which.max(nchar(subs))], "x")) - 1L + worst_src
-  if(worst_path > 259L)
-    warning("Worst-case output path is ", worst_path,
-            " chars (> Windows MAX_PATH 259). Choose a shorter dir.out.")
+  if(!use_long){
+    worst_src  <- max(nchar(list.files(file.path(dir.in, subs[1L]))), na.rm = TRUE)
+    worst_path <- nchar(file.path(dir.out, subs[which.max(nchar(subs))], "x")) - 1L + worst_src
+    if(worst_path > 259L)
+      warning("Worst-case output path is ", worst_path,
+              " chars (> Windows MAX_PATH 259). Set long.paths=TRUE or use a shorter dir.out.")
+  }
 
   # Per-subdir worker: returns list of stats (no side channels via <<-,
   # so this is safe under parLapply). Bytes taken from source, not dest,
   # since file.copy is byte-perfect.
   copy_one <- function(sub){
-    sub_src <- file.path(dir.in,  sub)
-    sub_dst <- file.path(dir.out, sub)
+    sub_src <- file.path(dir.in,      sub)   # plain: list.files/file.info
+    sub_dst <- join_dst(dir_out_ext,  sub)   # extended-length-safe dest
     dir.create(sub_dst, recursive = TRUE, showWarnings = FALSE)
 
     files <- list.files(sub_src, full.names = FALSE)
@@ -1261,7 +1290,7 @@ fn.gen_slim_copy <- function(dir.in,
                   b_in = sum(inf$size, na.rm = TRUE), b_out = 0,
                   missing = missing_here))
 
-    ok <- file.copy(file.path(sub_src, kept), file.path(sub_dst, kept),
+    ok <- file.copy(file.path(sub_src, kept), join_dst(sub_dst, kept),
                     overwrite = TRUE, copy.date = TRUE)
 
     list(n_in  = length(files),
@@ -1288,9 +1317,9 @@ fn.gen_slim_copy <- function(dir.in,
     cl <- parallel::makeCluster(min(ncores, length(subs)))
     on.exit(parallel::stopCluster(cl), add = TRUE)
     parallel::clusterExport(cl,
-      c("dir.in", "dir.out", "re_annual", "re_spatial_grp",
+      c("dir.in", "dir_out_ext", "re_annual", "re_spatial_grp",
         "effort_all", "effort_set", "keep.cmd", "keep.misc",
-        "fleets", "filter_mask"),
+        "fleets", "filter_mask", "join_dst"),
       envir = environment())
     res <- parallel::parLapply(cl, subs, copy_one)
   }

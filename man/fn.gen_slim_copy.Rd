@@ -14,6 +14,7 @@ fn.gen_slim_copy(
   keep.misc = TRUE,
   overwrite = FALSE,
   ncores = 1L,
+  long.paths = TRUE,
   verbose = TRUE
 )
 }
@@ -44,6 +45,12 @@ before copying. Default FALSE (function errors out).}
 copy in parallel. Default 1 (sequential). On Windows the outer loop is
 the bottleneck; setting \code{ncores = 8}-\code{16} typically gives near-linear
 speedup until disk saturates.}
+
+\item{long.paths}{Logical. On Windows, prefix \code{dir.in}/\code{dir.out} internally
+with the \verb{\\\\?\\} extended-length path escape so files under long parent
+paths (e.g. deep OneDrive folders) copy past the 259-char MAX_PATH limit.
+The user-facing \code{dir.out} in the return value is left unprefixed. Ignored
+on non-Windows. Default TRUE.}
 
 \item{verbose}{Logical. Print progress + summary. Default TRUE.}
 }
