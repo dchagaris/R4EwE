@@ -20,6 +20,8 @@ fn.ecospace_objfxn(
     get("spatial.weight", envir = .GlobalEnv) else 1,
   model_styear = if (exists("model_styear", envir = .GlobalEnv)) get("model_styear",
     envir = .GlobalEnv) else 1985,
+  region.areas = if (exists("region.areas", envir = .GlobalEnv)) get("region.areas",
+    envir = .GlobalEnv) else NULL,
   return = c("both", "vector", "detail")
 )
 }
@@ -51,6 +53,12 @@ type present in \code{obs.ts$ts.head$Type}.}
 
 \item{eps}{Small floor applied to predictions before \code{log()} to avoid \code{log(0)}.
 Default \code{.Machine$double.eps^0.5}.}
+
+\item{region.areas}{Named numeric vector of region areas (km^2), names = region ID as
+character; see \code{\link{fn.read_region_areas}}. Used to combine a series that spans
+several regions as an area-weighted mean of the per-region densities. Defaults to
+\code{region.areas} in the global environment, or \code{NULL} -- in which case regions
+are combined with equal weights (with a warning), which over-weights small regions.}
 
 \item{return}{One of \code{"both"} (default), \code{"vector"}, or \code{"detail"}.
 \code{"both"} returns \code{list(LL = vector, detail = data.frame)};

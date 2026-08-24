@@ -302,6 +302,11 @@ fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta
 #'   type present in \code{obs.ts$ts.head$Type}.
 #' @param eps Small floor applied to predictions before \code{log()} to avoid \code{log(0)}.
 #'   Default \code{.Machine$double.eps^0.5}.
+#' @param region.areas Named numeric vector of region areas (km^2), names = region ID as
+#'   character; see \code{\link{fn.read_region_areas}}. Used to combine a series that spans
+#'   several regions as an area-weighted mean of the per-region densities. Defaults to
+#'   \code{region.areas} in the global environment, or \code{NULL} -- in which case regions
+#'   are combined with equal weights (with a warning), which over-weights small regions.
 #' @param return One of \code{"both"} (default), \code{"vector"}, or \code{"detail"}.
 #'   \code{"both"} returns \code{list(LL = vector, detail = data.frame)};
 #'   \code{"vector"} returns just the per-group cost vector (drop-in for legacy
@@ -329,6 +334,8 @@ fn.ecospace_objfxn <- function(dir.pred,
                                                  get("spatial.weight",    envir = .GlobalEnv) else 1,
                                model_styear  = if(exists("model_styear",   envir = .GlobalEnv))
                                                  get("model_styear",      envir = .GlobalEnv) else 1985,
+                               region.areas  = if(exists("region.areas",   envir = .GlobalEnv))
+                                                 get("region.areas",      envir = .GlobalEnv) else NULL,
                                return        = c("both", "vector", "detail")){
   return_mode <- match.arg(return)
   timestep    <- "annual"
@@ -420,6 +427,7 @@ fn.ecospace_objfxn <- function(dir.pred,
   th      <- obs.ts$ts.head
   ts_data <- obs.ts$ts
 
+
   # parallel accumulators (one slot per considered obs series)
   acc_idx    <- integer(0)
   acc_grp_pc <- integer(0)
@@ -479,10 +487,20 @@ fn.ecospace_objfxn <- function(dir.pred,
                        integer(1))
         if(length(cols) == 0 || anyNA(cols)) next
 
-        # sum predicted biomass across all (pool code, region) combinations
+        # Sum predicted biomass across pool codes (the ages of one stock), then
+        # take the AREA-WEIGHTED MEAN across regions. Per-region Ecospace output
+        # is a density (t/km^2), so summing or plain-averaging across regions
+        # lets a 1-cell region count as much as a 734-cell one. Weights are
+        # region areas in km^2; a single region reduces to the old behaviour.
+        reg_w  <- .region_weights(region_ids[reg_idxs], region.areas)
         pred_v <- rep(0, length(common_idx))
-        for(ci in cols) for(ri in reg_idxs)
-          pred_v <- pred_v + sel$arr[, ci, ri, run.idx][common_idx]
+        for(k in seq_along(reg_idxs)){
+          s <- rep(0, length(common_idx))
+          for(ci in cols)
+            s <- s + sel$arr[, ci, reg_idxs[k], run.idx][common_idx]
+          pred_v <- pred_v + reg_w[k] * s
+        }
+        pred_v <- pred_v / sum(reg_w)
 
         gpc <- poolcodes_j[1]      # first pool code labels the LL row
         col <- cols[1]

@@ -1585,7 +1585,7 @@ cluster_is_ok <- function() {
   # search path). Lets a phase-1 session (no spatial fit configured) or a
   # sensitivity-only session (no GA myconfig / run_dir) run without needing
   # to define these.
-  optional <- c("spatial.obs", "spatial.weight", "model_styear",
+  optional <- c("spatial.obs", "spatial.weight", "model_styear", "region.areas",
                 "myconfig", "run_dir", "expected_regions")
   optional <- optional[vapply(optional,
                               function(nm) exists(nm, envir = .GlobalEnv),

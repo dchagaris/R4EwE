@@ -24,7 +24,9 @@ fn.ecospace_plot_fits(
   scale.abs = FALSE,
   plot2pdf = FALSE,
   dir.plts = dir.out[1],
-  run.label = Sys.Date()
+  run.label = Sys.Date(),
+  region.areas = if (exists("region.areas", envir = .GlobalEnv)) get("region.areas",
+    envir = .GlobalEnv) else NULL
 )
 }
 \arguments{
@@ -118,6 +120,10 @@ still disagrees after rescaling).}
 \item{dir.plts}{Directory to write the PDF.}
 
 \item{run.label}{String appended to the PDF filename. Defaults to today's date.}
+
+\item{region.areas}{Named numeric vector of region areas (km^2); see
+\code{\link{fn.read_region_areas}}. Series spanning several regions are combined as an
+area-weighted mean of the per-region densities, matching \code{fn.ecospace_objfxn}.}
 }
 \value{
 Invisibly returns the list of prediction arrays used (each is

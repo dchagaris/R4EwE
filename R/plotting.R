@@ -570,6 +570,9 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 #' @param plot2pdf Logical. If TRUE, writes \code{file.path(dir.plts, "ecospace fits_<run.label>.pdf")}.
 #' @param dir.plts Directory to write the PDF.
 #' @param run.label String appended to the PDF filename. Defaults to today's date.
+#' @param region.areas Named numeric vector of region areas (km^2); see
+#'   \code{\link{fn.read_region_areas}}. Series spanning several regions are combined as an
+#'   area-weighted mean of the per-region densities, matching \code{fn.ecospace_objfxn}.
 #' @return Invisibly returns the list of prediction arrays used (each is
 #'   \code{[years, groups, regions, runs]}).
 #' @examples
@@ -597,7 +600,9 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
                                   scale.abs     = FALSE,
                                   plot2pdf      = FALSE,
                                   dir.plts      = dir.out[1],
-                                  run.label     = Sys.Date()){
+                                  run.label     = Sys.Date(),
+                                  region.areas  = if(exists("region.areas", envir = .GlobalEnv))
+                                                    get("region.areas", envir = .GlobalEnv) else NULL){
 
   vars    <- tolower(vars)
   overlay <- match.arg(overlay)
@@ -1250,13 +1255,20 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
       }, integer(1))
       if(length(cols) == 0 || anyNA(cols)){ next }
 
-      # sum predicted biomass across (pool code x region) for scale2run
+      # Sum across pool codes, area-weighted mean across regions (per-region
+      # values are densities) -- must match fn.ecospace_objfxn's aggregation.
+      reg_w  <- .region_weights(region_ids[reg_idxs], region.areas)
       pred_v <- rep(0, length(xtime))
-      for(ci in cols) for(ri in reg_idxs){
-        v <- arr[, ci, ri, scale2run]
-        v[is.na(v)] <- 0
-        pred_v <- pred_v + v
+      for(k in seq_along(reg_idxs)){
+        s <- rep(0, length(xtime))
+        for(ci in cols){
+          v <- arr[, ci, reg_idxs[k], scale2run]
+          v[is.na(v)] <- 0
+          s <- s + v
+        }
+        pred_v <- pred_v + reg_w[k] * s
       }
+      pred_v <- pred_v / sum(reg_w)
 
       obs_v <- as.numeric(obs.ts$ts[, j])
       obs_v[obs_v <= 0] <- NA
@@ -1382,6 +1394,9 @@ fn.ecospace_plot_fits <- function(dir.out, obs.ts,
 #' @param plt.dims Panel grid \code{c(rows, cols)} for the PDF and device outputs. Ignored for PNG.
 #' @param dir.plts Directory to write PDF / PNG output.
 #' @param run.label String appended to the PDF filename / PNG subfolder. Defaults to today's date.
+#' @param region.areas Named numeric vector of region areas (km^2); see
+#'   \code{\link{fn.read_region_areas}}. Series spanning several regions are combined as an
+#'   area-weighted mean of the per-region densities, matching \code{fn.ecospace_objfxn}.
 #' @param run.colors Vector of line colors per run (in run order). Default is a MATLAB-like palette.
 #' @param sim.labels Multi-run labels used in the run legend. Default = run subfolder basenames.
 #' @return Invisibly returns a \code{data.frame} (one row per plotted series) with columns
@@ -1411,7 +1426,9 @@ fn.ecospace_plot_series_fits <- function(dir.out, obs.ts,
                                          dir.plts    = dir.out[1],
                                          run.label   = Sys.Date(),
                                          run.colors  = NULL,
-                                         sim.labels  = NULL){
+                                         sim.labels  = NULL,
+                                         region.areas = if(exists("region.areas", envir = .GlobalEnv))
+                                                          get("region.areas", envir = .GlobalEnv) else NULL){
 
   output <- match.arg(output)
 
@@ -1541,12 +1558,20 @@ fn.ecospace_plot_series_fits <- function(dir.out, obs.ts,
       reg_idx <- match(regs_j, region_ids)
       if(anyNA(reg_idx)) return(NULL)
 
-      for(ci in col_idx) for(ri in reg_idx){
-        slab <- arr[, ci, ri, , drop = FALSE]      # [year, 1, 1, run]
-        m    <- matrix(slab, nrow = length(xtime), ncol = nruns)
-        m[is.na(m)] <- 0
-        pred_v <- pred_v + m
+      # Sum across pool codes, area-weighted mean across regions (per-region
+      # values are densities) -- must match fn.ecospace_objfxn's aggregation.
+      reg_w <- .region_weights(region_ids[reg_idx], region.areas)
+      for(k in seq_along(reg_idx)){
+        s <- matrix(0, nrow = length(xtime), ncol = nruns)
+        for(ci in col_idx){
+          slab <- arr[, ci, reg_idx[k], , drop = FALSE]   # [year, 1, 1, run]
+          m    <- matrix(slab, nrow = length(xtime), ncol = nruns)
+          m[is.na(m)] <- 0
+          s <- s + m
+        }
+        pred_v <- pred_v + reg_w[k] * s
       }
+      pred_v <- pred_v / sum(reg_w)
 
     } else if(rt$kind == "fleet_group"){
       # type 13: obs row has Poolcode=fleet, Poolcode2=group. Predicted column
@@ -1566,12 +1591,16 @@ fn.ecospace_plot_series_fits <- function(dir.out, obs.ts,
       reg_idx <- match(regs_j, region_ids)
       if(anyNA(reg_idx)) return(NULL)
 
-      for(ri in reg_idx){
-        slab <- arr[, ci, ri, , drop = FALSE]
+      # Regional catch/landings/discards are densities (t/km^2) just like
+      # biomass, so multi-region series combine as an area-weighted mean.
+      reg_w <- .region_weights(region_ids[reg_idx], region.areas)
+      for(k in seq_along(reg_idx)){
+        slab <- arr[, ci, reg_idx[k], , drop = FALSE]
         m    <- matrix(slab, nrow = length(xtime), ncol = nruns)
         m[is.na(m)] <- 0
-        pred_v <- pred_v + m
+        pred_v <- pred_v + reg_w[k] * m
       }
+      pred_v <- pred_v / sum(reg_w)
 
     } else return(NULL)
 

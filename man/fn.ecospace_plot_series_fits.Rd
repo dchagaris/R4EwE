@@ -22,7 +22,9 @@ fn.ecospace_plot_series_fits(
   dir.plts = dir.out[1],
   run.label = Sys.Date(),
   run.colors = NULL,
-  sim.labels = NULL
+  sim.labels = NULL,
+  region.areas = if (exists("region.areas", envir = .GlobalEnv)) get("region.areas",
+    envir = .GlobalEnv) else NULL
 )
 }
 \arguments{
@@ -73,6 +75,10 @@ group) obs to build the \code{fleet|group} column key.}
 \item{run.colors}{Vector of line colors per run (in run order). Default is a MATLAB-like palette.}
 
 \item{sim.labels}{Multi-run labels used in the run legend. Default = run subfolder basenames.}
+
+\item{region.areas}{Named numeric vector of region areas (km^2); see
+\code{\link{fn.read_region_areas}}. Series spanning several regions are combined as an
+area-weighted mean of the per-region densities, matching \code{fn.ecospace_objfxn}.}
 }
 \value{
 Invisibly returns a \code{data.frame} (one row per plotted series) with columns

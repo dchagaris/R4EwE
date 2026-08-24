@@ -582,6 +582,98 @@ fn.ecospace_ascii2stack <- function(dir.out=dir.pred,
   sort(unique(regs))
 }
 
+#' @title Read region areas for area-weighted multi-region aggregation.
+#' @description Ecospace per-region output is a spatially averaged \emph{density}
+#'   (\code{"Average regional biomass by group (t/km^2)"}), so a timeseries assigned
+#'   to several regions must be combined as an area-weighted mean, not a sum or a
+#'   plain mean. Regions differ enormously in size -- in the WFS MICE grid region 12
+#'   is a single cell (74 km^2) while region 10 is 734 cells (55,956 km^2) -- so an
+#'   unweighted combination lets one cell carry as much of the predicted signal as
+#'   several hundred.
+#' @details Region 0 is the \strong{whole grid} in Ecospace output
+#'   (\code{Ecospace_Annual_Average_Region_0_Biomass.csv} carries numerically
+#'   identical data to the whole-grid file; only the \code{Data}/\code{Area} label
+#'   rows differ). Its weight is therefore the sum of every non-land region, NOT the
+#'   attributes row whose ID happens to be 0 -- in the WFS MICE table that row is
+#'   "Water (unsampled)", a genuine sub-region of the grid. Areas are taken in km^2
+#'   rather than cell counts so that the latitude-varying size of a 5-min cell is
+#'   respected.
+#' @param path Path to the region attributes CSV. Defaults to the WFS MICE
+#'   \code{combined_regions_5min_attributes.csv}.
+#' @param id.col,area.col Column names holding the region ID and its area.
+#' @param land.ids Region IDs to drop as land / outside the model domain.
+#' @return Named numeric vector of areas, names = region ID as character.
+#' @seealso \code{\link{fn.ecospace_objfxn}}, which consumes this as
+#'   \code{region.areas}.
+#' @examples
+#' \dontrun{region.areas <- fn.read_region_areas()}
+#' @export
+fn.read_region_areas <- function(path     = NULL,
+                                 id.col   = "ID",
+                                 area.col = "AREA_KM2",
+                                 land.ids = -9999){
+  if(is.null(path))
+    path <- file.path("C:/Users/dchagaris/OneDrive - University of Florida",
+                      "WFS Fisheries Ecosystem Modeling/WFS EwE/Ecospace/maps/regions",
+                      "combined_regions_5min_attributes.csv")
+  if(!file.exists(path)) stop("Region attributes file not found: ", path)
+  a <- utils::read.csv(path, stringsAsFactors = FALSE)
+  miss <- setdiff(c(id.col, area.col), names(a))
+  if(length(miss))
+    stop("Region attributes file is missing column(s): ", paste(miss, collapse = ", "))
+
+  a <- a[!(a[[id.col]] %in% land.ids), , drop = FALSE]
+  w <- stats::setNames(as.numeric(a[[area.col]]),
+                       as.character(as.integer(a[[id.col]])))
+  bad <- !is.finite(w) | w <= 0
+  if(any(bad)){
+    warning("Dropping region(s) with non-positive or non-finite area: ",
+            paste(names(w)[bad], collapse = ", "))
+    w <- w[!bad]
+  }
+  if(length(w) == 0) stop("No usable region areas found in: ", path)
+  w["0"] <- sum(w)   # region 0 = whole grid in Ecospace output
+  w
+}
+
+#' @keywords internal
+#' @noRd
+# Resolve area weights for a set of region IDs being combined into one series.
+# Returns equal weights (current behaviour) when there is nothing to weight or
+# when region.areas cannot cover the requested IDs, so callers that never set
+# region.areas keep working. The warning fires once per session per cause.
+.region_weights <- function(region_ids_sel, region.areas = NULL){
+  n <- length(region_ids_sel)
+  if(n <= 1) return(rep(1, max(n, 1)))
+  if(is.null(region.areas)){
+    .warn_once("region.areas.missing",
+               "Timeseries spans multiple regions but region.areas is not set -- ",
+               "combining regions with EQUAL weights. Per-region Ecospace output is ",
+               "a density (t/km^2), so this over-weights small regions. Set ",
+               "region.areas <- fn.read_region_areas() to fix.")
+    return(rep(1, n))
+  }
+  w <- region.areas[as.character(region_ids_sel)]
+  if(anyNA(w) || !all(is.finite(w)) || sum(w, na.rm = TRUE) <= 0){
+    .warn_once("region.areas.incomplete",
+               "region.areas has no entry for region(s) ",
+               paste(region_ids_sel[is.na(w)], collapse = ", "),
+               " -- falling back to equal weights for the affected series.")
+    return(rep(1, n))
+  }
+  as.numeric(w)
+}
+
+#' @keywords internal
+#' @noRd
+.warn_once <- function(key, ...){
+  store <- getOption("R4EwE.warned", character(0))
+  if(key %in% store) return(invisible(NULL))
+  options(R4EwE.warned = c(store, key))
+  warning(..., call. = FALSE)
+  invisible(NULL)
+}
+
 #' @keywords internal
 #' @noRd
 # Per-fleet discard-mortality rate by year from the ts (type 11). Rule: a fleet

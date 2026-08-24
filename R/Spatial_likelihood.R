@@ -155,6 +155,224 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
   out
 }
 
+#' @title Default MDAT species -> NWACS MICE pool-code crosswalk.
+#' @description Maps each MDAT survey species to the NWACS MICE age-structured
+#'   pool code(s) it informs. A single MDAT biomass surface is replicated across
+#'   all age pool codes of that species (age-specific spatial obs are not
+#'   available), e.g. menhaden -> pc 4 (juv) and 5 (adult). \code{group} is the
+#'   NWACS group.name (with spaces) used to locate the predicted
+#'   \code{EcospaceMap<Var>-<group>.csv}. Pool codes 14-17 (inverts, plankton,
+#'   detritus) have no MDAT map and are intentionally absent.
+#' @return data.frame with columns \code{species} (MDAT filename token),
+#'   \code{pc} (NWACS pool code), \code{group} (NWACS group name).
+#' @export
+fn.mdat_default_crosswalk <- function(){
+  data.frame(
+    species = c("Atlantic menhaden","Atlantic menhaden",
+                "Atlantic herring","Atlantic herring",
+                "bluefish","bluefish",
+                "weakfish","weakfish",
+                "striped bass","striped bass","striped bass",
+                "spiny dogfish",
+                "bay anchovy"),
+    pc      = c(4,5,  11,12,  7,8,  9,10,  1,2,3,  6,  13),
+    group   = c("menhaden juv","menhaden adult",
+                "Atlantic herring 0-1","Atlantic herring 2+",
+                "bluefish juv","bluefish adult",
+                "weakfish juv","weakfish adult",
+                "striped bass 0","striped bass 2-5","striped bass 6+",
+                "spiny dogfish",
+                "anchovies"),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' @title Per-survey metadata for the MDAT interpolated products.
+#' @description Year window, available seasons, season->months map, and whether
+#'   the published surface is in natural-log space (needs back-transform to a
+#'   biomass pattern before unit-sum normalisation). Reflects the Duke MDAT
+#'   service contents (checked 2026): NEFSC = raw biomass, Spring+Fall,
+#'   2010-2019; NEAMAP = natural-log biomass, Fall only, 2007-2014 (and only a
+#'   thin nearshore footprint at 15-min). \code{months} are the calendar months
+#'   the survey's season maps to, used to average the predicted maps seasonally.
+#' @return named list keyed by survey name.
+#' @export
+fn.mdat_default_survey_meta <- function(){
+  list(
+    NEFSC  = list(styear = 2010, endyear = 2019,
+                  seasons  = c("Spring","Fall"),
+                  months   = list(Spring = c(3,4,5), Fall = c(9,10,11)),
+                  logspace = FALSE),
+    NEAMAP = list(styear = 2007, endyear = 2014,
+                  seasons  = c("Fall"),
+                  months   = list(Fall = c(9,10,11)),
+                  logspace = TRUE)   # verify exact transform before use
+  )
+}
+
+#' @title Build the default MDAT per-map attributes table.
+#' @description One row per (survey x species x season) map, seeded from the
+#'   crosswalk (all ages) and survey metadata (seasons, months, year window,
+#'   log-space flag). This is the editable control surface: trim \code{pcs} to
+#'   the ages a given survey surface actually informs, adjust \code{months}, and
+#'   toggle \code{use}. \code{pcs} and \code{months} are comma-separated strings.
+#'   NEAMAP rows default to \code{use = FALSE}.
+#' @param crosswalk see \code{fn.mdat_default_crosswalk}.
+#' @param survey_meta see \code{fn.mdat_default_survey_meta}.
+#' @return data.frame(survey, species, season, use, pcs, months, styear,
+#'   endyear, logspace).
+#' @export
+fn.mdat_default_attributes <- function(crosswalk = NULL, survey_meta = NULL){
+  if(is.null(crosswalk))   crosswalk   <- fn.mdat_default_crosswalk()
+  if(is.null(survey_meta)) survey_meta <- fn.mdat_default_survey_meta()
+
+  sp        <- unique(crosswalk$species)
+  pcs_by_sp <- vapply(sp, function(s)
+    paste(crosswalk$pc[crosswalk$species == s], collapse = ","), character(1))
+
+  rows <- list()
+  for(sv in names(survey_meta)){
+    meta <- survey_meta[[sv]]
+    for(se in meta$seasons){
+      months_se <- paste(meta$months[[se]], collapse = ",")
+      for(s in sp){
+        rows[[length(rows) + 1]] <- data.frame(
+          survey = sv, species = s, season = se,
+          use = identical(sv, "NEFSC"),          # NEAMAP off by default
+          pcs = pcs_by_sp[[s]], months = months_se,
+          styear = meta$styear, endyear = meta$endyear,
+          logspace = isTRUE(meta$logspace), stringsAsFactors = FALSE)
+      }
+    }
+  }
+  do.call(rbind, rows)
+}
+
+#' @title Write the seeded MDAT attributes CSV for the user to edit.
+#' @param path Output CSV path (e.g. \code{".../obs spatial data/MDAT map
+#'   attributes.csv"}).
+#' @param crosswalk,survey_meta passed to \code{fn.mdat_default_attributes}.
+#' @param overwrite If FALSE (default) an existing file is left untouched so
+#'   hand edits are never clobbered.
+#' @return (invisibly) the path written.
+#' @export
+fn.mdat_write_attributes <- function(path, crosswalk = NULL, survey_meta = NULL,
+                                     overwrite = FALSE){
+  if(file.exists(path) && !overwrite){
+    message("MDAT attributes file already exists (not overwritten): ", path)
+    return(invisible(path))
+  }
+  att <- fn.mdat_default_attributes(crosswalk, survey_meta)
+  utils::write.csv(att, path, row.names = FALSE)
+  message("Wrote MDAT attributes template (", nrow(att), " rows): ", path)
+  invisible(path)
+}
+
+#' @title Load MDAT interpolated biomass maps as an observed spatial obs frame.
+#' @description Attribute-driven loader. Reads the per-map attributes table
+#'   (which ages each map informs, months, year window, log-space), keeps rows
+#'   with \code{use == TRUE} for the requested surveys, locates each
+#'   \code{<Species>_<Season>.asc}, back-transforms log-space surfaces,
+#'   unit-sum normalises over non-NODATA cells, and expands each map's
+#'   \code{pcs} into one obs row per pool code. Returns a superset of the
+#'   columns \code{fn.spatial_LL} consumes so it drops into the objective fn.
+#' @param mdat_dir Directory containing \code{<SURVEY>/<Species>_<Season>.asc}
+#'   subfolders (default: NWACS MICE calibration2 location).
+#' @param attributes Either a path to the attributes CSV, a data.frame, or NULL
+#'   (uses \code{fn.mdat_default_attributes()}).
+#' @param surveys Character vector of surveys to include (default "NEFSC").
+#' @param group.names Optional model group.names (indexed by pool code); when
+#'   supplied the obs \code{species} label is the group name for that pool code,
+#'   otherwise it is the MDAT species + season.
+#' @param variable Character; predicted-map variable name (default "Biomass").
+#' @return data.frame(survey, season, pc, species, path, styear, endyear,
+#'   variable) with list-columns \code{months} (integer vectors) and
+#'   \code{map_norm} (numeric matrices, NA on NODATA, unit-sum-normalised).
+#' @export
+fn.load_mdat_biomass <- function(mdat_dir    = NULL,
+                                 attributes  = NULL,
+                                 surveys     = "NEFSC",
+                                 group.names = NULL,
+                                 variable    = "Biomass"){
+  if(is.null(mdat_dir))
+    mdat_dir <- file.path("C:/Users/dchagaris/OneDrive - University of Florida",
+                          "Atlantic menhaden/NWACS-MICE/Ecospace/calibration2",
+                          "obs spatial data/MDAT/15min")
+  if(!dir.exists(mdat_dir)) stop("MDAT directory not found: ", mdat_dir)
+
+  # resolve attributes: NULL -> default; character -> read CSV; else data.frame
+  if(is.null(attributes)){
+    att <- fn.mdat_default_attributes()
+  } else if(is.character(attributes)){
+    if(!file.exists(attributes)) stop("attributes file not found: ", attributes)
+    att <- utils::read.csv(attributes, stringsAsFactors = FALSE)
+  } else {
+    att <- as.data.frame(attributes, stringsAsFactors = FALSE)
+  }
+  req <- c("survey","species","season","use","pcs","months","styear","endyear","logspace")
+  miss <- setdiff(req, names(att))
+  if(length(miss)) stop("attributes missing column(s): ", paste(miss, collapse = ", "))
+  att$use      <- as.logical(att$use)
+  att$logspace <- as.logical(att$logspace)
+
+  att <- att[att$use %in% TRUE & att$survey %in% surveys, , drop = FALSE]
+  if(nrow(att) == 0)
+    stop("No attribute rows with use=TRUE for survey(s): ", paste(surveys, collapse = ", "))
+
+  parse_ints <- function(x){
+    v <- suppressWarnings(as.integer(strsplit(gsub("\\s", "", as.character(x)), ",")[[1]]))
+    v[!is.na(v)]
+  }
+
+  survey_v <- season_v <- species_v <- path_v <- character(0)
+  pc_v <- sty_v <- end_v <- numeric(0)
+  months_l <- map_l <- list()
+
+  for(i in seq_len(nrow(att))){
+    sv <- att$survey[i]; se <- att$season[i]; spk <- att$species[i]
+    pcs_i    <- parse_ints(att$pcs[i])
+    months_i <- parse_ints(att$months[i])
+    if(length(pcs_i) == 0){ warning("No pcs for row ", i, " (", spk, "/", se, "); skipping."); next }
+
+    dir_sv <- file.path(mdat_dir, sv)
+    asc <- list.files(dir_sv, pattern = "\\.asc$", full.names = TRUE)
+    tok <- gsub(" ", "_", spk)
+    hit <- asc[grepl(tok, basename(asc), ignore.case = TRUE) &
+               grepl(paste0("_", se, "\\.asc$"), basename(asc), ignore.case = TRUE)]
+    if(length(hit) == 0){
+      warning(sprintf("[fn.load_mdat_biomass] no file for %s / %s / %s", sv, spk, se)); next
+    }
+    m <- .read_asc(hit[1])
+    if(isTRUE(att$logspace[i])){
+      nd <- attr(m, "nodata"); keep <- m != nd; m[keep] <- exp(m[keep])
+    }
+    mn <- .normalise_map(m)
+
+    for(pc in pcs_i){
+      lbl <- if(!is.null(group.names) && pc >= 1 && pc <= length(group.names))
+               gsub("_", " ", group.names[pc]) else paste0(spk, " (", se, ")")
+      survey_v  <- c(survey_v,  sv)
+      season_v  <- c(season_v,  se)
+      pc_v      <- c(pc_v,      pc)
+      species_v <- c(species_v, lbl)
+      path_v    <- c(path_v,    hit[1])
+      sty_v     <- c(sty_v,     att$styear[i])
+      end_v     <- c(end_v,     att$endyear[i])
+      months_l[[length(months_l) + 1]] <- months_i
+      map_l[[length(map_l) + 1]]       <- mn
+    }
+  }
+  if(length(map_l) == 0) stop("fn.load_mdat_biomass: no maps loaded.")
+
+  out <- data.frame(survey = survey_v, season = season_v, pc = pc_v,
+                    species = species_v, path = path_v,
+                    styear = sty_v, endyear = end_v, variable = variable,
+                    stringsAsFactors = FALSE)
+  out$months   <- months_l
+  out$map_norm <- map_l
+  out
+}
+
 #' @title Parse an Ecospace per-species map CSV.
 #' @description The EcospaceMap<Var>-<species>.csv files stack all timesteps
 #'   for one species in one file. Header block (\code{<HEADER software/>} ...
