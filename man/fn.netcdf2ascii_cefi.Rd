@@ -24,11 +24,20 @@ the same dimensions.}
 \item{dir.stdriver}{Parent directory for spatial temporal drivers.  A folder will be created for
 each variable in this directory to save the ascii files.}
 
+\item{scalePP}{Logical.  TRUE (default) normalizes primary-production drivers to the mean
+of the first year of data.}
+
+\item{do.vars}{Optional character vector of variable-name prefixes to restrict which
+variables are processed. \code{NULL} (default) processes all.}
+
 \item{make.monthly}{Logical.  TRUE will run all the code to create monthly raster stacks.  Use
 FALSE if only want to make static maps.}
 
 \item{make.static}{Logical.  TRUE will create a static map (average) for each variable to use as
 Ecospace basemap layer.}
+
+\item{make.climatology}{Logical.  TRUE (default) creates a 12-month climatology stack for
+each variable.}
 }
 \value{
 A series of ascii files saved in dir.stdriver directory.

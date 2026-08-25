@@ -1129,7 +1129,7 @@ fn.akaike_weights <- function(LL, scale = 2){
 #'   run). Non-positive and NA weights are dropped before summarizing. The
 #'   function normalizes the remaining weights internally; you do not need to
 #'   normalize beforehand.
-#' @param probs Numeric vector of percentiles in [0,1]. Default
+#' @param probs Numeric vector of percentiles in `[0, 1]`. Default
 #'   \code{c(0.05, 0.5, 0.95)}.
 #' @param styear Optional integer start year. If supplied, the \code{year}
 #'   column becomes \code{styear, styear+1, ...}; otherwise the year labels

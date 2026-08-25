@@ -302,6 +302,13 @@ fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta
 #'   type present in \code{obs.ts$ts.head$Type}.
 #' @param eps Small floor applied to predictions before \code{log()} to avoid \code{log(0)}.
 #'   Default \code{.Machine$double.eps^0.5}.
+#' @param spatial.obs Optional list of observed spatial maps (per group/pool) added as a
+#'   spatial cross-entropy term via \code{\link{fn.spatial_LL}}. Defaults to \code{spatial.obs}
+#'   in the global environment, or \code{NULL} to skip the spatial term.
+#' @param spatial.weight Scalar weight (prior precision) on the spatial likelihood term.
+#'   Defaults to \code{spatial.weight} in the global environment, or 1.
+#' @param model_styear First model year, used to align predicted maps with the year window of
+#'   each observed map. Defaults to \code{model_styear} in the global environment, or 1985.
 #' @param region.areas Named numeric vector of region areas (km^2), names = region ID as
 #'   character; see \code{\link{fn.read_region_areas}}. Used to combine a series that spans
 #'   several regions as an area-weighted mean of the per-region densities. Defaults to

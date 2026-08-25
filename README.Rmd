@@ -1,8 +1,8 @@
-s---
+---
 output: github_document
 ---
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
+<!-- README.md is generated from README.Rmd. Please edit that file, then run devtools::build_readme() -->
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -18,38 +18,76 @@ knitr::opts_chunk$set(
 <!-- badges: start -->
 <!-- badges: end -->
 
-The goal of R4EwE is to ...
+**R4EwE** ("R for Ecopath with Ecosim") is a collection of utilities, workflows,
+and helpers for [Ecopath with Ecosim (EwE)](https://ecopath.org/) modellers. It
+grew out of spatial-temporal calibration work on the Northwest Atlantic
+Continental Shelf (NWACS) and West Florida Shelf (WFS) ecosystem models, and
+bundles the recurring steps of a modern EwE workflow into documented functions.
+
+Broadly, the package covers:
+
+- **Environmental driver extraction** — pull and process ocean/climate reanalysis
+  and forecast products (CEFI, Copernicus GLORYS, ESA-CCI) into the monthly ASCII
+  driver grids that Ecospace consumes (`fn.pull_cefi`, `fn.pull_glorys`,
+  `fn.pull_esacci`, `fn.netcdf2ascii_*`, `fn.make_monthly_climatology_maps`).
+- **Running EwE from R** — drive the EwE console: build command files, launch
+  runs, and parallelise batches (`fn.make_cmd_files`, `fn.runEwE.parallel`).
+- **Genetic-algorithm calibration** — calibrate Ecospace/Ecosim parameters
+  (vulnerabilities, dispersal, environmental responses) with a GA engine
+  (`fn.GApop`, `crossover`, `mutate`, `select_parents`, `tournament_select`,
+  `archive_ga`).
+- **Objective functions & likelihoods** — timeseries lognormal negative
+  log-likelihood plus a spatial cross-entropy term (`fn.ecospace_objfxn`,
+  `fn.spatial_LL`, `fn.objfxn1`).
+- **Reading output & plotting fits** — parse Ecosim/Ecospace predictions and plot
+  them against observed time series and maps (`fn.read_ecosim_timeseries`,
+  `fn.ecospace_plot_fits`, `fn.ecosim_plot_fits`, `fn.ecospace_spatial_pred`).
+- **Species distributions & survey data** — AquaMaps distribution shapes and MDAT
+  biomass loaders (`fn.make_aquamaps_shapes`, `fn.load_mdat_biomass`).
+
+See the [PDF reference manual](R4EwE_manual.pdf) for every function and its
+arguments.
 
 ## Installation
 
-You can install the development version of R4EwE from [GitHub](https://github.com/) with:
+Install the development version from [GitHub](https://github.com/dchagaris/R4EwE)
+with either `remotes` or `pak`:
 
 ``` r
-# install.packages("pak")
+# install.packages("remotes")
 remotes::install_github("dchagaris/R4EwE")
+
+# or
+# install.packages("pak")
+pak::pak("dchagaris/R4EwE")
 ```
 
-## Example
+Some functions rely on **Suggested** packages that are not installed
+automatically (e.g. `aquamapsdata`, `DBI`/`RSQLite`, `dplyr`); install those as
+needed for the workflow you are using. Running EwE models additionally requires a
+local EwE installation, which R4EwE calls as an external application.
 
-This is a basic example which shows you how to solve a common problem:
+## Usage
 
-```{r example}
+```r
 library(R4EwE)
-## basic example code
+
+# List everything the package exports
+ls("package:R4EwE")
+
+# Open help for any function
+?fn.GApop
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`? You can include R chunks like so:
+Worked examples for full calibration and driver-extraction workflows live in the
+[`examples/`](examples) and [`inst/examples/`](inst/examples) folders of the
+repository.
 
-```{r cars}
-summary(cars)
-```
+## Getting help and reporting issues
 
-You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
+Please file bugs, questions, and feature requests on the
+[issue tracker](https://github.com/dchagaris/R4EwE/issues).
 
-You can also embed plots, for example:
+## License
 
-```{r pressure, echo = FALSE}
-plot(pressure)
-```
-
-In that case, don't forget to commit and push the resulting figure files, so they display on GitHub and CRAN.
+MIT © David Chagaris. See [LICENSE.md](LICENSE.md).

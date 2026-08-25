@@ -25,9 +25,18 @@ each variable in this directory to save the ascii files.}
 \item{depth}{Raster grid of depth, matching the basemap of Ecospacem with land cells NA.  Saved ascii files will have
 the same dimensions.}
 
+\item{scalePP}{Logical.  TRUE (default) normalizes primary-production drivers to the mean
+of the first year of data.}
+
+\item{do.vars}{Optional character vector of variable-name prefixes to restrict which
+variables are processed. \code{NULL} (default) processes all.}
+
 \item{make.monthly}{Create the monthly ST driver ascii file.  Default TRUE.}
 
 \item{make.static}{Also create the static maps for initialization. Default TRUE.}
+
+\item{make.climatology}{Logical.  TRUE (default) creates a 12-month climatology stack for
+each variable.}
 }
 \value{
 A series of ascii files saved in dir.stdriver directory.

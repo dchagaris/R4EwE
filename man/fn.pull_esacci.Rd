@@ -38,6 +38,12 @@ fn.pull_esacci(
 \item{cds_key}{Character. Copernicus Climate Data Store API key}
 
 \item{sst.output_file}{Character. Base filename for SST output (without extension)}
+
+\item{chl.output_file}{Character. Base filename for the Ocean Colour chlorophyll-a output
+(without extension). Set \code{NULL} to skip the chlorophyll download.}
+
+\item{sss.output_file}{Character. Base filename for the Sea Surface Salinity output
+(without extension). Set \code{NULL} to skip the salinity download.}
 }
 \value{
 Invisible NULL. Function creates NetCDF files as side effects

@@ -4,8 +4,12 @@ Version: 0.0.0.9000
 Authors@R: 
     person("David", "Chagaris", , "dchagaris@ufl.edu", role = c("aut", "cre"))
 Description: Utilities, workflows, and helpers for Ecopath with Ecosim
-    users.
+    (EwE) users: environmental driver extraction, running EwE from R,
+    genetic-algorithm calibration, objective functions and likelihoods,
+    and reading and plotting model output.
 License: MIT + file LICENSE
+URL: https://github.com/dchagaris/R4EwE
+BugReports: https://github.com/dchagaris/R4EwE/issues
 Encoding: UTF-8
 Language: en-US
 Roxygen: list(markdown = TRUE)

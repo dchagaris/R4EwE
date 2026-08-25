@@ -364,9 +364,15 @@ fill_coastal_cells <- function(r, w = 3, max_iter = 50, mask=depth) {
 #' each variable in this directory to save the ascii files.
 #' @param depth Raster grid of depth, matching the basemap of Ecospacem with land cells NA.  Saved ascii files will have
 #' the same dimensions. 
+#' @param scalePP Logical.  TRUE (default) normalizes primary-production drivers to the mean
+#'   of the first year of data.
+#' @param do.vars Optional character vector of variable-name prefixes to restrict which
+#'   variables are processed. \code{NULL} (default) processes all.
 #' @param make.monthly Create the monthly ST driver ascii file.  Default TRUE.
 #' @param make.static Also create the static maps for initialization. Default TRUE.
-#' @return A series of ascii files saved in dir.stdriver directory.  
+#' @param make.climatology Logical.  TRUE (default) creates a 12-month climatology stack for
+#'   each variable.
+#' @return A series of ascii files saved in dir.stdriver directory.
 #' @examples
 #' # example code:
 #' \dontrun{
@@ -878,11 +884,17 @@ fn.download_cefi_full_nc = function(vars.cefi=vars.cefi, dir.cefi=dir.cefi, reg=
 #' each variable in this directory to save the ascii files.
 #' @param depth Raster grid of depth, matching the basemap of Ecospace.  Saved ascii files will have
 #' the same dimensions. 
+#' @param scalePP Logical.  TRUE (default) normalizes primary-production drivers to the mean
+#'   of the first year of data.
+#' @param do.vars Optional character vector of variable-name prefixes to restrict which
+#'   variables are processed. \code{NULL} (default) processes all.
 #' @param make.monthly Logical.  TRUE will run all the code to create monthly raster stacks.  Use
 #' FALSE if only want to make static maps.
 #' @param make.static Logical.  TRUE will create a static map (average) for each variable to use as
 #' Ecospace basemap layer.
-#' @return A series of ascii files saved in dir.stdriver directory.  
+#' @param make.climatology Logical.  TRUE (default) creates a 12-month climatology stack for
+#'   each variable.
+#' @return A series of ascii files saved in dir.stdriver directory.
 #' @examples
 #' \dontrun{
 #' # example code:
@@ -1186,6 +1198,10 @@ fn.netcdf2ascii_cefi <- function(nc.files=list.files(path=dir.cefi, pattern=".nc
 #' @param cds_key Character. Copernicus Climate Data Store API key
 #' @param sst.output_file Character. Base filename for SST output (without extension)
 #' @param sss.url Character. Complete URL for Sea Surface Salinity CCI data via OPeNDAP
+#' @param chl.output_file Character. Base filename for the Ocean Colour chlorophyll-a output
+#'   (without extension). Set \code{NULL} to skip the chlorophyll download.
+#' @param sss.output_file Character. Base filename for the Sea Surface Salinity output
+#'   (without extension). Set \code{NULL} to skip the salinity download.
 #'
 #' @return Invisible NULL. Function creates NetCDF files as side effects
 #'
@@ -1705,7 +1721,7 @@ fn.make_monthly_climatology_maps <- function(dir.stdriver=dir.stdriver){
 #' @param zint.method Character vector of one or both depth-integration methods for surface
 #' chlorophyll; each is written to its own tagged \code{_Zint_<method>} folder.  \code{"MB"} uses
 #' Morel and Berthon (1989) equations 2b and 2c.  \code{"MBMML"} integrates the Morel & Maritorena
-#' (2001) mean euphotic concentration over the Lee (2007) euphotic (z1\%) depth.  Default runs both.
+#' (2001) mean euphotic concentration over the Lee (2007) euphotic (z1%) depth.  Default runs both.
 #' @param make.monthly Logical.  TRUE will create the monthly ST driver ascii files.  Default
 #' TRUE.
 #' @param make.static Logical.  TRUE will create a static map (first-year and all-years

@@ -8,6 +8,9 @@ fn.envresp_testval_tags(env.base, fact = 2)
 }
 \arguments{
 \item{env.base}{A dataframe with baseline mediation parameters, this has to be created manually.}
+
+\item{fact}{Multiplicative factor used to widen and narrow each baseline
+response shape when generating the low/high sensitivity taglines. Default 2.}
 }
 \value{
 A character vector containing the parameter taglines for the command file.

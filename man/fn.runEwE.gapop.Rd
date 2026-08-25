@@ -26,9 +26,22 @@ fn.runEwE.gapop(
 
 \item{obj.fxn}{Integer or flag selecting which objective function to use.}
 
+\item{fit.abs.catch}{Logical, passed to the objective function: if \code{TRUE}
+(default) absolute-type catch series are fit on their literal scale, otherwise
+they are q-rescaled.}
+
 \item{delete.output}{Logical; if true, delete generated output folders after runs.}
 
 \item{max_tries}{Maximum number of retry rounds for failed runs.}
+
+\item{gen}{Optional generation index, used only to label output/logs in the
+genetic-algorithm loop. Default \code{NULL}.}
+
+\item{pardist, vuldist, rtdist, fltdist}{Sampling-distribution labels for the
+general, vulnerability, red-tide, and fleet parameters, respectively. Each
+defaults to the matching \code{gapop.*dist} global if present, otherwise to a
+built-in default (\code{"uniform"}, \code{"uniform"}, \code{"log-uniform"},
+\code{"normal"}).}
 }
 \value{
 Numeric vector of fitness values (same length as files.cmd).

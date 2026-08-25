@@ -45,6 +45,9 @@ fn.read_ecosim_timeseries().}
 \item{dir.plts}{Location to save pdf plots. Defaults to dir.pred.}
 
 \item{plot2pdf}{Logical.  TRUE (default) will save files to the specified directory.}
+
+\item{run.label}{Label appended to the output pdf file name (and used to tag the
+run). Defaults to the current date.}
 }
 \value{
 Generate a figure in the active plotting device or saves as pdf file.

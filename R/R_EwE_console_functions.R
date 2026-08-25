@@ -177,6 +177,14 @@ fn.runEwE <- function(cmdfile,
 #' @param fit.abs.catch Logical, passed to \code{fn.ecospace_objfxn} when \code{obj.fxn == 3}.
 #' If \code{TRUE} (default), absolute-type series are fit on their literal scale; if
 #' \code{FALSE}, every series is q-rescaled. Ignored for other \code{obj.fxn} values.
+#' @param timeout Per-run wall-clock time limit in seconds; a run exceeding it is
+#'   abandoned. Default 1800.
+#' @param capture_log Logical. If \code{TRUE} (default) each worker's console
+#'   output is captured to a log file alongside the model output.
+#' @param max_retries Integer number of times a failed run is retried before it is
+#'   recorded as an error. Default 5.
+#' @param n_cores Number of parallel worker cores. \code{NULL} (default) uses one
+#'   fewer than the number of detected cores.
 #' @return Model output is saved according to command file. If do.obj!=0 then a vector likelihoods
 #' is returned and added to the runlist dataframe.
 #' @examples
@@ -462,6 +470,8 @@ fn.mediation_testval_tags = function(meds.base, do.xbase=TRUE){
 #' @title Make environmental response shape parameter taglines for sensitivity runs.
 #' @description Create parameter lines for the command file to test sensitivity to environmental response shapes.
 #' @param env.base A dataframe with baseline mediation parameters, this has to be created manually.
+#' @param fact Multiplicative factor used to widen and narrow each baseline
+#'   response shape when generating the low/high sensitivity taglines. Default 2.
 #' @return A character vector containing the parameter taglines for the command file.
 #' @examples
 #' # example code:

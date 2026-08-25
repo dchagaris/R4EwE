@@ -14,12 +14,16 @@
 #' @param plt.cols Vector of line colors.
 #' @param plot2pdf Logical.  TRUE (default) will save files to the specified directory.
 #' @param dir.plts  Location to save pdf plots. Defaults to dir.pred.
+#' @param sim.labels Optional character vector of labels for the runs, used in the
+#'   legend. \code{NULL} (default) uses generic run numbers.
+#' @param run.label Label appended to the output pdf file name (and used to tag the
+#'   run). Defaults to the current date.
 #' @return Generate a figure in the active plotting device or saves as pdf file.
 #' @examples
 #' # example code:
 #' \dontrun{result <- fn.runEwE.parallel(runlist=myrunlist, obj.fxn=1, cl.export=list('myrunlist','obs.ts'))}
 #' @export
-fn.ecosim_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(3,3), 
+fn.ecosim_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts=obs.ts, scale2run=1, pltB.dims=c(3,3), pltC.dims=c(3,3),
                                 scaleCatch=FALSE,plt.cols=1:dim(predB)[3], plt.obs=TRUE, sim.labels=NULL,
                                 dir.plts = dir.pred, plot2pdf=FALSE, run.label=Sys.Date()){
   
@@ -159,6 +163,8 @@ fn.ecosim_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.ts
 #' @param plt.cols Vector of line colors.
 #' @param plot2pdf Logical.  TRUE (default) will save files to the specified directory.
 #' @param dir.plts  Location to save pdf plots. Defaults to dir.pred.
+#' @param run.label Label appended to the output pdf file name (and used to tag the
+#'   run). Defaults to the current date.
 #' @return Generate a figure in the active plotting device or saves as pdf file.
 #' @examples
 #' # example code:

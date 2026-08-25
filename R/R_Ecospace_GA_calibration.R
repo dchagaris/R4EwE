@@ -649,29 +649,29 @@ safe_make_run_dir_tempfile <- function(base_dir,
 
 #write command files----
 
-#' @title Write command file from parameter vector
-#' @description Takes as input a parameter vector and creates taglines and command files.
-#' @param par_vec Parameter vector.
-#' @param g Generation number, used for file tracking in a genetic algorithm loop. Default 0
-#' @param idx Index for run identifier.
-#' @param out_dir Output directory, where the command file will be saved along with model output.#'
+#' Build a per-generation run directory path
+#'
+#' @param base_run_dir Base run directory.
+#' @param g Generation number.
+#' @return Path of the form `<base_run_dir>/genNN`.
 #' @keywords internal
 #' @noRd
 .gen_dir <- function(base_run_dir, g)
   file.path(base_run_dir, sprintf("gen%02d", as.integer(g)))
 
-#' @keywords internal
-#' @noRd
-#' Move elite run directories forward into the next generation's folder,
-#' preserving their original folder names (which encode gen-of-origin +
-#' offspring index for traceability), and rewriting the
-#' <ECOSPACE_OUTPUT_DIR> line inside each moved cmd.txt so the cmd file
+#' Move elite run directories forward into the next generation's folder
+#'
+#' Preserves their original folder names (which encode gen-of-origin +
+#' offspring index for traceability), and rewrites the
+#' `<ECOSPACE_OUTPUT_DIR>` line inside each moved cmd.txt so the cmd file
 #' remains re-runnable from its new location.
 #'
 #' @param elite_cmd_paths Character vector of cmd.txt paths for the elites
 #'   in their CURRENT (source) generation folder.
 #' @param dst_gen_dir Destination generation folder (created if missing).
 #' @return Character vector of new cmd.txt paths, aligned with input.
+#' @keywords internal
+#' @noRd
 .move_elite_dirs <- function(elite_cmd_paths, dst_gen_dir){
   if(!dir.exists(dst_gen_dir))
     dir.create(dst_gen_dir, recursive = TRUE, showWarnings = FALSE)
@@ -718,6 +718,17 @@ safe_make_run_dir_tempfile <- function(base_dir,
   new_paths
 }
 
+#' Write an EwE command file from a parameter vector
+#'
+#' Takes a parameter vector and writes the taglines and Ecospace command
+#' file used to launch a single model run.
+#'
+#' @param par_vec Parameter vector to write into the command file.
+#' @param g Generation number, used for file tracking in the genetic-algorithm
+#'   loop. Default 0.
+#' @param idx Index for the run identifier. Default 0.
+#' @param out_dir Output directory where the command file (and model output)
+#'   are saved. Defaults to a per-generation subfolder of `run_dir`.
 #' @return Path to the written command file.
 #' @export
 fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0,
@@ -1166,8 +1177,18 @@ safe_runEwE <- function(cmdfile, do.obj, fit.abs.catch = TRUE) {
 #'
 #' @param files.cmd Character vector of paths to Ecospace command files.
 #' @param obj.fxn Integer or flag selecting which objective function to use.
+#' @param fit.abs.catch Logical, passed to the objective function: if \code{TRUE}
+#'   (default) absolute-type catch series are fit on their literal scale, otherwise
+#'   they are q-rescaled.
 #' @param delete.output Logical; if true, delete generated output folders after runs.
 #' @param max_tries Maximum number of retry rounds for failed runs.
+#' @param gen Optional generation index, used only to label output/logs in the
+#'   genetic-algorithm loop. Default \code{NULL}.
+#' @param pardist,vuldist,rtdist,fltdist Sampling-distribution labels for the
+#'   general, vulnerability, red-tide, and fleet parameters, respectively. Each
+#'   defaults to the matching \code{gapop.*dist} global if present, otherwise to a
+#'   built-in default (\code{"uniform"}, \code{"uniform"}, \code{"log-uniform"},
+#'   \code{"normal"}).
 #'
 #' @details
 #' Uses foreach with a parallel backend to run fn_runEwE on each command file.

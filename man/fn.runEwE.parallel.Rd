@@ -30,6 +30,18 @@ the worker's environment (add them to \code{cl.export}).}
 \item{fit.abs.catch}{Logical, passed to \code{fn.ecospace_objfxn} when \code{obj.fxn == 3}.
 If \code{TRUE} (default), absolute-type series are fit on their literal scale; if
 \code{FALSE}, every series is q-rescaled. Ignored for other \code{obj.fxn} values.}
+
+\item{timeout}{Per-run wall-clock time limit in seconds; a run exceeding it is
+abandoned. Default 1800.}
+
+\item{capture_log}{Logical. If \code{TRUE} (default) each worker's console
+output is captured to a log file alongside the model output.}
+
+\item{max_retries}{Integer number of times a failed run is retried before it is
+recorded as an error. Default 5.}
+
+\item{n_cores}{Number of parallel worker cores. \code{NULL} (default) uses one
+fewer than the number of detected cores.}
 }
 \value{
 Model output is saved according to command file. If do.obj!=0 then a vector likelihoods

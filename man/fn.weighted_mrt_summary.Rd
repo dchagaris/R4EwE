@@ -23,7 +23,7 @@ run). Non-positive and NA weights are dropped before summarizing. The
 function normalizes the remaining weights internally; you do not need to
 normalize beforehand.}
 
-\item{probs}{Numeric vector of percentiles in \link{0,1}. Default
+\item{probs}{Numeric vector of percentiles in \verb{[0, 1]}. Default
 \code{c(0.05, 0.5, 0.95)}.}
 
 \item{styear}{Optional integer start year. If supplied, the \code{year}

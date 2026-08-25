@@ -35,7 +35,7 @@ subdirectories are processed in the static/climatology step.  Default NULL proce
 \item{zint.method}{Character vector of one or both depth-integration methods for surface
 chlorophyll; each is written to its own tagged \code{_Zint_<method>} folder.  \code{"MB"} uses
 Morel and Berthon (1989) equations 2b and 2c.  \code{"MBMML"} integrates the Morel & Maritorena
-(2001) mean euphotic concentration over the Lee (2007) euphotic (z1\\%) depth.  Default runs both.}
+(2001) mean euphotic concentration over the Lee (2007) euphotic (z1\%) depth.  Default runs both.}
 
 \item{make.monthly}{Logical.  TRUE will create the monthly ST driver ascii files.  Default
 TRUE.}
