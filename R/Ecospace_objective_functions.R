@@ -126,7 +126,7 @@ fn.objfxn1 <- function(dir.pred, obs.ts=obs.ts, run.idx=1, fit.abs.catch=TRUE){
 #' each scaled to their own means LL.w=LL*1/mean(LL)  This puts them on equal footing, but needs more thought.
 #' @return A vector containing the total and functional group specific likelihood.  
 #' @keywords internal
-#' @noRd
+#' @export
 fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta=obs.maps.meta, autoweight.LL=T){
   #get annual timeseries predictions
   predB = fn.ecospace_predB_ts2array(dir.out = dir.pred, timestep='annual', n.reg=0)[,,1]

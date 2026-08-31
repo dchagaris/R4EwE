@@ -26,7 +26,7 @@
 #'
 #' @return Invisibly returns NULL. Results (fitness summaries and best parameters)
 #' are appended to the CSV and printed to the console.
-
+#' @export
 fn.GA <- function(myconfig){
   n_generations <<- myconfig$n_gen
   mutation_rate <<- myconfig$pmutation

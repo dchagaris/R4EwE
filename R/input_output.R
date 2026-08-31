@@ -459,8 +459,16 @@ fn.ecospace_predC_ts2array = function(dir.out=dir.pred, timestep='annual',n.reg=
 }#eof
 
 #aggregate catch by group
+#' @title Aggregate an Ecospace catch array from fleet-group columns to groups
+#' @description Sums the fleet-specific catch columns of a predicted-catch array
+#' (column names formatted as \code{fleet|group}) over fleets, returning an array
+#' with one column per functional group.
+#' @param predC A 3-D predicted catch array whose second dimension is named
+#' \code{fleet|group}, as returned by \code{fn.ecospace_predC_ts2array()}.
+#' @return A 3-D array with the same first and third dimensions as \code{predC}
+#' and one column per functional group.
 #' @keywords internal
-#' @noRd
+#' @export
 fn.agg_catch_by_group <- function(predC){
   print(dimnames(predC)[[2]])
   grps = sapply(strsplit(dimnames(predC)[[2]],"\\|"),tail,1)

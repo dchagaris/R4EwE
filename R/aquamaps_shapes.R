@@ -9,7 +9,7 @@
 #' otherwise stops with platform-specific guidance.
 #' @return Invisibly \code{TRUE} if build tools are found; otherwise an error.
 #' @keywords internal
-#' @noRd
+#' @export
 fn.check_build_tools <- function() {
   if (!requireNamespace("pkgbuild", quietly = TRUE)) utils::install.packages("pkgbuild")
   if (pkgbuild::has_build_tools(debug = FALSE)) return(invisible(TRUE))
@@ -34,7 +34,7 @@ fn.check_build_tools <- function() {
 #' \code{fn.check_build_tools()}) before that install runs.
 #' @return Invisibly \code{TRUE} when all dependencies are available.
 #' @keywords internal
-#' @noRd
+#' @export
 fn.ensure_aquamaps_deps <- function() {
   deps <- c("aquamapsdata", "dplyr")
   missing <- deps[!vapply(deps, requireNamespace, logical(1), quietly = TRUE)]

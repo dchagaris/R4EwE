@@ -74,6 +74,7 @@
 #' otherwise block a worker indefinitely (e.g., a Windows Error Reporting dialog from
 #' a child crash). Default 300 (5 minutes).
 #' @return Integer exit status (0 = success); invisibly
+#' @export
 fn.runEwE <- function(cmdfile,
                       do.obj   = 1,
                       console  = file.console,

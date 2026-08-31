@@ -1198,7 +1198,7 @@ safe_runEwE <- function(cmdfile, do.obj, fit.abs.catch = TRUE) {
 #'
 #' @return Numeric vector of fitness values (same length as files.cmd).
 #'
-
+#' @export
 fn.runEwE.gapop <-  function(
     files.cmd,
     obj.fxn=1,
