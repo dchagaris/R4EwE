@@ -1600,17 +1600,31 @@ cluster_is_ok <- function() {
     "obs.ts", "group.names", "fleet.names", "df.names",
     # model years and run context
     "styear", "enyear",
-    "cmd_base"
+    "cmd_base",
+    # Truncation guard. .check_ecospace_output silently degrades to an "any
+    # Ecospace CSV present" test when this is absent in the WORKER, which lets
+    # runs that died mid-write score a spuriously LOW LL and take elite slots.
+    # Required rather than optional so a missing definition fails loudly at
+    # export time instead of quietly disabling the guard.
+    "expected_regions"
   )
   # Optional session objects: only export if they exist in .GlobalEnv (or
   # search path). Lets a phase-1 session (no spatial fit configured) or a
   # sensitivity-only session (no GA myconfig / run_dir) run without needing
   # to define these.
   optional <- c("spatial.obs", "spatial.weight", "model_styear", "region.areas",
-                "myconfig", "run_dir", "expected_regions")
+                "myconfig", "run_dir")
   optional <- optional[vapply(optional,
                               function(nm) exists(nm, envir = .GlobalEnv),
                               logical(1))]
+  # Fail loudly rather than silently shipping a worker set that cannot police
+  # truncated Ecospace output.
+  if(!exists("expected_regions", envir = .GlobalEnv))
+    stop("expected_regions is not defined in .GlobalEnv. Define it BEFORE creating or ",
+         "exporting to the cluster, e.g. `expected_regions <- 0:16` for WFS MICE ",
+         "(0 = whole grid, 1..16 = regions). Without it in the workers, ",
+         ".check_ecospace_output cannot detect Ecospace runs that died mid-write, and ",
+         "those runs score a spuriously LOW likelihood and are promoted to elite.")
   c(required, optional)
 }
 
