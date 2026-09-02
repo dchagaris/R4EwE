@@ -100,12 +100,18 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
   names(hdr) <- row_labels
   rownames(hdr) <- NULL
 
-  # standardize header column names so downstream code can rely on them
+  # standardize header column names so downstream code can rely on them.
+  # Row labels vary in case and spacing between EwE versions / hand-edited files
+  # ("weight" vs "Weight", "Pool code 1" vs "Poolcode"), so map to canonical case last.
+  canon <- c(title = "Title", weight = "Weight", poolcode = "Poolcode",
+             poolcode2 = "Poolcode2", type = "Type", typecode = "Type",
+             region = "Region")
   std_names <- vapply(names(hdr), function(x){
     y <- gsub("\\s+", "", x)            # "Pool code 1" -> "Poolcode1", "Pool code" -> "Poolcode"
     y <- sub("code1$", "code", y, ignore.case = TRUE)  # "Poolcode1" -> "Poolcode"
     y <- sub("code2$", "code2", y, ignore.case = TRUE) # "Poolcode2" stays as "Poolcode2"
-    y
+    hit <- canon[tolower(y)]
+    if(is.na(hit)) y else unname(hit)
   }, character(1))
   names(hdr) <- std_names
 
@@ -121,6 +127,10 @@ fn.read_ecosim_timeseries <- function(filename, types = NULL, long = FALSE){
   }
   if(!"Poolcode2" %in% names(hdr)) hdr$Poolcode2 <- NA_real_
   if(!"Region"    %in% names(hdr)) hdr$Region    <- NA_integer_
+  if(!"Weight"    %in% names(hdr)){
+    warning("No 'Weight' header row found in: ", filename, " - defaulting all weights to 1.")
+    hdr$Weight <- 1
+  }
 
   # parse comma-separated pool codes / regions into list-columns. Scalar
   # Poolcode / Region are set from the first element (back-compat for
