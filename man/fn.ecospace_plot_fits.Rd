@@ -8,6 +8,7 @@ fn.ecospace_plot_fits(
   dir.out,
   obs.ts,
   vars = c("biomass", "catch", "landings", "discards", "F"),
+  views = c("group", "stacked", "fleetgroup"),
   timestep = "annual",
   regions = NULL,
   groups = "with_obs",
@@ -57,6 +58,13 @@ obs (apples-to-apples); dead and surviving have no obs overlay (predictions only
 same groups). Requires \code{fleet.names} to map the Catch/Landings \code{fleet|group} columns
 to fleet pool codes; without it every fleet defaults to Dmort = 1. \code{F} is
 \code{catch / biomass} per region.}
+
+\item{views}{Which of the three catch / landings / discards views to draw. Any subset of
+\code{c("group", "stacked", "fleetgroup")}; default is all three. \code{"stacked"} and
+\code{"fleetgroup"} both need fleet-resolved (\code{fleet|group}) predictions and, for the obs
+overlay, type-12 / type-13 fleet x group series. Models with no fleet x group dimension should
+pass \code{views = "group"}, which also skips reading the fleet-resolved Catch / Landings files.
+Has no effect on the \code{biomass} and \code{F} sections, which are group-level only.}
 
 \item{timestep}{\code{"annual"} or \code{"monthly"}.}
 
