@@ -323,6 +323,20 @@ fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta
 #'   Absolute, Reference, PoolRole) for the subset of series that were considered, with
 #'   the computed columns \code{q}, \code{n}, \code{obs.cv}, \code{obs.sd}, \code{loglik}
 #'   appended.
+#' @param ll.file Optional switch to write a per-component likelihood report to disk.
+#'   \code{NULL} (default) writes nothing. \code{TRUE} writes \code{LL_components.csv}
+#'   into \code{dir.pred[1]}; a character path writes to that path. The report holds one
+#'   row per REFERENCE timeseries -- every \code{obs.ts$ts.head} row with
+#'   \code{Reference == TRUE}, scored or not -- and one row per \code{spatial.obs} row,
+#'   each with its likelihood contribution in \code{loglik}. Spatial values are already
+#'   multiplied by \code{spatial.weight}; timeseries values are not. Unscored reference
+#'   series carry \code{loglik = NA} with \code{scored = FALSE}; zero-weight series are
+#'   \code{scored = TRUE} but also \code{loglik = NA}, since they contribute nothing.
+#'   Every row records the scoring settings used -- \code{fit.abs.catch},
+#'   \code{region.weights} (\code{"area"} if \code{region.areas} was supplied, else
+#'   \code{"equal"}) and \code{spatial.weight} -- and timeseries rows add
+#'   \code{abs.scale}, TRUE when the series was fit on its literal scale rather than
+#'   q-rescaled. Compare re-scores of historical runs only when these match.
 #' @return The shape selected by \code{return}. Series with \code{Weight == 0} are recorded
 #'   in the detail table but contribute zero to the cost.
 #' @export
@@ -343,7 +357,8 @@ fn.ecospace_objfxn <- function(dir.pred,
                                                  get("model_styear",      envir = .GlobalEnv) else 1985,
                                region.areas  = if(exists("region.areas",   envir = .GlobalEnv))
                                                  get("region.areas",      envir = .GlobalEnv) else NULL,
-                               return        = c("both", "vector", "detail")){
+                               return        = c("both", "vector", "detail"),
+                               ll.file       = NULL){
   return_mode <- match.arg(return)
   timestep    <- "annual"
   if(is.null(eps)) eps <- .Machine$double.eps^0.5
@@ -586,6 +601,7 @@ fn.ecospace_objfxn <- function(dir.pred,
     lk.detail$obs.cv <- acc_cv
     lk.detail$obs.sd <- acc_sd
     lk.detail$loglik <- acc_ll
+    lk.detail$ts.row <- acc_idx
     rownames(lk.detail) <- NULL
   } else {
     lk.detail <- cbind(obs.ts$ts.head[integer(0), , drop = FALSE],
@@ -593,7 +609,8 @@ fn.ecospace_objfxn <- function(dir.pred,
                        n      = integer(0),
                        obs.cv = numeric(0),
                        obs.sd = numeric(0),
-                       loglik = numeric(0))
+                       loglik = numeric(0),
+                       ts.row = integer(0))
   }
 
   # ---- aggregate to per-group cost vector ----
@@ -610,6 +627,7 @@ fn.ecospace_objfxn <- function(dir.pred,
 
   # ---- optional spatial LL component (phase 2 task 7c) ----
   spatial_vec <- numeric(0)
+  spatial_per <- NULL
   spatial_total <- 0
   if(!is.null(spatial.obs) && is.data.frame(spatial.obs) && nrow(spatial.obs) > 0){
     sp <- tryCatch(
@@ -625,6 +643,7 @@ fn.ecospace_objfxn <- function(dir.pred,
     if(!is.null(sp)){
       spatial_total <- sp$total
       spatial_vec   <- round(sp$per_species, 4)
+      spatial_per   <- sp$per_species
       names(spatial_vec) <- paste0("LL.spatial.", names(sp$per_species))
     }
   }
@@ -634,8 +653,136 @@ fn.ecospace_objfxn <- function(dir.pred,
   outvec[["LL.total"]] <- ll_total
   outvec <- c(outvec, spatial_vec)
 
+
+  # ---- optional per-component LL report ------------------------------------
+  # One row per REFERENCE timeseries and one per spatial obs, each with its
+  # likelihood contribution, so a run's total LL can be attributed back to the
+  # individual data sources that produced it.
+  if(!is.null(ll.file) && !identical(ll.file, FALSE)){
+    ll.path <- if(isTRUE(ll.file)) file.path(dir.pred[1], "LL_components.csv")
+               else as.character(ll.file)[1]
+    rep_df <- .ll_component_report(obs.ts         = obs.ts,
+                                   lk.detail      = lk.detail,
+                                   spatial.obs    = spatial.obs,
+                                   spatial_per    = spatial_per,
+                                   spatial.weight = spatial.weight,
+                                   fit.abs.catch  = fit.abs.catch,
+                                   region.areas   = region.areas)
+    ok <- tryCatch({
+      d <- dirname(ll.path)
+      if(!dir.exists(d)) dir.create(d, recursive = TRUE)
+      utils::write.csv(rep_df, ll.path, row.names = FALSE)
+      TRUE
+    }, error = function(e){
+      warning("Could not write LL component report to '", ll.path, "': ",
+              conditionMessage(e))
+      FALSE
+    })
+    if(ok) attr(lk.detail, "ll.file") <- ll.path
+  }
+
   switch(return_mode,
          both   = list(LL = outvec, detail = lk.detail),
          vector = outvec,
          detail = lk.detail)
+}
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' @title Per-component likelihood report.
+#' @description Builds the data frame written by \code{fn.ecospace_objfxn(ll.file=)}:
+#'   one row for every REFERENCE timeseries in \code{obs.ts$ts.head} (whether or not it
+#'   was scored) and one row for every \code{spatial.obs} row, each carrying its
+#'   likelihood contribution. Timeseries rows keep the full ts.head columns plus the
+#'   computed \code{q}, \code{n}, \code{obs.cv}, \code{obs.sd} and \code{abs.scale};
+#'   spatial rows carry \code{pc}, \code{species}, \code{styear}, \code{endyear}.
+#'   Columns absent from one block are NA-filled in the other.
+#'
+#'   Every row also records the run-level scoring settings -- \code{fit.abs.catch},
+#'   \code{region.weights} and \code{spatial.weight} -- so a report is self-describing.
+#'   Re-scoring a historical run under different settings changes the likelihood
+#'   silently; these columns are what let you tell a real difference from a setting
+#'   mismatch.
+#' @param obs.ts Observed timeseries object (needs \code{$ts.head}).
+#' @param lk.detail Per-series detail frame built by \code{fn.ecospace_objfxn}; must
+#'   carry \code{ts.row} (row index into \code{ts.head}) and \code{loglik}.
+#' @param spatial.obs Spatial observation table, or NULL.
+#' @param spatial_per Per-row spatial contributions from \code{fn.spatial_LL}
+#'   (\code{$per_species}, already multiplied by \code{spatial.weight}), or NULL.
+#' @param spatial.weight Scalar spatial weight used for the run.
+#' @param fit.abs.catch The \code{fit.abs.catch} value used for the run.
+#' @param region.areas The \code{region.areas} object used for the run; only whether it
+#'   was supplied is recorded (\code{"area"}) or not (\code{"equal"}).
+#' @return A data frame ordered timeseries-block then spatial-block.
+#' @keywords internal
+#' @noRd
+.ll_component_report <- function(obs.ts, lk.detail, spatial.obs, spatial_per,
+                                 spatial.weight = NA_real_,
+                                 fit.abs.catch  = NA,
+                                 region.areas   = NULL){
+
+  # list-columns (Poolcodes, Regions) cannot go to CSV -- collapse to strings
+  flatten <- function(df){
+    for(nm in names(df))
+      if(is.list(df[[nm]]))
+        df[[nm]] <- vapply(df[[nm]],
+                           function(x) paste(unlist(x), collapse = ","),
+                           character(1))
+    df
+  }
+
+  th <- obs.ts$ts.head
+  ref <- if("Reference" %in% names(th)) which(!is.na(th$Reference) & th$Reference)
+         else seq_len(nrow(th))
+  ts_df <- flatten(th[ref, , drop = FALSE])
+
+  # exact join on the ts.head row index recorded by the caller
+  m <- if(!is.null(lk.detail) && nrow(lk.detail) > 0 && "ts.row" %in% names(lk.detail))
+         match(ref, lk.detail$ts.row) else rep(NA_integer_, length(ref))
+  pick <- function(col) if(all(is.na(m))) rep(NA_real_, length(ref)) else lk.detail[[col]][m]
+
+  ts_df$q      <- pick("q")
+  ts_df$n      <- pick("n")
+  ts_df$obs.cv <- pick("obs.cv")
+  ts_df$obs.sd <- pick("obs.sd")
+  ts_df$loglik <- pick("loglik")
+  ts_df$scored <- !is.na(m)
+  # Mirrors fn.ecospace_objfxn: a series is q-rescaled when
+  # `!Absolute || !fit.abs.catch`, so it is fit on its literal scale only when both
+  # hold. Recorded per row because the ts.head Absolute flag alone does not say
+  # which scale was actually used.
+  absv <- if("Absolute" %in% names(ts_df)) !is.na(ts_df$Absolute) & ts_df$Absolute
+          else rep(FALSE, nrow(ts_df))
+  ts_df$abs.scale <- isTRUE(fit.abs.catch) & absv
+  ts_df$abs.scale[!ts_df$scored] <- NA    # never fit, so no scale applies
+  ts_df$component <- "timeseries"
+  rownames(ts_df) <- NULL
+
+  out <- ts_df
+  if(!is.null(spatial.obs) && is.data.frame(spatial.obs) && nrow(spatial.obs) > 0){
+    keep  <- intersect(c("pc", "species", "styear", "endyear"), names(spatial.obs))
+    sp_df <- flatten(spatial.obs[, keep, drop = FALSE])
+    sp_df$loglik <- if(!is.null(spatial_per) && length(spatial_per) == nrow(sp_df))
+                      as.numeric(spatial_per) else NA_real_
+    sp_df$scored <- !is.na(sp_df$loglik)
+    sp_df$component <- "spatial"
+    # give the spatial block a Title so both blocks are identifiable in one column
+    if("species" %in% names(sp_df)) sp_df$Title <- sp_df$species
+    rownames(sp_df) <- NULL
+
+    cols <- union(names(ts_df), names(sp_df))
+    fill <- function(df){
+      for(nm in setdiff(cols, names(df))) df[[nm]] <- NA
+      df[, cols, drop = FALSE]
+    }
+    out <- rbind(fill(ts_df), fill(sp_df))
+  }
+
+  # run-level scoring settings, on every row
+  out$fit.abs.catch  <- fit.abs.catch
+  out$region.weights <- if(is.null(region.areas)) "equal" else "area"
+  out$spatial.weight <- spatial.weight
+
+  # lead with the columns a reader wants first
+  front <- intersect(c("component", "Title", "loglik", "scored"), names(out))
+  out[, c(front, setdiff(names(out), front)), drop = FALSE]
 }
