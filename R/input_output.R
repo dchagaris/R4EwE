@@ -887,6 +887,45 @@ fn.fg_meta <- function(fg_names){
              stringsAsFactors = FALSE)
 }
 
+#' @title Locate the column-header row of an Ecospace output CSV.
+#' @description EwE output CSVs open with a variable-length metadata block (one
+#'   \code{"Layer ..."} line per spatial-temporal driver, etc.), then
+#'   \code{<HEADER end/>}, a blank line, a \code{Data,...} line plus a few summary
+#'   lines, a second blank line, and finally the column-header row. Because the
+#'   number of driver layers differs between models, the header row cannot be
+#'   found with a fixed line count. Returns the value to pass as \code{skip} to
+#'   \code{utils::read.csv()}: the number of lines preceding the blank line that
+#'   sits directly above the column-header row, so that
+#'   \code{readLines(path, n = skip + 1)} yields the metadata block plus that
+#'   blank line and \code{read.csv(path, skip = skip)} drops the blank line and
+#'   reads the header row.
+#' @param path Path to the CSV.
+#' @param n.max Maximum number of leading lines to scan.
+#' @return Integer scalar.
+#' @keywords internal
+#' @noRd
+.ecospace_csv_skip <- function(path, n.max = 500L){
+  ln    <- readLines(path, n = n.max, warn = FALSE)
+  blank <- which(!nzchar(trimws(ln)))
+  data.idx <- grep("^Data,", ln)[1]
+  if(!is.na(data.idx)){
+    # Standard layout: header row follows the first blank line after "Data,".
+    b <- blank[blank > data.idx][1]
+  } else {
+    # Fallback: last blank line (after <HEADER end/> if present) whose next line
+    # looks like a comma-separated header row.
+    end.idx <- grep("<HEADER end/>", ln, fixed = TRUE)[1]
+    if(is.na(end.idx)) end.idx <- 0L
+    cand <- blank[blank > end.idx & blank < length(ln)]
+    cand <- cand[grepl(",", ln[cand + 1L], fixed = TRUE)]
+    b <- cand[length(cand)]
+  }
+  if(length(b) != 1L || is.na(b) || b >= length(ln))
+    stop("Could not locate the column-header row in ", path,
+         "; pass 'skip' explicitly.")
+  as.integer(b - 1L)
+}
+
 #' @title Other-mortality loss rate from Ecospace output.
 #' @description Computes the annual M0 loss rate (loss / mean biomass) per group from a pair of
 #'   Ecospace annual-average output CSVs. Multistanza groups (columns named like
@@ -901,9 +940,13 @@ fn.fg_meta <- function(fg_names){
 #' @param file.bio Biomass CSV filename. Defaults to the annual-average file.
 #' @param file.loss Other-mortality-loss CSV filename. Defaults to the annual-average file.
 #' @param out.file Output CSV filename written into each \code{dir.out} when \code{write=TRUE}.
-#' @param skip Number of metadata header lines to skip when reading data (default 31, matches
-#'   EwE 6.7 Ecospace output). The function also preserves the blank line after the metadata
-#'   so the written output mirrors the structure of the source CSV.
+#' @param skip Number of leading lines to skip before the column-header row, passed to
+#'   \code{utils::read.csv()}. Default \code{NULL} auto-detects the header row in each file
+#'   (the EwE metadata block varies in length with the number of spatial-temporal driver
+#'   layers, so a fixed count breaks across models). Supply an integer to override; by EwE
+#'   convention \code{skip + 1} is the blank line directly above the column-header row (31 for
+#'   a model with five driver layers). That blank line is preserved so the written output
+#'   mirrors the structure of the source CSV.
 #' @param stanza.regex Regular expression matching the stanza-age suffix on a column name. The
 #'   default \code{"\\s+[0-9]+\\+?$"} matches the EwE convention of \code{"<group> <age>"} or
 #'   \code{"<group> 5+"} for terminal stanzas. The base group name is everything before the
@@ -925,7 +968,7 @@ fn.M0_loss_rate <- function(dir.out,
                             file.bio  = "Ecospace_Annual_Average_Biomass.csv",
                             file.loss = "Ecospace_Annual_Average_OtherMortalityLoss.csv",
                             out.file  = "M0_loss_rate.csv",
-                            skip      = 31,
+                            skip      = NULL,
                             stanza.regex = "\\s+[0-9]+\\+?$",
                             write     = TRUE){
   dir.out  <- as.character(dir.out)
@@ -941,10 +984,12 @@ fn.M0_loss_rate <- function(dir.out,
 
     # Preserve the metadata block plus the blank line that separates it from the
     # column-header row, so the output CSV mirrors the source file's structure.
-    header.lines <- readLines(bio.file, n = skip + 1L)
+    skip.bio  <- if(is.null(skip)) .ecospace_csv_skip(bio.file)  else as.integer(skip)
+    skip.loss <- if(is.null(skip)) .ecospace_csv_skip(loss.file) else as.integer(skip)
+    header.lines <- readLines(bio.file, n = skip.bio + 1L)
 
-    bio  <- utils::read.csv(bio.file,  as.is = TRUE, skip = skip, check.names = FALSE)
-    loss <- utils::read.csv(loss.file, as.is = TRUE, skip = skip, check.names = FALSE)
+    bio  <- utils::read.csv(bio.file,  as.is = TRUE, skip = skip.bio,  check.names = FALSE)
+    loss <- utils::read.csv(loss.file, as.is = TRUE, skip = skip.loss, check.names = FALSE)
     if(!identical(dim(bio), dim(loss)))
       stop("Biomass and loss CSVs have different shapes in ", dir.out[r])
     if(!identical(names(bio), names(loss)))

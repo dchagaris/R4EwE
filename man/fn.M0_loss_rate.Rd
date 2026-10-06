@@ -9,7 +9,7 @@ fn.M0_loss_rate(
   file.bio = "Ecospace_Annual_Average_Biomass.csv",
   file.loss = "Ecospace_Annual_Average_OtherMortalityLoss.csv",
   out.file = "M0_loss_rate.csv",
-  skip = 31,
+  skip = NULL,
   stanza.regex = "\\\\s+[0-9]+\\\\+?$",
   write = TRUE
 )
@@ -24,9 +24,13 @@ expected to contain both \code{file.bio} and \code{file.loss}.}
 
 \item{out.file}{Output CSV filename written into each \code{dir.out} when \code{write=TRUE}.}
 
-\item{skip}{Number of metadata header lines to skip when reading data (default 31, matches
-EwE 6.7 Ecospace output). The function also preserves the blank line after the metadata
-so the written output mirrors the structure of the source CSV.}
+\item{skip}{Number of leading lines to skip before the column-header row, passed to
+\code{utils::read.csv()}. Default \code{NULL} auto-detects the header row in each file
+(the EwE metadata block varies in length with the number of spatial-temporal driver
+layers, so a fixed count breaks across models). Supply an integer to override; by EwE
+convention \code{skip + 1} is the blank line directly above the column-header row (31 for
+a model with five driver layers). That blank line is preserved so the written output
+mirrors the structure of the source CSV.}
 
 \item{stanza.regex}{Regular expression matching the stanza-age suffix on a column name. The
 default \code{"\\s+[0-9]+\\+?$"} matches the EwE convention of \code{"<group> <age>"} or
