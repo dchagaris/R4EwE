@@ -483,14 +483,20 @@ fn.ecospace_plot_ts <- function(predB=predB, predC=predC, timestep='annual',obs.
 
 #' @keywords internal
 #' @noRd
-.read_pred_ecospace_F <- function(dir.out, timestep, regions, styear){
+#' @details Delegates to \code{.derive_fmort_arr()} so the plotted F is the same quantity
+#'   \code{\link{fn.ecospace_objfxn}} scores for obs type 104. Two consequences versus the
+#'   earlier local calculation: group columns are matched on NORMALIZED name rather than
+#'   literal name (Catch column names are rebuilt from \code{"fleet|group"} headers, so a
+#'   whitespace difference used to silently drop a group from the panel), and years whose
+#'   biomass is below \code{b.floor.frac} of the group's maximum come back as \code{NA}
+#'   rather than 0. NA leaves a gap in the panel; the old 0 drew a line along the axis,
+#'   which reads as "no fishing" when it actually means "no resolvable biomass to divide by".
+.read_pred_ecospace_F <- function(dir.out, timestep, regions, styear, b.floor.frac = 1e-3){
   catch <- fn.read_pred_ecospace_wide(dir.out, "Catch",   timestep, regions, styear, aggregate_by_group = TRUE)
   bio   <- fn.read_pred_ecospace_wide(dir.out, "Biomass", timestep, regions, styear, aggregate_by_group = FALSE)
   if(is.null(catch) || is.null(bio)) return(NULL)
-  al <- .align_by_group(catch, bio); if(is.null(al)) return(NULL)
-  f <- al$a / al$b
-  f[!is.finite(f)] <- 0
-  f
+  .derive_fmort_arr(catch, bio, b.floor.frac = b.floor.frac,
+                    norm = function(x) gsub("\\s+", "_", trimws(gsub('"', "", as.character(x)))))
 }
 
 

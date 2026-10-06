@@ -872,6 +872,145 @@ fn.read_pred_ecospace_discards_split <- function(dir.out, timestep, regions, sty
        surv_fg  = attach_meta(ds))
 }
 
+#' @title Check that the fitted Ecospace predictions match the model's own removals.
+#' @description Regression guard for the quantities \code{\link{fn.ecospace_objfxn}} fits.
+#'
+#'   Ecospace writes group-level catch two ways that need not agree. The timeseries CSVs
+#'   (\code{Ecospace_*_Region_<r>_Catch.csv}) are built per fleet in
+#'   \code{cSpaceSolver.accumCatchData} as \code{B * EffortSpace * relQ * Prop}, while the
+#'   fishing mortality the solver actually applies is
+#'   \code{EffortSpace * relQ * Prop / PAreaFished} -- the per-fleet expression omits the
+#'   \code{PAreaFished} divisor. The group-level catch map
+#'   (\code{csv/EcospaceMapCatch-<group>.csv}) is \code{B * Ftot} and therefore carries the
+#'   divisor. So whenever a fleet is habitat-restricted the CSVs under-report what the model
+#'   removed, by the biomass- and effort-weighted mean of \code{1/PAreaFished} -- a factor
+#'   measured at 3-5x on the WFS MICE model before its gag and red grouper fleets were given
+#'   unrestricted habitat access, and exactly 1 after. Because the objective reads the CSVs,
+#'   a silent return of that condition would have it fitting a biased prediction.
+#'
+#'   This function compares the two paths for catch, biomass and the derived
+#'   F = catch / biomass, per group, and flags any group whose ratio departs from 1 by more
+#'   than \code{tol}. Run it on a base run before committing search time, and after any change
+#'   to fleet habitat assignment, MPAs or the effort-distribution settings.
+#' @param dir.out Ecospace output folder (the parent of the \code{csv/} subdir).
+#' @param groups Character vector of group names to check. \code{NULL} (default) checks every
+#'   group that has both a catch map and a biomass map.
+#' @param region Region ID whose timeseries CSVs to read. Default 0, the whole-map average,
+#'   which is what the maps correspond to; any other value will disagree by construction.
+#' @param tol Relative tolerance on the map/CSV ratio. Default 0.01.
+#' @param verbose Print a summary.
+#' @return Invisibly, a data frame with one row per checked group: the mean map and CSV values
+#'   for catch and biomass, their ratios, the mean ratio for F, and \code{pass}.
+#' @export
+fn.check_ecospace_pred <- function(dir.out, groups = NULL, region = 0,
+                                   tol = 0.01, verbose = TRUE){
+
+  csv.dir <- file.path(dir.out, "csv")
+  if(!dir.exists(csv.dir))
+    stop("No csv/ subdir under ", dir.out,
+         " -- the per-group map outputs are needed to check the timeseries CSVs.")
+
+  cmaps <- list.files(csv.dir, pattern = "^EcospaceMapCatch-.*\\.csv$")
+  bmaps <- list.files(csv.dir, pattern = "^EcospaceMapBiomass-.*\\.csv$")
+  gc <- sub("\\.csv$", "", sub("^EcospaceMapCatch-",   "", cmaps))
+  gb <- sub("\\.csv$", "", sub("^EcospaceMapBiomass-", "", bmaps))
+  have <- intersect(gc, gb)
+  if(length(have) == 0) stop("No group with both a catch and a biomass map under ", csv.dir)
+  if(is.null(groups)) groups <- have else {
+    miss   <- setdiff(groups, have)
+    if(length(miss)) warning("No map pair for: ", paste(miss, collapse = ", "))
+    groups <- intersect(groups, have)
+  }
+
+  cat.csv <- fn.read_pred_ecospace_wide(dir.out, "Catch",   "annual", region, 1L,
+                                        aggregate_by_group = TRUE)
+  bio.csv <- fn.read_pred_ecospace_wide(dir.out, "Biomass", "annual", region, 1L,
+                                        aggregate_by_group = FALSE)
+  if(is.null(cat.csv) || is.null(bio.csv))
+    stop("Could not read the Catch and/or Biomass timeseries CSVs for region ", region)
+
+  # Grid dimensions from the first Step block, rather than assuming 66 x 78.
+  dims <- function(path){
+    ln  <- readLines(path, warn = FALSE)
+    end <- grep("<HEADER end/>", ln, fixed = TRUE)[1]
+    bdy <- ln[(end + 1L):length(ln)]
+    s1  <- grep("^Step,", bdy)[1]
+    nxt <- grep("^Step,", bdy)[2]
+    last <- if(is.na(nxt)) length(bdy) else nxt - 1L
+    rows <- bdy[(s1 + 2L):last]
+    rows <- rows[nzchar(trimws(rows))]
+    c(length(rows), length(strsplit(rows[1], ",", fixed = TRUE)[[1]]))
+  }
+
+  # Spatial mean over unmasked cells per step, then the annual mean, so the result is
+  # directly comparable to an Ecospace_Annual_Average_* row.
+  map_annual <- function(path, d){
+    a  <- .parse_ecospace_map_csv(path, nrows = d[1], ncols = d[2])
+    yr <- ceiling(attr(a, "year"))
+    v  <- apply(a, 3, function(m){ m[m <= -9998] <- NA; mean(m, na.rm = TRUE) })
+    tapply(v, yr, mean)
+  }
+
+  rows <- list()
+  for(g in groups){
+    d  <- dims(file.path(csv.dir, paste0("EcospaceMapCatch-", g, ".csv")))
+    cm <- map_annual(file.path(csv.dir, paste0("EcospaceMapCatch-",   g, ".csv")), d)
+    bm <- map_annual(file.path(csv.dir, paste0("EcospaceMapBiomass-", g, ".csv")), d)
+
+    ci <- match(g, dimnames(cat.csv)[[2]])
+    bi <- match(g, dimnames(bio.csv)[[2]])
+    if(is.na(bi)) next                      # no biomass column -> nothing to compare
+    cc <- if(is.na(ci)) rep(0, dim(bio.csv)[1]) else cat.csv[, ci, 1, 1]
+    bb <- bio.csv[, bi, 1, 1]
+
+    n  <- min(length(cm), length(cc))
+    k  <- seq_len(n)
+    okC <- which(cc[k] > 0 & cm[k] > 0)
+    okB <- which(bb[k] > 0 & bm[k] > 0)
+    rC <- if(length(okC)) mean(cm[okC] / cc[okC]) else NA_real_
+    rB <- if(length(okB)) mean(bm[okB] / bb[okB]) else NA_real_
+    rF <- if(length(okC) && length(okB)){
+            okF <- intersect(okC, okB)
+            mean((cm[okF]/bm[okF]) / (cc[okF]/bb[okF]))
+          } else NA_real_
+
+    rows[[length(rows) + 1L]] <- data.frame(
+      group        = g,
+      n            = length(okC),
+      catch_map    = if(length(okC)) mean(cm[okC]) else NA_real_,
+      catch_csv    = if(length(okC)) mean(cc[okC]) else NA_real_,
+      catch_ratio  = rC,
+      biomass_map  = if(length(okB)) mean(bm[okB]) else NA_real_,
+      biomass_csv  = if(length(okB)) mean(bb[okB]) else NA_real_,
+      biomass_ratio= rB,
+      F_ratio      = rF,
+      stringsAsFactors = FALSE)
+  }
+  out <- do.call(rbind, rows)
+  if(is.null(out) || nrow(out) == 0) stop("Nothing could be compared.")
+  dev <- function(x) ifelse(is.na(x), 0, abs(x - 1))
+  out$pass <- dev(out$catch_ratio) <= tol & dev(out$biomass_ratio) <= tol &
+              dev(out$F_ratio)     <= tol
+  out <- out[order(-pmax(dev(out$catch_ratio), dev(out$biomass_ratio), dev(out$F_ratio))), ]
+  rownames(out) <- NULL
+
+  if(verbose){
+    nfail <- sum(!out$pass)
+    cat("fn.check_ecospace_pred:", basename(dir.out), "| region", region,
+        "|", nrow(out), "groups |", nfail, "outside tol =", tol, "\n")
+    show <- if(nfail > 0) out[!out$pass, ] else utils::head(out, 3)
+    print(show[, c("group","n","catch_ratio","biomass_ratio","F_ratio","pass")],
+          row.names = FALSE, digits = 5)
+    if(nfail > 0){
+      cat("\n  A catch_ratio above 1 means the timeseries CSVs under-report what the model\n",
+          " removed. The usual cause is habitat-restricted fleets: the per-fleet catch in\n",
+          " accumCatchData omits the 1/PAreaFished divisor that the applied F carries.\n",
+          " Give the affected fleets unrestricted habitat access, or stop fitting catch.\n", sep = "")
+    } else cat("  OK: timeseries CSVs agree with the model's own removals.\n")
+  }
+  invisible(out)
+}
+
 #' @title Parse Ecospace \code{fleet|group} column names.
 #' @description Splits Ecospace \code{"fleet|group"} column-name strings into a data frame of
 #'   fleet and group name parts. Use with the column dimnames of arrays returned by
