@@ -14,6 +14,7 @@ fn.ecospace_objfxn(
   fit.abs.catch = TRUE,
   types = NULL,
   eps = NULL,
+  fmort.b.floor = 0.001,
   spatial.obs = if (exists("spatial.obs", envir = .GlobalEnv)) get("spatial.obs", envir =
     .GlobalEnv) else NULL,
   spatial.weight = if (exists("spatial.weight", envir = .GlobalEnv))
@@ -22,7 +23,8 @@ fn.ecospace_objfxn(
     envir = .GlobalEnv) else 1985,
   region.areas = if (exists("region.areas", envir = .GlobalEnv)) get("region.areas",
     envir = .GlobalEnv) else NULL,
-  return = c("both", "vector", "detail")
+  return = c("both", "vector", "detail"),
+  ll.file = NULL
 )
 }
 \arguments{
@@ -54,6 +56,17 @@ type present in \code{obs.ts$ts.head$Type}.}
 \item{eps}{Small floor applied to predictions before \code{log()} to avoid \code{log(0)}.
 Default \code{.Machine$double.eps^0.5}.}
 
+\item{fmort.b.floor}{Guard for type 104 (fishing mortality), which is derived as
+predicted catch / predicted biomass. Within each group and region, years whose
+predicted biomass falls below \code{fmort.b.floor} times that group's maximum
+predicted biomass are set to \code{NA} rather than scored. Without this, a group
+the parameter search has driven toward extinction yields a catch/biomass ratio
+built from two numerically meaningless numbers, and because the cost is a squared
+log residual those years would dominate the objective and actively pull the search
+toward collapsed states. A fraction rather than an absolute floor because group
+biomass densities in a typical model span several orders of magnitude. Default
+\code{1e-3}; set \code{0} to disable.}
+
 \item{spatial.obs}{Optional list of observed spatial maps (per group/pool) added as a
 spatial cross-entropy term via \code{\link{fn.spatial_LL}}. Defaults to \code{spatial.obs}
 in the global environment, or \code{NULL} to skip the spatial term.}
@@ -79,6 +92,21 @@ are combined with equal weights (with a warning), which over-weights small regio
 Absolute, Reference, PoolRole) for the subset of series that were considered, with
 the computed columns \code{q}, \code{n}, \code{obs.cv}, \code{obs.sd}, \code{loglik}
 appended.}
+
+\item{ll.file}{Optional switch to write a per-component likelihood report to disk.
+\code{NULL} (default) writes nothing. \code{TRUE} writes \code{LL_components.csv}
+into \code{dir.pred[1]}; a character path writes to that path. The report holds one
+row per REFERENCE timeseries -- every \code{obs.ts$ts.head} row with
+\code{Reference == TRUE}, scored or not -- and one row per \code{spatial.obs} row,
+each with its likelihood contribution in \code{loglik}. Spatial values are already
+multiplied by \code{spatial.weight}; timeseries values are not. Unscored reference
+series carry \code{loglik = NA} with \code{scored = FALSE}; zero-weight series are
+\code{scored = TRUE} but also \code{loglik = NA}, since they contribute nothing.
+Every row records the scoring settings used -- \code{fit.abs.catch},
+\code{region.weights} (\code{"area"} if \code{region.areas} was supplied, else
+\code{"equal"}) and \code{spatial.weight} -- and timeseries rows add
+\code{abs.scale}, TRUE when the series was fit on its literal scale rather than
+q-rescaled. Compare re-scores of historical runs only when these match.}
 }
 \value{
 The shape selected by \code{return}. Series with \code{Weight == 0} are recorded

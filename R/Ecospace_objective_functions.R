@@ -302,6 +302,16 @@ fn.objfxn2 <- function(dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta
 #'   type present in \code{obs.ts$ts.head$Type}.
 #' @param eps Small floor applied to predictions before \code{log()} to avoid \code{log(0)}.
 #'   Default \code{.Machine$double.eps^0.5}.
+#' @param fmort.b.floor Guard for type 104 (fishing mortality), which is derived as
+#'   predicted catch / predicted biomass. Within each group and region, years whose
+#'   predicted biomass falls below \code{fmort.b.floor} times that group's maximum
+#'   predicted biomass are set to \code{NA} rather than scored. Without this, a group
+#'   the parameter search has driven toward extinction yields a catch/biomass ratio
+#'   built from two numerically meaningless numbers, and because the cost is a squared
+#'   log residual those years would dominate the objective and actively pull the search
+#'   toward collapsed states. A fraction rather than an absolute floor because group
+#'   biomass densities in a typical model span several orders of magnitude. Default
+#'   \code{1e-3}; set \code{0} to disable.
 #' @param spatial.obs Optional list of observed spatial maps (per group/pool) added as a
 #'   spatial cross-entropy term via \code{\link{fn.spatial_LL}}. Defaults to \code{spatial.obs}
 #'   in the global environment, or \code{NULL} to skip the spatial term.
@@ -349,6 +359,7 @@ fn.ecospace_objfxn <- function(dir.pred,
                                fit.abs.catch = TRUE,
                                types         = NULL,
                                eps           = NULL,
+                               fmort.b.floor = 1e-3,
                                spatial.obs   = if(exists("spatial.obs",    envir = .GlobalEnv))
                                                  get("spatial.obs",       envir = .GlobalEnv) else NULL,
                                spatial.weight= if(exists("spatial.weight", envir = .GlobalEnv))
@@ -375,7 +386,7 @@ fn.ecospace_objfxn <- function(dir.pred,
     stop("Could not infer styear from rownames(obs.ts$ts).")
 
   # ---- pick obs types to fit ----
-  supported    <- c(0, 1, 6, 61, 12, 13, 19, 20)
+  supported    <- c(0, 1, 6, 61, 12, 13, 19, 20, 104)
   present      <- intersect(supported, unique(obs.ts$ts.head$Type))
   types_to_fit <- if(is.null(types)) present else intersect(types, present)
   if(length(types_to_fit) == 0)
@@ -383,11 +394,13 @@ fn.ecospace_objfxn <- function(dir.pred,
          paste(supported, collapse = ", "), ").")
 
   # ---- read predictions once, only what's needed ----
+  # Type 104 (FishingMortalityRef) is not an Ecospace output in its own right; it
+  # is derived below as catch / biomass, so it needs both reads.
   pred <- list()
-  if(any(types_to_fit %in% c(0, 1)))
+  if(any(types_to_fit %in% c(0, 1, 104)))
     pred$biomass <- fn.read_pred_ecospace_wide(dir.pred, "Biomass", timestep, regions, styear,
                                                aggregate_by_group = FALSE)
-  if(any(types_to_fit %in% c(6, 61)))
+  if(any(types_to_fit %in% c(6, 61, 104)))
     pred$catch   <- fn.read_pred_ecospace_wide(dir.pred, "Catch",   timestep, regions, styear,
                                                aggregate_by_group = TRUE)
   if(any(types_to_fit %in% c(12)))
@@ -407,6 +420,27 @@ fn.ecospace_objfxn <- function(dir.pred,
   norm_fleet <- function(x) gsub("\\s+", " ", trimws(tolower(x)))
   norm_gn    <- norm_name(group.names)
   norm_fn    <- if(!is.null(fleet.names)) norm_fleet(fleet.names) else character(0)
+
+  # ---- derive F = catch / biomass for type 104 ----
+  # Ecospace writes no fishing-mortality output, so F is reconstructed from the
+  # two arrays already read. Columns are matched on normalized group name because
+  # Catch arrives via aggregate_by_group = TRUE (group names rebuilt from
+  # "fleet|group" headers) while Biomass arrives with group names verbatim, so the
+  # two column sets are not guaranteed to share an order -- or a membership.
+  if(104 %in% types_to_fit){
+    if(is.null(pred$catch) || is.null(pred$biomass)){
+      warning("Type 104 requested but Catch and/or Biomass output is missing; skipping F.")
+      types_to_fit <- setdiff(types_to_fit, 104)
+    } else {
+      pred$fmort <- .derive_fmort_arr(pred$catch, pred$biomass,
+                                      b.floor.frac = fmort.b.floor,
+                                      norm = norm_name)
+      if(is.null(pred$fmort)){
+        warning("No group columns shared between Catch and Biomass output; skipping F.")
+        types_to_fit <- setdiff(types_to_fit, 104)
+      }
+    }
+  }
 
   any_arr       <- pred[[which(!vapply(pred, is.null, logical(1)))[1]]]
   region_labels <- if(!is.null(any_arr)) dimnames(any_arr)[[3]] else paste0("R", regions)
@@ -442,6 +476,11 @@ fn.ecospace_objfxn <- function(dir.pred,
            "13" = list(arr = pred$disc_total_fg, kind = "fg", meta = meta_disc_fg),
            "19" = list(arr = pred$disc_total,    kind = "group"),
            "20" = list(arr = pred$disc_total,    kind = "group"),
+           # 104 deliberately stays out of the is_group_agg set below: F is a rate,
+           # so it is neither additive across pool codes nor area-averageable across
+           # regions. It is scored on the single region named by Region (or the first
+           # detected region), exactly as types 6/61/19/20 are.
+           "104"= list(arr = pred$fmort,         kind = "group"),
            NULL)
   }
 
@@ -706,6 +745,60 @@ fn.ecospace_objfxn <- function(dir.pred,
 #' @param lk.detail Per-series detail frame built by \code{fn.ecospace_objfxn}; must
 #'   carry \code{ts.row} (row index into \code{ts.head}) and \code{loglik}.
 #' @param spatial.obs Spatial observation table, or NULL.
+#' @title Derive a predicted fishing-mortality array from catch and biomass.
+#' @description Builds F = catch / biomass for \code{fn.ecospace_objfxn} obs type 104.
+#'   Ecospace has no fishing-mortality writer, so F has to be reconstructed. Group
+#'   columns are matched on normalized name, since the catch array is built by
+#'   aggregating \code{"fleet|group"} headers while the biomass array carries group
+#'   names directly; only groups present in both are returned. Years whose biomass is
+#'   below \code{b.floor.frac} of that group's per-region maximum are returned as
+#'   \code{NA}, so a collapsed group contributes nothing instead of contributing noise.
+#' @param catch_arr,biomass_arr Arrays from \code{\link{fn.read_pred_ecospace_wide}},
+#'   dimensioned year x group x region x run.
+#' @param b.floor.frac Relative biomass floor; see \code{fn.ecospace_objfxn}.
+#' @param norm Name normalizer, passed in so it matches the caller's convention.
+#' @return An array shaped like \code{catch_arr} but restricted to the shared group
+#'   columns, or \code{NULL} if no groups are shared.
+#' @keywords internal
+#' @noRd
+.derive_fmort_arr <- function(catch_arr, biomass_arr, b.floor.frac = 1e-3, norm = identity){
+  cg <- norm(dimnames(catch_arr)[[2]])
+  bg <- norm(dimnames(biomass_arr)[[2]])
+  shared <- intersect(cg, bg)
+  if(length(shared) == 0) return(NULL)
+  ci <- match(shared, cg)
+  bi <- match(shared, bg)
+
+  # Region and run dimensions must line up; both arrays come from the same reader
+  # call pattern, so this is a guard against a future divergence rather than a
+  # situation expected in normal use.
+  if(!identical(dim(catch_arr)[c(1, 3, 4)], dim(biomass_arr)[c(1, 3, 4)]))
+    stop(".derive_fmort_arr(): Catch and Biomass arrays disagree on the year, region ",
+         "or run dimension.")
+
+  cc <- catch_arr[, ci, , , drop = FALSE]
+  bb <- biomass_arr[, bi, , , drop = FALSE]
+
+  # Mask first, then divide, so the floor is applied on biomass and not on the ratio.
+  if(is.finite(b.floor.frac) && b.floor.frac > 0){
+    for(g in seq_along(shared)) for(r in seq_len(dim(bb)[3])) for(u in seq_len(dim(bb)[4])){
+      v <- bb[, g, r, u]
+      mx <- suppressWarnings(max(v, na.rm = TRUE))
+      if(!is.finite(mx) || mx <= 0){ bb[, g, r, u] <- NA_real_; next }
+      v[v < b.floor.frac * mx] <- NA_real_
+      bb[, g, r, u] <- v
+    }
+  }
+  bb[!is.na(bb) & bb <= 0] <- NA_real_
+
+  out <- cc / bb
+  # Carry the catch array's own group labels, not the normalized keys, so this array
+  # is interchangeable with the other pred arrays when inspected or indexed by name.
+  dimnames(out) <- list(dimnames(catch_arr)[[1]], dimnames(catch_arr)[[2]][ci],
+                        dimnames(catch_arr)[[3]], dimnames(catch_arr)[[4]])
+  out
+}
+
 #' @param spatial_per Per-row spatial contributions from \code{fn.spatial_LL}
 #'   (\code{$per_species}, already multiplied by \code{spatial.weight}), or NULL.
 #' @param spatial.weight Scalar spatial weight used for the run.
@@ -754,7 +847,13 @@ fn.ecospace_objfxn <- function(dir.pred,
           else rep(FALSE, nrow(ts_df))
   ts_df$abs.scale <- isTRUE(fit.abs.catch) & absv
   ts_df$abs.scale[!ts_df$scored] <- NA    # never fit, so no scale applies
+  # Fishing mortality gets its own component label. It is derived as catch/biomass,
+  # so in log space its residual is the catch residual minus the biomass residual --
+  # it reweights information already in the objective rather than adding any. Keeping
+  # it separable in the report is what lets you see that trade being made.
   ts_df$component <- "timeseries"
+  if("Type" %in% names(ts_df))
+    ts_df$component[!is.na(ts_df$Type) & ts_df$Type == 104] <- "fishing_mortality"
   rownames(ts_df) <- NULL
 
   out <- ts_df
