@@ -1575,7 +1575,7 @@ cluster_is_ok <- function() {
 #' @title Canonical list of objects to clusterExport for R4EwE GA/sensitivity workers.
 #' @description Returns the character vector of object names that every worker process
 #'   needs in its global environment to call \code{safe_runEwE} → \code{fn.runEwE} →
-#'   any of the supported objective functions (\code{fn.objfxn1}, \code{fn.objfxn2},
+#'   either supported objective function (\code{fn.objfxn1}, deprecated, or
 #'   \code{fn.ecospace_objfxn}). Use it in your top-level \code{clusterExport()} call
 #'   so the three clusterExport sites (script, \code{ensure_cluster}, \code{fn.GA}'s
 #'   every-5-gen reset) stay in sync.
@@ -1586,7 +1586,7 @@ cluster_is_ok <- function() {
     # console + objective functions
     "file.console",
     "safe_runEwE", "fn.runEwE", ".check_ecospace_output",
-    "fn.objfxn1", "fn.objfxn2", "fn.ecospace_objfxn",
+    "fn.objfxn1", "fn.ecospace_objfxn",
     # per-region prediction readers and their internal helpers
     "fn.read_pred_ecospace_wide", "fn.read_pred_ecospace_discards_split", "fn.fg_meta",
     ".find_year_skip", ".detect_ecospace_regions", ".ecospace_dmort_by_year",

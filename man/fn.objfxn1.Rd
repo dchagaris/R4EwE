@@ -2,7 +2,7 @@
 % Please edit documentation in R/Ecospace_objective_functions.R
 \name{fn.objfxn1}
 \alias{fn.objfxn1}
-\title{Ecospace objective function, timeseries only}
+\title{Ecospace objective function, timeseries only (deprecated)}
 \usage{
 fn.objfxn1(dir.pred, obs.ts = obs.ts, run.idx = 1, fit.abs.catch = TRUE)
 }
@@ -22,4 +22,15 @@ A vector containing the total and functional group specific likelihood.
 }
 \description{
 Calculates the composite likelihood.
+
+\strong{Deprecated -- use \code{\link{fn.ecospace_objfxn}}.} This function reads the
+legacy \code{obs.ts$obsB.head} / \code{obsC.head} sub-objects, is limited to biomass and
+aggregated catch on region 0, and assigns \code{lk.ts} into the global environment with
+\code{<<-}. It cannot fit regions, fishing mortality (type 104), fleet-specific landings
+(12), discards (13, 19, 20), or the spatial cross-entropy term, and it produces no
+per-component likelihood report. Retained only so fitness values from pre-2026 GA runs
+remain reproducible.
+}
+\seealso{
+\code{\link{fn.ecospace_objfxn}}
 }

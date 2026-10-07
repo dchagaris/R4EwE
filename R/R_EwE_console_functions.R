@@ -16,10 +16,6 @@
 #     objout <- fn.objfxn1(dir.pred=dirname(cmdfile),obs.ts=obs.ts)
 #     return(objout)
 #   }
-#   if(do.obj==2){
-#     objout <- fn.objfxn2(dir.pred=dirname(cmdfile), obs.ts=obs.ts, obs.map=obs.map)
-#     return(objout)
-#   }
 # }
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -58,8 +54,8 @@
 #fn.runEwE-----------------------------------------------------------------------------------------
 #' Run one Ecospace job (system2 version)
 #' @param cmdfile Character: full path to the command file Ecospace consumes
-#' @param do.obj Integer: 0=none, 1=\code{fn.objfxn1}, 2=\code{fn.objfxn2},
-#' 3=\code{fn.ecospace_objfxn}
+#' @param do.obj Integer: 0=none, 1=\code{fn.objfxn1} (deprecated),
+#' 3=\code{fn.ecospace_objfxn}. 2 was \code{fn.objfxn2}, removed 2026-10-07.
 #' @param console Character: full path to the Ecospace console executable (defaults to global
 #' file.console)
 #' @param stdout_target NULL/FALSE to suppress, or a file path to capture stdout
@@ -139,20 +135,32 @@ fn.runEwE <- function(cmdfile,
   # Compute objective (must return a single numeric or NA_real_)
   pred_dir <- dirname(cmdfile_path)
   
+  # obj.fxn = 2 (fn.objfxn2) was removed 2026-10-07: its only call site passed
+  # obs.map, which partially matched both obs.maps and obs.maps.meta -- an error
+  # in R, swallowed by the tryCatch below, so the branch silently scored every
+  # individual NA_real_. Its purpose (timeseries + spatial) is served by
+  # fn.ecospace_objfxn via spatial.obs / fn.spatial_LL. See git history.
   out <- tryCatch({
     if (do.obj == 1L) {
       fn.objfxn1(dir.pred = pred_dir, obs.ts = obs.ts)
-    } else if (do.obj == 2L) {
-      fn.objfxn2(dir.pred = pred_dir, obs.ts = obs.ts, obs.map = obs.map)
     } else if (do.obj == 3L) {
       fn.ecospace_objfxn(dir.pred = pred_dir, obs.ts = obs.ts,
                          group.names = group.names, fleet.names = fleet.names,
                          fit.abs.catch = fit.abs.catch,
                          return = "vector")
     } else {
-      NA_real_
+      stop("obj.fxn = ", do.obj, " is not a valid objective function. ",
+           "Use 3 (fn.ecospace_objfxn) or 1 (fn.objfxn1, deprecated). ",
+           "obj.fxn = 2 (fn.objfxn2) was removed.")
     }
-  }, error = function(e) NA_real_)
+  }, error = function(e){
+    # Keep returning NA so one bad individual cannot kill a long GA run, but say
+    # so -- swallowing this silently is what let the obj.fxn = 2 breakage sit
+    # unnoticed, and it would hide the next one just as well.
+    warning("Objective function failed for ", pred_dir, ": ", conditionMessage(e),
+            call. = FALSE, immediate. = TRUE)
+    NA_real_
+  })
   
   if (is.numeric(out) && length(out) >= 1L && is.finite(out[1])){
     return(out)
@@ -170,8 +178,9 @@ fn.runEwE <- function(cmdfile,
 #' @param runlist A dataframe that must contain a variable named 'cmd_file', which is the full file 
 #' path of the command files to run.
 #' @param obj.fxn A single number indicating the likelihood function to use. 0=none, 1=timeseries
-#' only (\code{fn.objfxn1}), 2=timeseries and spatial data (\code{fn.objfxn2}), 3=Ecospace
+#' only (\code{fn.objfxn1}, deprecated), 3=Ecospace
 #' timeseries with fleet-specific landings and discards (\code{fn.ecospace_objfxn}).
+#' \code{obj.fxn = 2} (\code{fn.objfxn2}) was removed 2026-10-07.
 #' \code{obj.fxn = 3} additionally requires \code{group.names} and \code{fleet.names} to be in
 #' the worker's environment (add them to \code{cl.export}).
 #' @param cl.export A list of objects exported to each worker.

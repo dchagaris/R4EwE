@@ -20,8 +20,9 @@ fn.runEwE.parallel(
 path of the command files to run.}
 
 \item{obj.fxn}{A single number indicating the likelihood function to use. 0=none, 1=timeseries
-only (\code{fn.objfxn1}), 2=timeseries and spatial data (\code{fn.objfxn2}), 3=Ecospace
+only (\code{fn.objfxn1}, deprecated), 3=Ecospace
 timeseries with fleet-specific landings and discards (\code{fn.ecospace_objfxn}).
+\code{obj.fxn = 2} (\code{fn.objfxn2}) was removed 2026-10-07.
 \code{obj.fxn = 3} additionally requires \code{group.names} and \code{fleet.names} to be in
 the worker's environment (add them to \code{cl.export}).}
 

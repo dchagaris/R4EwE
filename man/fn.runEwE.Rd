@@ -17,8 +17,8 @@ fn.runEwE(
 \arguments{
 \item{cmdfile}{Character: full path to the command file Ecospace consumes}
 
-\item{do.obj}{Integer: 0=none, 1=\code{fn.objfxn1}, 2=\code{fn.objfxn2},
-3=\code{fn.ecospace_objfxn}}
+\item{do.obj}{Integer: 0=none, 1=\code{fn.objfxn1} (deprecated),
+3=\code{fn.ecospace_objfxn}. 2 was \code{fn.objfxn2}, removed 2026-10-07.}
 
 \item{console}{Character: full path to the Ecospace console executable (defaults to global
 file.console)}

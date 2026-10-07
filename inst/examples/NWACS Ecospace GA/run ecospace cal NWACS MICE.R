@@ -17,7 +17,6 @@ dimnames(predB)
 fn.ecospace_plot_ts(predB=predB, predC=predC, timestep='annual', obs.ts=obs.ts, scale2run=1, 
                     pltB.dims=c(3,3), pltC.dims=c(4,3), scaleCatch=T, plot2pdf=F,plt.cols=c('black','salmon','seagreen'))
 matrix(unlist(lapply(1:dim(predB)[3],function(i) fn.objfxn1(dir.pred=dir.pred, obs.ts=obs.ts, run.idx=i))),nrow=dim(predB)[3],byrow=T)
-#fn.objfxn2(dir.pred=dir.pred, obs.ts=obs.ts, obs.maps=obs.maps, obs.maps.meta=obs.maps.meta, autoweight.LL=TRUE)
 
 #---- Prepare parameters ----
 # #vulnerability parameters to estimate
@@ -69,7 +68,7 @@ myconfig <- list(popSize = 10*length(log_par_vec), #10x number of parameters
 
 # Export only what’s needed, once:
 clusterExport(cl, c("file.console",'cmd_base','myconfig','run_dir',
-  "safe_runEwE", "fn.runEwE", "fn.objfxn1", "fn.objfxn2",
+  "safe_runEwE", "fn.runEwE", "fn.objfxn1",
   "fn.ecospace_predB_ts2array", "fn.ecospace_predC_ts2array",
   "styear", "enyear", "group.names", "df.names","obs.ts"))
 
