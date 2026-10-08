@@ -922,12 +922,22 @@ fn.check_ecospace_pred <- function(dir.out, groups = NULL, region = 0,
     groups <- intersect(groups, have)
   }
 
-  cat.csv <- fn.read_pred_ecospace_wide(dir.out, "Catch",   "annual", region, 1L,
+  # Compare against the MONTHLY timeseries CSVs, indexed at each map's own Step
+  # number. Ecospace writes the per-group maps at whatever interval the scenario
+  # asks for -- every month in some runs, once a year (steps 1, 13, 25, ...) in
+  # others -- so aggregating map steps to an annual mean and comparing that to an
+  # Ecospace_Annual_Average_* row silently compares a single January snapshot
+  # against a 12-month mean whenever the maps are annual. For a slow-moving adult
+  # group that looks like a 2-3% error; for an age-0 stanza with a recruitment
+  # pulse it reads as a 60-100% error and fabricates a failure. Matching step for
+  # step against the monthly CSV is exact at any write interval.
+  cat.csv <- fn.read_pred_ecospace_wide(dir.out, "Catch",   "monthly", region, 1L,
                                         aggregate_by_group = TRUE)
-  bio.csv <- fn.read_pred_ecospace_wide(dir.out, "Biomass", "annual", region, 1L,
+  bio.csv <- fn.read_pred_ecospace_wide(dir.out, "Biomass", "monthly", region, 1L,
                                         aggregate_by_group = FALSE)
   if(is.null(cat.csv) || is.null(bio.csv))
-    stop("Could not read the Catch and/or Biomass timeseries CSVs for region ", region)
+    stop("Could not read the monthly Catch and/or Biomass timeseries CSVs for region ",
+         region, " (Ecospace_Average_Region_", region, "_{Catch,Biomass}.csv)")
 
   # Grid dimensions from the first Step block, rather than assuming 66 x 78.
   dims <- function(path){
@@ -942,31 +952,38 @@ fn.check_ecospace_pred <- function(dir.out, groups = NULL, region = 0,
     c(length(rows), length(strsplit(rows[1], ",", fixed = TRUE)[[1]]))
   }
 
-  # Spatial mean over unmasked cells per step, then the annual mean, so the result is
-  # directly comparable to an Ecospace_Annual_Average_* row.
-  map_annual <- function(path, d){
-    a  <- .parse_ecospace_map_csv(path, nrows = d[1], ncols = d[2])
-    yr <- ceiling(attr(a, "year"))
-    v  <- apply(a, 3, function(m){ m[m <= -9998] <- NA; mean(m, na.rm = TRUE) })
-    tapply(v, yr, mean)
+  # Spatial mean over unmasked cells per written step, plus the step numbers so the
+  # caller can line them up with rows of the monthly CSV.
+  map_steps <- function(path, d){
+    a <- .parse_ecospace_map_csv(path, nrows = d[1], ncols = d[2])
+    list(v    = apply(a, 3, function(m){ m[m <= -9998] <- NA; mean(m, na.rm = TRUE) }),
+         step = as.integer(attr(a, "step")))
   }
 
   rows <- list()
+  n.csv <- dim(bio.csv)[1]
+  map.steps <- integer(0)
   for(g in groups){
-    d  <- dims(file.path(csv.dir, paste0("EcospaceMapCatch-", g, ".csv")))
-    cm <- map_annual(file.path(csv.dir, paste0("EcospaceMapCatch-",   g, ".csv")), d)
-    bm <- map_annual(file.path(csv.dir, paste0("EcospaceMapBiomass-", g, ".csv")), d)
+    d   <- dims(file.path(csv.dir, paste0("EcospaceMapCatch-", g, ".csv")))
+    cmS <- map_steps(file.path(csv.dir, paste0("EcospaceMapCatch-",   g, ".csv")), d)
+    bmS <- map_steps(file.path(csv.dir, paste0("EcospaceMapBiomass-", g, ".csv")), d)
 
     ci <- match(g, dimnames(cat.csv)[[2]])
     bi <- match(g, dimnames(bio.csv)[[2]])
     if(is.na(bi)) next                      # no biomass column -> nothing to compare
-    cc <- if(is.na(ci)) rep(0, dim(bio.csv)[1]) else cat.csv[, ci, 1, 1]
-    bb <- bio.csv[, bi, 1, 1]
 
-    n  <- min(length(cm), length(cc))
-    k  <- seq_len(n)
-    okC <- which(cc[k] > 0 & cm[k] > 0)
-    okB <- which(bb[k] > 0 & bm[k] > 0)
+    # Line each map step up with its own row of the monthly CSV.
+    s   <- intersect(cmS$step, bmS$step)
+    s   <- s[s >= 1L & s <= n.csv]
+    if(length(s) == 0) next
+    map.steps <- union(map.steps, s)
+    cm  <- cmS$v[match(s, cmS$step)]
+    bm  <- bmS$v[match(s, bmS$step)]
+    cc  <- if(is.na(ci)) rep(0, length(s)) else cat.csv[s, ci, 1, 1]
+    bb  <- bio.csv[s, bi, 1, 1]
+
+    okC <- which(cc > 0 & cm > 0)
+    okB <- which(bb > 0 & bm > 0)
     rC <- if(length(okC)) mean(cm[okC] / cc[okC]) else NA_real_
     rB <- if(length(okB)) mean(bm[okB] / bb[okB]) else NA_real_
     rF <- if(length(okC) && length(okB)){
@@ -996,8 +1013,11 @@ fn.check_ecospace_pred <- function(dir.out, groups = NULL, region = 0,
 
   if(verbose){
     nfail <- sum(!out$pass)
+    int <- if(length(map.steps) > 1) stats::median(diff(sort(map.steps))) else NA_integer_
     cat("fn.check_ecospace_pred:", basename(dir.out), "| region", region,
         "|", nrow(out), "groups |", nfail, "outside tol =", tol, "\n")
+    cat("  maps written every", if(is.na(int)) "?" else int,
+        "step(s);", length(map.steps), "steps compared against the monthly csv\n")
     show <- if(nfail > 0) out[!out$pass, ] else utils::head(out, 3)
     print(show[, c("group","n","catch_ratio","biomass_ratio","F_ratio","pass")],
           row.names = FALSE, digits = 5)
