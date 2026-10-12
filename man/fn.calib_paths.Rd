@@ -28,8 +28,8 @@ digits, \code{_}, \code{-} and \code{.} only.}
 \value{
 A list with \code{phase}, \code{label}, \code{dir.scratch},
 \code{dir.archive}, \code{dir.results}, \code{file.info}, and
-\code{dir.run}: the scratch dir if it exists, else the archive dir if it
-exists, else the scratch dir.
+\code{dir.run}: the scratch dir if it holds anything, else the archive
+dir if it exists, else the scratch dir.
 }
 \description{
 Build the scratch, archive and results paths for a calibration

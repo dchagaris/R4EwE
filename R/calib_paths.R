@@ -21,8 +21,8 @@
 #' @param root.results Root for results (LL tables, plots, \code{run_info.csv}).
 #' @return A list with \code{phase}, \code{label}, \code{dir.scratch},
 #'   \code{dir.archive}, \code{dir.results}, \code{file.info}, and
-#'   \code{dir.run}: the scratch dir if it exists, else the archive dir if it
-#'   exists, else the scratch dir.
+#'   \code{dir.run}: the scratch dir if it holds anything, else the archive
+#'   dir if it exists, else the scratch dir.
 #' @examples
 #' \dontrun{
 #' p <- fn.calib_paths("phase5", "ga01")
@@ -41,7 +41,9 @@ fn.calib_paths <- function(phase, label,
   dir.archive <- if(is.null(root.archive)) NA_character_ else file.path(root.archive, phase, label)
   dir.results <- file.path(root.results, phase, label)
 
-  dir.run <- if(dir.exists(dir.scratch)) dir.scratch
+  # an empty scratch dir (left behind by robocopy /MOVE) does not count
+  has.files <- function(d) dir.exists(d) && length(list.files(d, all.files = TRUE, no.. = TRUE)) > 0
+  dir.run <- if(has.files(dir.scratch)) dir.scratch
              else if(!is.na(dir.archive) && dir.exists(dir.archive)) dir.archive
              else dir.scratch
 
