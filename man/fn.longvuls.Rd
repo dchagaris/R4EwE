@@ -4,10 +4,16 @@
 \alias{fn.longvuls}
 \title{Melt vulnerability matrix}
 \usage{
-fn.longvuls(vuls = vuls)
+fn.longvuls(vuls = vuls, by = c("pair", "pred"))
 }
 \arguments{
 \item{vuls}{A vulnerability matrix}
+
+\item{by}{\code{"pair"} (default): one row per predator-prey pair.
+\code{"pred"}: one row per predator with \code{prey = NA}, which the
+console applies to every prey in that predator's column. The base value
+is the column's value when uniform, else its geometric mean (with a
+warning, since the base model is then not reproduced exactly).}
 }
 \description{
 melt a vulnerability matrix.

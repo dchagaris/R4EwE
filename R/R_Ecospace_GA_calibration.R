@@ -753,7 +753,7 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0,
   tags.vul <- tags.env <- tags.redtide <- tags.disp <- tags.med <- tags.flt <- character()
   if(length(vul.par.idx)>0){
     vuln_vec <- par_vec[vul.par.idx]
-    tags.vul <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", vul_pars$pred, " ", ifelse(is.na(vul_pars$prey),"",vul_pars$prey),
+    tags.vul <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", .vul_tag_index(vul_pars$pred, vul_pars$prey),
                        "), ", sprintf("%.2f", vuln_vec), ", Indexed.Single")
   }
 

@@ -318,7 +318,7 @@ fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01
   if(!is.maxvul.mult) predprey.hi$vul = maxvul
   predprey = rbind(predprey.low,predprey.hi)
   predprey = predprey[order(predprey$pred,predprey$prey),]
-  tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", predprey$pred, " ", ifelse(is.na(predprey$prey),"",predprey$prey),
+  tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", .vul_tag_index(predprey$pred, predprey$prey),
                      "), ", sprintf("%.2f", predprey$vul), ", Indexed.Single")
   return(tags)
   }
@@ -329,7 +329,7 @@ fn.vul_testval_tags = function(predprey, pct.change=0.5, maxvul=100, minvul=1.01
     predprey.hi$vul = (1+pct.change)*predprey$basevul
     predprey.out = rbind(predprey.low,predprey.hi)
     predprey.out = predprey.out[order(predprey.out$pred,predprey.out$prey),]
-    tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", predprey.out$pred, " ", ifelse(is.na(predprey.out$prey),"",predprey.out$prey),
+    tags <- paste0("<ECOSIM_VULNERABILITIES_INDEXED>(", .vul_tag_index(predprey.out$pred, predprey.out$prey),
                    "), ", sprintf("%.2f", predprey.out$vul), ", Indexed.Single")
     return(tags)
   }

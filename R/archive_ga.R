@@ -168,10 +168,11 @@ archive_ga <- function(phase,
   # vuls
   if(fit.vuls && !is.null(vuls.base)){
     vuls.final <- vuls.base
-    vul.rows   <- which(!is.na(bestfit_pars$pred) & !is.na(bestfit_pars$prey) &
-                        grepl("^vul_", bestfit_pars$par_label))
+    vul.rows   <- which(!is.na(bestfit_pars$pred) & grepl("^vul_", bestfit_pars$par_label))
     for(i in vul.rows){
       pd <- bestfit_pars$pred[i]; py <- bestfit_pars$prey[i]
+      # prey NA = per-predator vul: applies to every prey in the column
+      if(is.na(py)) py <- which(!is.na(vuls.final[, pd + 1]))
       vuls.final[py, pd + 1] <- round(bestfit_pars$final_pars[i], 2)
     }
     write.csv(vuls.final, file.path(gui_dir, paste0("vuls_ga_final_", timestamp, ".csv")))
