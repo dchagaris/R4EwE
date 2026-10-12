@@ -4,26 +4,36 @@
 \alias{fn.calib_start}
 \title{Start a calibration run}
 \usage{
-fn.calib_start(paths, cmd_file = NULL, overwrite = FALSE, ...)
+fn.calib_start(
+  paths,
+  cmd_file = paths$files.phase$cmdbase,
+  overwrite = FALSE,
+  ...
+)
 }
 \arguments{
 \item{paths}{A list from \code{\link{fn.calib_paths}}.}
 
-\item{cmd_file}{Optional EwE console command file; its model file and
-Ecosim/Ecospace scenario indices are recorded.}
+\item{cmd_file}{EwE console command file. Defaults to \code{files$cmdbase}.}
 
 \item{overwrite}{Allow restarting a label whose status is \code{done}.}
 
 \item{...}{Extra fields to record, e.g. \code{note = "spin-up 1 yr"}.}
 }
 \value{
-Invisibly, the run_info fields.
+Invisibly, \code{paths} with \code{files} pointing at the run's
+frozen input copies.
 }
 \description{
 Call once, immediately before launching a run. Creates the
-scratch and results dirs and records the start in \code{run_info.csv}
-(status \code{running}). Refuses a label that is already \code{done}
-unless \code{overwrite = TRUE}, which starts a fresh \code{run_info.csv};
-warns on one still marked \code{running}.
-Does not delete anything: clearing old run dirs is up to the caller.
+scratch and results dirs, copies the phase input files into the run's
+\code{inputs/} folder, and records the start in \code{run_info.csv}
+(status \code{running}) with the settings, input md5s, R4EwE commit and,
+from the cmd file, the model, spatial-temporal config and time-series
+files (path, size, mtime, md5). Refuses a label that is already
+\code{done} unless \code{overwrite = TRUE}, which starts a fresh
+\code{run_info.csv} and fresh input copies. On a label still marked
+\code{running} it warns and keeps the original input copies, warning if
+the phase inputs have changed since. Does not delete run dirs: clearing
+old output is up to the caller.
 }

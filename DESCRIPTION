@@ -29,6 +29,8 @@ Imports:
     rvest,
     stats,
     terra,
+    tools,
+    utils,
     viridis
 Suggests:
     aquamapsdata,

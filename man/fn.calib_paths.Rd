@@ -13,32 +13,33 @@ fn.calib_paths(
 )
 }
 \arguments{
-\item{phase}{Phase name, e.g. \code{"phase5"}.}
+\item{phase}{A \code{calib_phase} from \code{\link{fn.calib_phase}}, or a
+phase name (then the \code{root.*} arguments are used and the run has no
+input files or settings).}
 
 \item{label}{Run label, e.g. \code{"sens_init"} or \code{"ga01"}. Letters,
 digits, \code{_}, \code{-} and \code{.} only.}
 
-\item{root.scratch}{Root for the Ecospace run dirs.}
-
-\item{root.archive}{Root the scratch tree is moved to when the run is done.
-\code{NULL} if there is no archive.}
-
-\item{root.results}{Root for results (LL tables, plots, \code{run_info.csv}).}
+\item{root.scratch, root.archive, root.results}{Roots, used only when
+\code{phase} is a name.}
 }
 \value{
 A list with \code{phase}, \code{label}, \code{dir.scratch},
-\code{dir.archive}, \code{dir.results}, \code{file.info}, and
-\code{dir.run}: the scratch dir if it holds anything, else the archive
-dir if it exists, else the scratch dir.
+\code{dir.archive}, \code{dir.results}, \code{file.info},
+\code{dir.inputs} (the run's frozen copy), \code{files}, \code{refs},
+\code{settings}, and \code{dir.run}: the scratch dir if it holds
+anything, else the archive dir if it exists, else the scratch dir.
+\code{files} points at the run's frozen copies once the run has been
+started, else at the phase inputs.
 }
 \description{
-Build the scratch, archive and results paths for a calibration
-run identified by \code{phase} and \code{label}. Pure: creates and writes
-nothing, so it is safe to call when only post-processing.
+Build the scratch, archive and results paths for run
+\code{label} of a phase. Pure: creates and writes nothing, so it is safe
+to call when only post-processing.
 }
 \examples{
 \dontrun{
-p <- fn.calib_paths("phase5", "ga01")
+p <- fn.calib_paths(ph, "ga01")
 p$dir.run
 }
 }
