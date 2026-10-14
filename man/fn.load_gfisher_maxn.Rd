@@ -20,17 +20,23 @@ fn.load_gfisher_maxn(
 Applied to every row unless overridden in the crosswalk.}
 
 \item{crosswalk}{data.frame with columns \code{mod, pc, species}; see
-\code{fn.gfisher_default_crosswalk}. Optionally include a \code{path}
-column to point at a specific file; otherwise the file is located by
+\code{fn.gfisher_default_crosswalk}. A row may combine stanzas: give
+\code{mod} and \code{pc} as comma-separated strings (e.g.
+\code{mod = "22,23,24,25", pc = "6,7,8,9", species = "gag 2+"}); the obs
+maps are summed cell by cell before normalising, and \code{fn.spatial_LL}
+fits the row against the summed predicted biomass of those stanzas.
+Optionally include a \code{path} column (\code{";"}-separated for combined
+rows) to point at specific files; otherwise each file is located by
 pattern \code{"_mod<mod>_"}.}
 
 \item{variable}{Character; portion of the filename identifying which
 variable (default \code{"maxn"}).}
 }
 \value{
-A data.frame with columns \code{mod, pc, species, path, styear,
-  endyear} and a list-column \code{map_norm} (each element is a numeric
-matrix, NA on NODATA cells, unit-sum-normalised).
+A data.frame with columns \code{mod} (comma-joined), \code{pc}
+(first stanza of the row), \code{species, path, styear, endyear} and
+list-columns \code{pcs} (all stanzas of the row) and \code{map_norm} (each
+element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
 }
 \description{
 Reads the 12 gag + red-grouper maxN \code{.asc} files, normalises

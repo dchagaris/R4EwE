@@ -50,6 +50,23 @@
   m
 }
 
+# Internal: codes per row as a list of integer vectors. Accepts a numeric
+# vector (one code per row), "a,b,c" strings, or a list.
+.parse_codes <- function(x){
+  if(is.list(x)) return(lapply(x, as.integer))
+  lapply(strsplit(as.character(x), ",", fixed = TRUE), function(s) as.integer(trimws(s)))
+}
+
+# Internal: cell-wise sum of same-sized matrices; a cell is NA only when it is
+# NA in every map.
+.sum_maps <- function(ms){
+  if(length(ms) == 1) return(ms[[1]])
+  a <- simplify2array(ms)
+  s <- apply(a, c(1, 2), sum, na.rm = TRUE)
+  s[apply(is.na(a), c(1, 2), all)] <- NA_real_
+  s
+}
+
 #' @title Normalise a spatial matrix to unit sum on non-NODATA cells.
 #' @description Sets NODATA cells to NA, divides remaining cells by their sum.
 #'   Returns NA for the NODATA cells so the shared valid-mask logic in
@@ -89,14 +106,20 @@ fn.gfisher_default_crosswalk <- function(){
 #' @param styear,endyear Year window this obs represents. Defaults 2015-2024.
 #'   Applied to every row unless overridden in the crosswalk.
 #' @param crosswalk data.frame with columns \code{mod, pc, species}; see
-#'   \code{fn.gfisher_default_crosswalk}. Optionally include a \code{path}
-#'   column to point at a specific file; otherwise the file is located by
+#'   \code{fn.gfisher_default_crosswalk}. A row may combine stanzas: give
+#'   \code{mod} and \code{pc} as comma-separated strings (e.g.
+#'   \code{mod = "22,23,24,25", pc = "6,7,8,9", species = "gag 2+"}); the obs
+#'   maps are summed cell by cell before normalising, and \code{fn.spatial_LL}
+#'   fits the row against the summed predicted biomass of those stanzas.
+#'   Optionally include a \code{path} column (\code{";"}-separated for combined
+#'   rows) to point at specific files; otherwise each file is located by
 #'   pattern \code{"_mod<mod>_"}.
 #' @param variable Character; portion of the filename identifying which
 #'   variable (default \code{"maxn"}).
-#' @return A data.frame with columns \code{mod, pc, species, path, styear,
-#'   endyear} and a list-column \code{map_norm} (each element is a numeric
-#'   matrix, NA on NODATA cells, unit-sum-normalised).
+#' @return A data.frame with columns \code{mod} (comma-joined), \code{pc}
+#'   (first stanza of the row), \code{species, path, styear, endyear} and
+#'   list-columns \code{pcs} (all stanzas of the row) and \code{map_norm} (each
+#'   element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
 #' @export
 fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
                                  styear      = 2015,
@@ -112,39 +135,41 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
   if(!all(required %in% names(crosswalk)))
     stop("crosswalk must have columns: ", paste(required, collapse = ", "))
 
-  # locate files if not provided per-row
+  # a row may combine several maps / stanzas, e.g. mod "22,23,24,25" -> pc "6,7,8,9"
+  mods <- .parse_codes(crosswalk$mod)
+  pcs  <- .parse_codes(crosswalk$pc)
+
+  # locate files if not provided per-row (one path per mod; ";"-separated)
   all_asc <- list.files(gfisher_dir, pattern = "\\.asc$", full.names = TRUE)
-  if("path" %in% names(crosswalk)){
-    paths <- crosswalk$path
-  } else {
-    paths <- vapply(crosswalk$mod, function(m){
-      hits <- grep(sprintf("_mod%d_", m), basename(all_asc))
-      if(length(hits) == 0) NA_character_ else all_asc[hits[1]]
-    }, character(1))
-  }
-  missing <- which(is.na(paths))
+  path_l <- if("path" %in% names(crosswalk)) strsplit(as.character(crosswalk$path), ";", fixed = TRUE)
+            else lapply(mods, function(ms) vapply(ms, function(m){
+              hits <- grep(sprintf("_mod%d_", m), basename(all_asc))
+              if(length(hits) == 0) NA_character_ else all_asc[hits[1]]
+            }, character(1)))
+  missing <- which(vapply(path_l, function(p) anyNA(p) || length(p) == 0, logical(1)))
   if(length(missing) > 0)
     warning("No GFISHER file found for mod code(s): ",
             paste(crosswalk$mod[missing], collapse = ", "))
 
-  # load + normalise
+  # load, sum the maps of a combined row cell by cell, then normalise
   map_norm <- vector("list", nrow(crosswalk))
   for(i in seq_len(nrow(crosswalk))){
-    if(is.na(paths[i])) next
-    m <- .read_asc(paths[i])
-    map_norm[[i]] <- .normalise_map(m)
+    if(i %in% missing) next
+    ms <- lapply(path_l[[i]], function(p){ m <- .read_asc(p); m[m == attr(m, "nodata")] <- NA_real_; m })
+    map_norm[[i]] <- .normalise_map(.sum_maps(ms), nodata = NULL)
   }
 
   data.frame(
-    mod      = crosswalk$mod,
-    pc       = crosswalk$pc,
+    mod      = vapply(mods, paste, "", collapse = ","),
+    pc       = vapply(pcs, function(p) p[1], numeric(1)),   # first stanza, kept for single-stanza callers
     species  = crosswalk$species,
-    path     = paths,
+    path     = vapply(path_l, paste, "", collapse = ";"),
     styear   = if("styear"  %in% names(crosswalk)) crosswalk$styear  else styear,
     endyear  = if("endyear" %in% names(crosswalk)) crosswalk$endyear else endyear,
     variable = variable,
     stringsAsFactors = FALSE
   ) -> out
+  out$pcs      <- pcs
   out$map_norm <- map_norm
   drop_missing <- vapply(map_norm, is.null, logical(1))
   if(any(drop_missing)){
@@ -530,32 +555,31 @@ fn.spatial_LL <- function(dir.pred, spatial.obs,
   if(is.null(spatial.obs) || nrow(spatial.obs) == 0)
     return(list(total = 0, per_species = numeric(0)))
 
-  pool_codes <- spatial.obs$pc
+  # stanzas per row: a combined row (pcs = c(6,7,8,9)) is fit against the sum
+  # of those stanzas' predicted biomass maps
+  row_pcs <- if("pcs" %in% names(spatial.obs)) spatial.obs$pcs else as.list(spatial.obs$pc)
 
   # Group rows by (styear, endyear) so we read each species' CSV only once
   # per distinct window. spatial.obs will typically have a single common
   # window (2015-2024) so this collapses to one read per species.
-  windows <- unique(spatial.obs[, c("styear", "endyear")])
-  pred_maps <- vector("list", length(pool_codes))
-  names(pred_maps) <- as.character(pool_codes)
+  windows   <- unique(spatial.obs[, c("styear", "endyear")])
+  win_key   <- paste(spatial.obs$styear, spatial.obs$endyear)
+  pred_maps <- list()   # keyed "<styear> <endyear>" -> named list by pool code
 
   for(w in seq_len(nrow(windows))){
-    rows <- which(spatial.obs$styear == windows$styear[w] &
-                  spatial.obs$endyear == windows$endyear[w])
-    pcs_w <- pool_codes[rows]
-    got <- fn.ecospace_spatial_pred(dir.pred, pcs_w, group.names,
-                                    styear = windows$styear[w],
-                                    endyear = windows$endyear[w],
-                                    model_styear = model_styear)
-    for(k in seq_along(rows)){
-      pred_maps[[as.character(pcs_w[k])]] <- got[[as.character(pcs_w[k])]]
-    }
+    key   <- paste(windows$styear[w], windows$endyear[w])
+    pcs_w <- unique(unlist(row_pcs[win_key == key]))
+    pred_maps[[key]] <- fn.ecospace_spatial_pred(dir.pred, pcs_w, group.names,
+                                                 styear = windows$styear[w],
+                                                 endyear = windows$endyear[w],
+                                                 model_styear = model_styear)
   }
 
   per <- setNames(rep(NA_real_, nrow(spatial.obs)), spatial.obs$species)
   for(i in seq_len(nrow(spatial.obs))){
     obs_m  <- spatial.obs$map_norm[[i]]
-    pred_m <- pred_maps[[as.character(spatial.obs$pc[i])]]
+    parts  <- pred_maps[[win_key[i]]][as.character(row_pcs[[i]])]
+    pred_m <- if(length(parts) && !any(vapply(parts, is.null, logical(1)))) .sum_maps(parts) else NULL
     if(is.null(obs_m) || is.null(pred_m)) next
     if(!identical(dim(obs_m), dim(pred_m))){
       warning(sprintf("Dim mismatch obs %s vs pred (%s vs %s) - skipping.",
