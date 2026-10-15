@@ -80,9 +80,11 @@
   m / s
 }
 
-#' @title Default GFISHER mod-code -> WFS MICE pool-code crosswalk.
-#' @description gag ages 0-5+ = mod 20-25 = pc 4-9; red grouper ages 0-5+ =
-#'   mod 26-31 = pc 10-15. Crosswalk is \code{pc = mod - 16}.
+#' @title Legacy GFISHER mod-code -> WFS MICE pool-code crosswalk.
+#' @description For the legacy per-stanza maps, whose mod codes are GFISHER
+#'   group codes rather than pool codes: gag ages 0-5+ = mod 20-25 = pc 4-9;
+#'   red grouper ages 0-5+ = mod 26-31 = pc 10-15 (\code{pc = mod - 16}).
+#'   Current maps name their pool codes directly and need no crosswalk.
 #' @return data.frame with columns \code{mod, pc, species}.
 #' @export
 fn.gfisher_default_crosswalk <- function(){
@@ -95,31 +97,57 @@ fn.gfisher_default_crosswalk <- function(){
   )
 }
 
+# Internal: index of the GFISHER map files in a directory. File names carry the
+# pool codes a map covers, joined by "-":
+#   GFISHER_<variable>_mod<codes>_<name>_<res>min_<dims>.asc
+# e.g. GFISHER_maxn_mod6-7-8_gag-2-4_5min_66x78.asc covers pool codes 6, 7, 8.
+# label: the <name> part, "-" between words -> space, trailing "-" -> "+"
+# ("gag-5-" -> "gag 5+", "red-grouper-3-4" -> "red grouper 3-4").
+.gfisher_map_index <- function(gfisher_dir, variable = "maxn"){
+  pre  <- paste0("^GFISHER_", variable, "_mod")
+  path <- list.files(gfisher_dir, pattern = paste0(pre, "[0-9-]+_.*[.]asc$"), full.names = TRUE)
+  b    <- basename(path)
+  name <- sub(paste0(pre, "[0-9-]+_(.*)_[0-9]+min_.*$"), "\\1", b)
+  data.frame(token = sub(paste0(pre, "([0-9-]+)_.*$"), "\\1", b),
+             label = gsub("([A-Za-z])-", "\\1 ", sub("-$", "+", name)),
+             path  = path, stringsAsFactors = FALSE)
+}
+
 #' @title Load GFISHER maxN heatmaps as an observed spatial obs frame.
-#' @description Reads the 12 gag + red-grouper maxN `.asc` files, normalises
-#'   each to unit sum over non-NODATA cells, attaches the WFS MICE pool code
-#'   via the crosswalk, and records the collection year window (\code{styear},
-#'   \code{endyear}) alongside each row for year-matched comparison in the
-#'   objective function.
+#' @description Reads GFISHER maxN `.asc` maps, normalises each to unit sum
+#'   over non-NODATA cells, attaches the WFS MICE pool code(s) each map covers,
+#'   and records the collection year window (\code{styear}, \code{endyear})
+#'   alongside each row for year-matched comparison in the objective function.
+#'   File names carry the pool codes a map covers, joined by \code{"-"}:
+#'   \code{GFISHER_maxn_mod6-7-8_gag-2-4_5min_66x78.asc} is one map for pool
+#'   codes 6, 7 and 8, which \code{fn.spatial_LL} fits against the summed
+#'   predicted biomass of those groups.
 #' @param gfisher_dir Path to the directory containing the maxN `.asc` files
 #'   (default: WFS MICE canonical location).
 #' @param styear,endyear Year window this obs represents. Defaults 2015-2024.
 #'   Applied to every row unless overridden in the crosswalk.
-#' @param crosswalk data.frame with columns \code{mod, pc, species}; see
-#'   \code{fn.gfisher_default_crosswalk}. A row may combine stanzas: give
-#'   \code{mod} and \code{pc} as comma-separated strings (e.g.
-#'   \code{mod = "22,23,24,25", pc = "6,7,8,9", species = "gag 2+"}); the obs
-#'   maps are summed cell by cell before normalising, and \code{fn.spatial_LL}
-#'   fits the row against the summed predicted biomass of those stanzas.
-#'   Optionally include a \code{path} column (\code{";"}-separated for combined
-#'   rows) to point at specific files; otherwise each file is located by
-#'   pattern \code{"_mod<mod>_"}.
+#' @param crosswalk Which maps to fit, and how they map to pool codes:
+#'   \itemize{
+#'     \item \code{NULL} (default): every map in \code{gfisher_dir}, pool codes
+#'       taken from the file names.
+#'     \item character vector of map codes as they appear in the file names,
+#'       e.g. \code{c("6-7-8", "9", "13-14", "15")} (commas also accepted):
+#'       those maps only, pool codes from the file names.
+#'     \item data.frame with columns \code{mod, pc, species} (optional
+#'       \code{path}, \code{styear}, \code{endyear}), for maps whose codes are
+#'       not pool codes, e.g. the legacy per-stanza maps
+#'       (\code{fn.gfisher_default_crosswalk}). \code{mod} and \code{pc} may be
+#'       comma-separated: a row uses the single map named with all its
+#'       \code{mod} codes if there is one, otherwise it sums the maps of each
+#'       code cell by cell. \code{path} (\code{";"}-separated) overrides the
+#'       file lookup.
+#'   }
 #' @param variable Character; portion of the filename identifying which
 #'   variable (default \code{"maxn"}).
 #' @return A data.frame with columns \code{mod} (comma-joined), \code{pc}
-#'   (first stanza of the row), \code{species, path, styear, endyear} and
-#'   list-columns \code{pcs} (all stanzas of the row) and \code{map_norm} (each
-#'   element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
+#'   (first pool code of the row), \code{species, path, styear, endyear} and
+#'   list-columns \code{pcs} (all pool codes of the row) and \code{map_norm}
+#'   (each element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
 #' @export
 fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
                                  styear      = 2015,
@@ -130,22 +158,34 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
     gfisher_dir <- "C:/Users/dchagaris/OneDrive - University of Florida/WFS Fisheries Ecosystem Modeling/WFS EwE/Ecospace/maps/GFISHER/5min/maxn"
   if(!dir.exists(gfisher_dir))
     stop("GFISHER directory not found: ", gfisher_dir)
-  if(is.null(crosswalk)) crosswalk <- fn.gfisher_default_crosswalk()
+  idx <- .gfisher_map_index(gfisher_dir, variable)
+  if(nrow(idx) == 0)
+    stop("No GFISHER_", variable, "_mod<codes>_*.asc maps in ", gfisher_dir)
+
+  # NULL / character: maps selected by the codes in their file names
+  if(is.null(crosswalk) || is.character(crosswalk)){
+    tok <- if(is.null(crosswalk)) idx$token else gsub("[[:space:],]+", "-", trimws(crosswalk))
+    sel <- match(tok, idx$token)
+    if(anyNA(sel))
+      stop("No GFISHER map named mod", paste(tok[is.na(sel)], collapse = ", mod"), " in ", gfisher_dir,
+           "\nAvailable: ", paste(idx$token, collapse = ", "))
+    crosswalk <- data.frame(mod = gsub("-", ",", idx$token[sel]), pc = gsub("-", ",", idx$token[sel]),
+                            species = idx$label[sel], path = idx$path[sel], stringsAsFactors = FALSE)
+  }
   required <- c("mod", "pc", "species")
   if(!all(required %in% names(crosswalk)))
     stop("crosswalk must have columns: ", paste(required, collapse = ", "))
 
-  # a row may combine several maps / stanzas, e.g. mod "22,23,24,25" -> pc "6,7,8,9"
   mods <- .parse_codes(crosswalk$mod)
   pcs  <- .parse_codes(crosswalk$pc)
 
-  # locate files if not provided per-row (one path per mod; ";"-separated)
-  all_asc <- list.files(gfisher_dir, pattern = "\\.asc$", full.names = TRUE)
+  # files per row: a single map named with all of the row's codes, else one map
+  # per code (summed below); an explicit path column overrides
   path_l <- if("path" %in% names(crosswalk)) strsplit(as.character(crosswalk$path), ";", fixed = TRUE)
-            else lapply(mods, function(ms) vapply(ms, function(m){
-              hits <- grep(sprintf("_mod%d_", m), basename(all_asc))
-              if(length(hits) == 0) NA_character_ else all_asc[hits[1]]
-            }, character(1)))
+            else lapply(mods, function(ms){
+              one <- match(paste(ms, collapse = "-"), idx$token)
+              if(!is.na(one)) idx$path[one] else idx$path[match(as.character(ms), idx$token)]
+            })
   missing <- which(vapply(path_l, function(p) anyNA(p) || length(p) == 0, logical(1)))
   if(length(missing) > 0)
     warning("No GFISHER file found for mod code(s): ",
@@ -161,7 +201,7 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
 
   data.frame(
     mod      = vapply(mods, paste, "", collapse = ","),
-    pc       = vapply(pcs, function(p) p[1], numeric(1)),   # first stanza, kept for single-stanza callers
+    pc       = vapply(pcs, function(p) p[1], numeric(1)),   # first pool code, kept for single-group callers
     species  = crosswalk$species,
     path     = vapply(path_l, paste, "", collapse = ";"),
     styear   = if("styear"  %in% names(crosswalk)) crosswalk$styear  else styear,

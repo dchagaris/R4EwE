@@ -19,29 +19,39 @@ fn.load_gfisher_maxn(
 \item{styear, endyear}{Year window this obs represents. Defaults 2015-2024.
 Applied to every row unless overridden in the crosswalk.}
 
-\item{crosswalk}{data.frame with columns \code{mod, pc, species}; see
-\code{fn.gfisher_default_crosswalk}. A row may combine stanzas: give
-\code{mod} and \code{pc} as comma-separated strings (e.g.
-\code{mod = "22,23,24,25", pc = "6,7,8,9", species = "gag 2+"}); the obs
-maps are summed cell by cell before normalising, and \code{fn.spatial_LL}
-fits the row against the summed predicted biomass of those stanzas.
-Optionally include a \code{path} column (\code{";"}-separated for combined
-rows) to point at specific files; otherwise each file is located by
-pattern \code{"_mod<mod>_"}.}
+\item{crosswalk}{Which maps to fit, and how they map to pool codes:
+\itemize{
+\item \code{NULL} (default): every map in \code{gfisher_dir}, pool codes
+taken from the file names.
+\item character vector of map codes as they appear in the file names,
+e.g. \code{c("6-7-8", "9", "13-14", "15")} (commas also accepted):
+those maps only, pool codes from the file names.
+\item data.frame with columns \code{mod, pc, species} (optional
+\code{path}, \code{styear}, \code{endyear}), for maps whose codes are
+not pool codes, e.g. the legacy per-stanza maps
+(\code{fn.gfisher_default_crosswalk}). \code{mod} and \code{pc} may be
+comma-separated: a row uses the single map named with all its
+\code{mod} codes if there is one, otherwise it sums the maps of each
+code cell by cell. \code{path} (\code{";"}-separated) overrides the
+file lookup.
+}}
 
 \item{variable}{Character; portion of the filename identifying which
 variable (default \code{"maxn"}).}
 }
 \value{
 A data.frame with columns \code{mod} (comma-joined), \code{pc}
-(first stanza of the row), \code{species, path, styear, endyear} and
-list-columns \code{pcs} (all stanzas of the row) and \code{map_norm} (each
-element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
+(first pool code of the row), \code{species, path, styear, endyear} and
+list-columns \code{pcs} (all pool codes of the row) and \code{map_norm}
+(each element is a numeric matrix, NA on NODATA cells, unit-sum-normalised).
 }
 \description{
-Reads the 12 gag + red-grouper maxN \code{.asc} files, normalises
-each to unit sum over non-NODATA cells, attaches the WFS MICE pool code
-via the crosswalk, and records the collection year window (\code{styear},
-\code{endyear}) alongside each row for year-matched comparison in the
-objective function.
+Reads GFISHER maxN \code{.asc} maps, normalises each to unit sum
+over non-NODATA cells, attaches the WFS MICE pool code(s) each map covers,
+and records the collection year window (\code{styear}, \code{endyear})
+alongside each row for year-matched comparison in the objective function.
+File names carry the pool codes a map covers, joined by \code{"-"}:
+\code{GFISHER_maxn_mod6-7-8_gag-2-4_5min_66x78.asc} is one map for pool
+codes 6, 7 and 8, which \code{fn.spatial_LL} fits against the summed
+predicted biomass of those groups.
 }

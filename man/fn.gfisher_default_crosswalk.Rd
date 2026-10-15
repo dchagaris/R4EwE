@@ -2,7 +2,7 @@
 % Please edit documentation in R/Spatial_likelihood.R
 \name{fn.gfisher_default_crosswalk}
 \alias{fn.gfisher_default_crosswalk}
-\title{Default GFISHER mod-code -> WFS MICE pool-code crosswalk.}
+\title{Legacy GFISHER mod-code -> WFS MICE pool-code crosswalk.}
 \usage{
 fn.gfisher_default_crosswalk()
 }
@@ -10,6 +10,8 @@ fn.gfisher_default_crosswalk()
 data.frame with columns \code{mod, pc, species}.
 }
 \description{
-gag ages 0-5+ = mod 20-25 = pc 4-9; red grouper ages 0-5+ =
-mod 26-31 = pc 10-15. Crosswalk is \code{pc = mod - 16}.
+For the legacy per-stanza maps, whose mod codes are GFISHER
+group codes rather than pool codes: gag ages 0-5+ = mod 20-25 = pc 4-9;
+red grouper ages 0-5+ = mod 26-31 = pc 10-15 (\code{pc = mod - 16}).
+Current maps name their pool codes directly and need no crosswalk.
 }
