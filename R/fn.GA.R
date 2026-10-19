@@ -174,7 +174,7 @@ fn.GA <- function(myconfig){
       workers <- if(!is.null(myconfig$workers)) myconfig$workers else floor(detectCores() / 2)
       cl <<- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
       doSNOW::registerDoSNOW(cl)
-      clusterExport(cl, .r4ewe_worker_exports())
+      fn.cluster_export(cl)
     }
     }
     # Elitism - keep the top n runs

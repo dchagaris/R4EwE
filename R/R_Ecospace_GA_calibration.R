@@ -1628,6 +1628,33 @@ cluster_is_ok <- function() {
   c(required, optional)
 }
 
+#' @title Export the R4EwE worker objects to a cluster.
+#' @description \code{clusterExport()} for \code{\link{.r4ewe_worker_exports}()}
+#'   plus any \code{extra} names. R4EwE functions -- including internal helpers
+#'   such as \code{safe_runEwE}, which are not visible from the global
+#'   environment when the package is attached with \code{library()} -- are taken
+#'   from the R4EwE namespace; session objects (\code{obs.ts},
+#'   \code{spatial.obs}, \code{runlist}, ...) from \code{.GlobalEnv}. Works the
+#'   same whether R4EwE was installed or loaded with \code{devtools::load_all()}.
+#' @param cl A cluster from \code{parallel::makePSOCKcluster()} or similar.
+#' @param extra Additional object names to export from \code{.GlobalEnv}.
+#' @return Invisibly, the exported names.
+#' @export
+fn.cluster_export <- function(cl, extra = character()){
+  nms <- unique(c(as.character(unlist(extra)), .r4ewe_worker_exports()))
+  ns  <- asNamespace("R4EwE")
+  # a session object of the same name wins over a package function
+  in_glob <- vapply(nms, exists, logical(1), envir = .GlobalEnv, inherits = FALSE)
+  in_pkg  <- !in_glob & vapply(nms, exists, logical(1), envir = ns, inherits = FALSE)
+  missing <- nms[!in_glob & !in_pkg]
+  if(length(missing))
+    stop("fn.cluster_export: not found in .GlobalEnv or the R4EwE namespace: ",
+         paste(missing, collapse = ", "))
+  if(any(in_pkg))  parallel::clusterExport(cl, nms[in_pkg],  envir = ns)
+  if(any(in_glob)) parallel::clusterExport(cl, nms[in_glob], envir = .GlobalEnv)
+  invisible(nms)
+}
+
 #' @keywords internal
 #' @noRd
 ensure_cluster <- function(workers = NULL) {
@@ -1640,6 +1667,6 @@ ensure_cluster <- function(workers = NULL) {
     if(is.null(workers)) workers <- max(1L, floor(detectCores() / 4))
     cl <<- parallel::makePSOCKcluster(workers, outfile = "cluster_workers.log")
     doSNOW::registerDoSNOW(cl)
-    clusterExport(cl, .r4ewe_worker_exports())
+    fn.cluster_export(cl)
   }
 }#eof
