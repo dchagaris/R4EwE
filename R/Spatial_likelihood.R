@@ -221,6 +221,32 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
   out
 }
 
+#' @title List the map codes in a GFISHER sdmTMB map directory.
+#' @description Codes of every \code{GFISHER_sdmTMB_est_mod<codes>_*.asc} map,
+#'   as written in the file names (\code{"6-7-8"} = pool codes 6, 7, 8), in
+#'   model-group order and named with their labels from
+#'   \code{sdmTMB_fit_summary.csv}. Pass the result (or a subset of it) to
+#'   \code{fn.load_gfisher_sdmTMB(maps = )}.
+#' @param sdm_dir Directory holding the sdmTMB \code{.asc} layers.
+#' @return Named character vector of map codes.
+#' @examples
+#' \dontrun{
+#' spatial.maps <- fn.gfisher_sdmTMB_codes(sdm_dir)
+#' spatial.maps <- spatial.maps[!names(spatial.maps) %in% "sharks"]   # drop a map
+#' }
+#' @export
+fn.gfisher_sdmTMB_codes <- function(sdm_dir){
+  if(!dir.exists(sdm_dir)) stop("sdmTMB map directory not found: ", sdm_dir)
+  tok <- .gfisher_map_index(sdm_dir, prefix = "GFISHER_sdmTMB_est_mod")$token
+  if(!length(tok)) stop("No GFISHER_sdmTMB_est_mod<codes>_*.asc maps in ", sdm_dir)
+  first <- vapply(strsplit(tok, "-", fixed = TRUE), function(s) as.numeric(s[1]), numeric(1))
+  tok <- tok[order(first)]
+  fs  <- file.path(sdm_dir, "sdmTMB_fit_summary.csv")
+  lab <- if(file.exists(fs)){ fit <- utils::read.csv(fs, stringsAsFactors = FALSE)
+                              fit$label[match(paste0("mod", tok), fit$tag)] } else rep(NA_character_, length(tok))
+  stats::setNames(tok, ifelse(is.na(lab), paste0("mod", tok), lab))
+}
+
 #' @title Load sdmTMB-predicted GFISHER maps as an observed spatial obs frame.
 #' @description Reads the \code{est} (and \code{cv}) layers written by
 #'   \code{fn.make_GFISHER_maxn_sdmTMB_maps()} in WFS-FEM/GFISHER:
