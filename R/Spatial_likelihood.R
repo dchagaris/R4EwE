@@ -103,8 +103,9 @@ fn.gfisher_default_crosswalk <- function(){
 # e.g. GFISHER_maxn_mod6-7-8_gag-2-4_5min_66x78.asc covers pool codes 6, 7, 8.
 # label: the <name> part, "-" between words -> space, trailing "-" -> "+"
 # ("gag-5-" -> "gag 5+", "red-grouper-3-4" -> "red grouper 3-4").
-.gfisher_map_index <- function(gfisher_dir, variable = "maxn"){
-  pre  <- paste0("^GFISHER_", variable, "_mod")
+# prefix overrides the "GFISHER_<variable>_mod" part, e.g. "GFISHER_sdmTMB_est_mod".
+.gfisher_map_index <- function(gfisher_dir, variable = "maxn", prefix = NULL){
+  pre  <- paste0("^", if(is.null(prefix)) paste0("GFISHER_", variable, "_mod") else prefix)
   path <- list.files(gfisher_dir, pattern = paste0(pre, "[0-9-]+_.*[.]asc$"), full.names = TRUE)
   b    <- basename(path)
   name <- sub(paste0(pre, "[0-9-]+_(.*)_[0-9]+min_.*$"), "\\1", b)
@@ -217,6 +218,86 @@ fn.load_gfisher_maxn <- function(gfisher_dir = NULL,
                     sum(drop_missing)))
     out <- out[!drop_missing, , drop = FALSE]
   }
+  out
+}
+
+#' @title Load sdmTMB-predicted GFISHER maps as an observed spatial obs frame.
+#' @description Reads the \code{est} (and \code{cv}) layers written by
+#'   \code{fn.make_GFISHER_maxn_sdmTMB_maps()} in WFS-FEM/GFISHER:
+#'   \code{GFISHER_sdmTMB_<kind>_mod<codes>_<res>min_<dims>.asc}, where
+#'   \code{<codes>} are the model pool codes the map covers, joined by
+#'   \code{"-"} (\code{mod6-7-8} = groups 6, 7 and 8, fit against their summed
+#'   predicted biomass by \code{fn.spatial_LL}). \code{est} is the posterior
+#'   mean of expected relative MaxN per cell; \code{cv} is the SD/mean of the
+#'   same draws, i.e. the uncertainty of that mean. Cells outside the sdmTMB
+#'   sampled domain are NODATA and drop out of the spatial likelihood.
+#'
+#'   The maps are a STATIC pattern: year enters the sdmTMB fit only as a
+#'   nuisance term, so \code{styear}/\code{endyear} should span the years of
+#'   video data behind the maps, not just a recent window.
+#' @param sdm_dir Directory holding the sdmTMB \code{.asc} layers and
+#'   \code{sdmTMB_fit_summary.csv}.
+#' @param maps Codes of the maps to fit, as in the file names (e.g.
+#'   \code{c("6-7-8", "9")}; commas accepted). \code{NULL} = every \code{est} map.
+#' @param styear,endyear Calendar years the Ecospace prediction is averaged over.
+#' @param cv.weight If TRUE, each cell carries a weight \eqn{1/(1+CV^2)} --
+#'   the share of the predicted mean's mean square that is signal rather than
+#'   sdmTMB uncertainty (\eqn{\mu^2/(\mu^2+\sigma^2)}), bounded in (0, 1] -- and
+#'   \code{fn.spatial_LL} compares the two maps on that weighted measure, so
+#'   poorly predicted cells count for less. Equal maps still score the minimum.
+#' @return A data.frame like \code{fn.load_gfisher_maxn()}: columns \code{mod,
+#'   pc, species, path, styear, endyear, variable, family, converged} and
+#'   list-columns \code{pcs}, \code{map_norm} and \code{cell_w} (NULL when
+#'   \code{cv.weight = FALSE}).
+#' @export
+fn.load_gfisher_sdmTMB <- function(sdm_dir, maps = NULL, styear = 1993, endyear = 2024,
+                                   cv.weight = TRUE){
+  if(!dir.exists(sdm_dir)) stop("sdmTMB map directory not found: ", sdm_dir)
+  idx <- .gfisher_map_index(sdm_dir, prefix = "GFISHER_sdmTMB_est_mod")
+  if(nrow(idx) == 0) stop("No GFISHER_sdmTMB_est_mod<codes>_*.asc maps in ", sdm_dir)
+  tok <- if(is.null(maps)) idx$token else gsub("[[:space:],]+", "-", trimws(maps))
+  sel <- match(tok, idx$token)
+  if(anyNA(sel))
+    stop("No sdmTMB est map named mod", paste(tok[is.na(sel)], collapse = ", mod"), " in ", sdm_dir,
+         "\nAvailable: ", paste(idx$token, collapse = ", "))
+  idx <- idx[sel, , drop = FALSE]
+
+  # labels and fit status from the fit summary (tag = "mod<codes>")
+  fs <- file.path(sdm_dir, "sdmTMB_fit_summary.csv")
+  fit <- if(file.exists(fs)) utils::read.csv(fs, stringsAsFactors = FALSE) else NULL
+  k   <- if(is.null(fit)) rep(NA_integer_, nrow(idx)) else match(paste0("mod", idx$token), fit$tag)
+  if(!is.null(fit) && anyNA(k))
+    warning("No sdmTMB_fit_summary.csv row for: mod", paste(idx$token[is.na(k)], collapse = ", mod"))
+
+  rd <- function(p){ m <- .read_asc(p); m[m == attr(m, "nodata")] <- NA_real_; m }
+  map_norm <- cell_w <- vector("list", nrow(idx))
+  for(i in seq_len(nrow(idx))){
+    e <- rd(idx$path[i])
+    map_norm[[i]] <- .normalise_map(e, nodata = NULL)
+    if(cv.weight){
+      pcv <- sub("_est_", "_cv_", idx$path[i], fixed = TRUE)
+      if(!file.exists(pcv)) stop("cv.weight = TRUE but no cv layer: ", basename(pcv))
+      cv <- rd(pcv)
+      # a cell with an estimate but no CV (mean 0) gets no weight
+      cell_w[[i]] <- ifelse(is.finite(cv), 1 / (1 + cv^2), ifelse(is.finite(e), 0, NA_real_))
+    }
+  }
+
+  pcs <- .parse_codes(gsub("-", ",", idx$token))
+  out <- data.frame(
+    mod       = vapply(pcs, paste, "", collapse = ","),
+    pc        = vapply(pcs, function(p) p[1], numeric(1)),   # first pool code, kept for single-group callers
+    species   = if(is.null(fit)) paste0("mod", idx$token) else ifelse(is.na(k), paste0("mod", idx$token), fit$label[k]),
+    path      = idx$path,
+    styear    = styear,
+    endyear   = endyear,
+    variable  = "sdmTMB est",
+    family    = if(is.null(fit)) NA_character_ else fit$family[k],
+    converged = if(is.null(fit)) NA else fit$converged[k],
+    stringsAsFactors = FALSE)
+  out$pcs      <- pcs
+  out$map_norm <- map_norm
+  out$cell_w   <- if(cv.weight) cell_w else vector("list", nrow(idx))
   out
 }
 
@@ -572,10 +653,15 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
 #'   window, unit-sum normalises both obs and pred on the shared valid mask
 #'   (non-NA in both), and accumulates cross-entropy
 #'   \eqn{-\sum \tilde o \log \tilde p} (multinomial NLL kernel). Returns
-#'   weighted total plus a per-species named vector.
+#'   weighted total plus a per-species named vector. A row covering several
+#'   groups (list-col \code{pcs}) is compared against their summed predicted
+#'   biomass. If \code{spatial.obs} has a list-col \code{cell_w}, obs and pred
+#'   are both multiplied by those cell weights before normalising.
 #' @param dir.pred Path to an Ecospace output folder (parent of \code{csv/}).
-#' @param spatial.obs Output of \code{fn.load_gfisher_maxn} (or similar), with
-#'   columns \code{pc, species, styear, endyear} and list-col \code{map_norm}.
+#' @param spatial.obs Output of \code{fn.load_gfisher_maxn},
+#'   \code{fn.load_gfisher_sdmTMB} (or similar), with columns \code{pc, species,
+#'   styear, endyear} and list-col \code{map_norm}; optional list-cols
+#'   \code{pcs} and \code{cell_w}.
 #' @param spatial.weight Numeric scalar multiplier applied to the summed cross
 #'   entropy (interpretable as a prior precision on the spatial fit).
 #' @param group.names Character vector indexed by pool code (needed by
@@ -628,13 +714,20 @@ fn.spatial_LL <- function(dir.pred, spatial.obs,
                       paste(dim(pred_m), collapse = "x")))
       next
     }
+    # optional per-cell weights (fn.load_gfisher_sdmTMB, cv.weight = TRUE): both
+    # maps are reweighted by the same w before normalising, so cells the obs
+    # model predicts poorly count for less and equal maps still score the minimum
+    w_m <- if("cell_w" %in% names(spatial.obs)) spatial.obs$cell_w[[i]] else NULL
+
     # shared valid mask (both finite)
     valid <- is.finite(obs_m) & is.finite(pred_m)
+    if(!is.null(w_m)) valid <- valid & is.finite(w_m)
     if(!any(valid)) next
+    w_v <- if(is.null(w_m)) 1 else w_m[valid]
 
     # normalise on the SHARED mask (so both integrate to 1 over identical cells)
-    obs_v  <- obs_m[valid];  obs_v  <- obs_v  / sum(obs_v,  na.rm = TRUE)
-    pred_v <- pred_m[valid]; sp     <- sum(pred_v, na.rm = TRUE)
+    obs_v  <- w_v * obs_m[valid];  obs_v  <- obs_v  / sum(obs_v,  na.rm = TRUE)
+    pred_v <- w_v * pred_m[valid]; sp     <- sum(pred_v, na.rm = TRUE)
     if(!is.finite(sp) || sp <= 0) next
     pred_v <- pred_v / sp
 

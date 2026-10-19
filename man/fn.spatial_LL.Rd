@@ -15,8 +15,10 @@ fn.spatial_LL(
 \arguments{
 \item{dir.pred}{Path to an Ecospace output folder (parent of \code{csv/}).}
 
-\item{spatial.obs}{Output of \code{fn.load_gfisher_maxn} (or similar), with
-columns \code{pc, species, styear, endyear} and list-col \code{map_norm}.}
+\item{spatial.obs}{Output of \code{fn.load_gfisher_maxn},
+\code{fn.load_gfisher_sdmTMB} (or similar), with columns \code{pc, species,
+styear, endyear} and list-col \code{map_norm}; optional list-cols
+\code{pcs} and \code{cell_w}.}
 
 \item{spatial.weight}{Numeric scalar multiplier applied to the summed cross
 entropy (interpretable as a prior precision on the spatial fit).}
@@ -40,5 +42,8 @@ pool code, averages over the row's own \code{styear}..\code{endyear}
 window, unit-sum normalises both obs and pred on the shared valid mask
 (non-NA in both), and accumulates cross-entropy
 \eqn{-\sum \tilde o \log \tilde p} (multinomial NLL kernel). Returns
-weighted total plus a per-species named vector.
+weighted total plus a per-species named vector. A row covering several
+groups (list-col \code{pcs}) is compared against their summed predicted
+biomass. If \code{spatial.obs} has a list-col \code{cell_w}, obs and pred
+are both multiplied by those cell weights before normalising.
 }
