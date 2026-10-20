@@ -1144,28 +1144,17 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
   draw_hists <- function(col_idx){
     for(j in col_idx){
       v <- gapop[is.finite(gapop[, j]), j]
-      # vulnerabilities span orders of magnitude (log-uniform draws): histogram
-      # and density on log10(value), axis labelled in real units
-      lg <- startsWith(par.labels[j], "vul_") && all(v > 0)
-      tr <- if(lg) log10 else identity
-      tv <- tr(v)
-      h <- graphics::hist(tv, breaks = 50, main = par_title(par.labels[j]), xaxt = if(lg) "n" else "s",
-                          xlab = paste0(par.labels[j], bnd(j), if(lg) "  (log scale)"), cex.main = 0.9)
-      if(lg){
-        e  <- floor(min(h$breaks)):ceiling(max(h$breaks))
-        mj <- 10^e; mn <- as.vector(outer(2:9, mj))
-        graphics::axis(1, at = log10(mn), labels = FALSE, tcl = -0.2)
-        graphics::axis(1, at = e, labels = formatC(mj, format = "fg", big.mark = ","))
-      }
+      h <- graphics::hist(v, breaks = 50, main = par_title(par.labels[j]),
+                          xlab = paste0(par.labels[j], bnd(j)), cex.main = 0.9)
       # kernel density on the count scale, kept within the parameter's bounds
-      if(length(unique(tv)) > 1){
-        rng <- if(!is.null(lower)) tr(c(lower[j], upper[j])) else range(tv)
-        d <- stats::density(tv, from = max(rng[1], min(tv)), to = min(rng[2], max(tv)))
-        graphics::lines(d$x, d$y * length(tv) * diff(h$breaks[1:2]), col = "darkorange", lwd = 2)
+      if(length(unique(v)) > 1){
+        rng <- if(!is.null(lower)) c(lower[j], upper[j]) else range(v)
+        d <- stats::density(v, from = max(rng[1], min(v)), to = min(rng[2], max(v)))
+        graphics::lines(d$x, d$y * length(v) * diff(h$breaks[1:2]), col = "darkorange", lwd = 2)
       }
-      graphics::abline(v = tr(est_par_vec[j]), col = 'red',  lty = 2, lwd = 1.5)
+      graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
       if(show_blue)
-        graphics::abline(v = tr(hl[j]),        col = 'blue', lty = 2, lwd = 1.5)
+        graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
       base_label(paste0("base = ", fmt(est_par_vec[j]), if(show_blue) paste0("   best = ", fmt(hl[j]))))
       .add_legend("hist")
     }
