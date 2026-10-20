@@ -20,7 +20,11 @@ fn.GA(myconfig)
 }
 \value{
 Invisibly returns NULL. Results (fitness summaries and best parameters)
-are appended to the CSV and printed to the console.
+are appended to the CSV and printed to the console. Every evaluated individual
+is appended to \code{ga_evals_<timestamp>.csv} in \code{dir.ga_results}: one row
+per Ecospace run with gen, idx, role (base / base-in-pop / initial / offspring),
+kept (FALSE for offspring dropped at the generation boundary), fitness, run
+folder and every parameter value.
 }
 \description{
 Sets GA controls from \code{myconfig}, writes a results CSV, runs a base model,

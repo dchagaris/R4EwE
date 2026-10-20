@@ -25,7 +25,11 @@
 #' pen.wt.mult, and gapop.dist are set for use by downstream helpers.
 #'
 #' @return Invisibly returns NULL. Results (fitness summaries and best parameters)
-#' are appended to the CSV and printed to the console.
+#' are appended to the CSV and printed to the console. Every evaluated individual
+#' is appended to \code{ga_evals_<timestamp>.csv} in \code{dir.ga_results}: one row
+#' per Ecospace run with gen, idx, role (base / base-in-pop / initial / offspring),
+#' kept (FALSE for offspring dropped at the generation boundary), fitness, run
+#' folder and every parameter value.
 #' @export
 fn.GA <- function(myconfig){
   n_generations <<- myconfig$n_gen
@@ -97,6 +101,11 @@ fn.GA <- function(myconfig){
   na_count = sum(is.na(fitness))
   best_pars = est_par_vec
   write.table(t(c(g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+  # every evaluated individual, one row per Ecospace run (see .ga_log_evals)
+  file.ga.evals <- file.path(dir.results, paste0('ga_evals_', timestamp, '.csv'))
+  if(file.exists(file.ga.evals)) unlink(file.ga.evals)
+  .ga_log_evals(file.ga.evals, gen = -1, pop = matrix(est_par_vec, nrow = 1, dimnames = list(NULL, names(est_par_vec))),
+                fit = fitness[1], cmd = base_cmd_file, kept = TRUE, role = "base")
   cat(sprintf("%-5s %-10s %-10s %-10s %-10s %-10s %-6s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","NA_count","time end"))
   cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
   
@@ -141,6 +150,8 @@ fn.GA <- function(myconfig){
     }
     fitness <- fitness+penalties
   }
+  .ga_log_evals(file.ga.evals, gen = 0, pop = gapop, fit = fitness, cmd = unlist(cmd.files),
+                kept = TRUE, role = ifelse(seq_len(nrow(gapop)) == 1, "base-in-pop", "initial"))
   #pipe output
   g=0
   best_fit = min(fitness, na.rm=T)
@@ -255,6 +266,8 @@ fn.GA <- function(myconfig){
     worst_non_na <- non_na_idx[order(new_fitness[non_na_idx], decreasing = TRUE)]
     drop_extra <- worst_non_na[seq_len(max(0L, n_drop - length(na_idx)))]
     worst_offspring_idx <- c(na_idx, drop_extra)
+    .ga_log_evals(file.ga.evals, gen = gen, pop = offspring, fit = new_fitness, cmd = files.cmd,
+                  kept = !(seq_len(nrow(offspring)) %in% worst_offspring_idx), role = "offspring")
 
     # Delete dropped-offspring dirs from this gen's folder before rebuilding.
     dropped_cmd <- files.cmd[worst_offspring_idx]
@@ -333,3 +346,23 @@ fn.GA <- function(myconfig){
   }
 }#eof
 
+
+# Internal: append one row per evaluated individual to the GA evaluation log
+# (ga_evals_<timestamp>.csv): gen, idx, role, kept, fitness, run folder, then
+# every parameter value. Offspring dropped at the generation boundary are kept
+# in the log (kept = FALSE) -- they are the ones that show which parameter
+# ranges produce poor or catastrophic fits. Elites are not re-run, so each
+# individual appears once, at the generation it was evaluated.
+#' @keywords internal
+#' @noRd
+.ga_log_evals <- function(file, gen, pop, fit, cmd, kept, role){
+  pop <- as.matrix(pop)
+  n   <- nrow(pop)
+  out <- data.frame(gen = gen, idx = seq_len(n), role = rep_len(role, n), kept = rep_len(kept, n),
+                    fitness = as.numeric(fit)[seq_len(n)],
+                    run = basename(dirname(as.character(unlist(cmd))))[seq_len(n)],
+                    pop, check.names = FALSE, stringsAsFactors = FALSE)
+  first <- !file.exists(file)
+  utils::write.table(out, file, sep = ",", row.names = FALSE, col.names = first, append = !first)
+  invisible(out)
+}
