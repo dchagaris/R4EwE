@@ -1135,23 +1135,51 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
 
   grDevices::pdf(file, onefile = TRUE)
   on.exit(grDevices::dev.off(), add = TRUE)
-  graphics::par(mfrow = dims, mar = c(3, 3, 2, 1), mgp = c(1.6, 0.5, 0))
+  graphics::par(mfrow = dims, mar = c(3, 3, 3.4, 1), mgp = c(1.6, 0.5, 0))   #top: title + base label
+
+  # "base = ..." label under the panel title, in the parameter's real units
+  base_label <- function(txt) graphics::mtext(txt, side = 3, line = 0.1, cex = 0.6, col = "red3")
+  fmt <- function(x) sub("[.]$", "", trimws(formatC(signif(x, 3), format = "fg", digits = 3)))
 
   draw_hists <- function(col_idx){
     for(j in col_idx){
-      h <- graphics::hist(gapop[, j], breaks = 50, main = par_title(par.labels[j]), xlab = paste0(par.labels[j], bnd(j)), cex.main = 0.9)
-      # kernel density on the count scale, kept within the parameter's bounds
       v <- gapop[is.finite(gapop[, j]), j]
-      if(length(unique(v)) > 1){
-        rng <- if(!is.null(lower)) c(lower[j], upper[j]) else range(v)
-        d <- stats::density(v, from = max(rng[1], min(v)), to = min(rng[2], max(v)))
-        graphics::lines(d$x, d$y * length(v) * diff(h$breaks[1:2]), col = "darkorange", lwd = 2)
+      # vulnerabilities span orders of magnitude (log-uniform draws): histogram
+      # and density on log10(value), axis labelled in real units
+      lg <- startsWith(par.labels[j], "vul_") && all(v > 0)
+      tr <- if(lg) log10 else identity
+      tv <- tr(v)
+      h <- graphics::hist(tv, breaks = 50, main = par_title(par.labels[j]), xaxt = if(lg) "n" else "s",
+                          xlab = paste0(par.labels[j], bnd(j), if(lg) "  (log scale)"), cex.main = 0.9)
+      if(lg){
+        e  <- floor(min(h$breaks)):ceiling(max(h$breaks))
+        mj <- 10^e; mn <- as.vector(outer(2:9, mj))
+        graphics::axis(1, at = log10(mn), labels = FALSE, tcl = -0.2)
+        graphics::axis(1, at = e, labels = formatC(mj, format = "fg", big.mark = ","))
       }
-      graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
+      # kernel density on the count scale, kept within the parameter's bounds
+      if(length(unique(tv)) > 1){
+        rng <- if(!is.null(lower)) tr(c(lower[j], upper[j])) else range(tv)
+        d <- stats::density(tv, from = max(rng[1], min(tv)), to = min(rng[2], max(tv)))
+        graphics::lines(d$x, d$y * length(tv) * diff(h$breaks[1:2]), col = "darkorange", lwd = 2)
+      }
+      graphics::abline(v = tr(est_par_vec[j]), col = 'red',  lty = 2, lwd = 1.5)
       if(show_blue)
-        graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
+        graphics::abline(v = tr(hl[j]),        col = 'blue', lty = 2, lwd = 1.5)
+      base_label(paste0("base = ", fmt(est_par_vec[j]), if(show_blue) paste0("   best = ", fmt(hl[j]))))
       .add_legend("hist")
     }
+  }
+
+  # natural (real-unit) parameters of an env / red-tide response for its label
+  resp_base <- function(pars_df, row.i, shape_type){
+    p <- function(n) pars_df[row.i, paste0("par", n)]
+    switch(as.character(shape_type),
+      "6"  = sprintf("base: mean = %s, SD = %s / %s", fmt(p(4)), fmt(p(1)), fmt(p(3))),
+      "10" = sprintf("base: xmid = %s, slope = %s, max = %s", fmt(p(3)), fmt(p(5)), fmt(p(6))),
+      "9"  = sprintf("base: LB %s, LT %s, RT %s, RB %s", fmt(p(1)), fmt(p(2)), fmt(p(3)), fmt(p(4))),
+      "11" = sprintf("base: inflection = %s, slope = %s", fmt(p(3)), fmt(p(4))),
+      "")
   }
 
   unique_groups <- unique(par.groups)
@@ -1187,6 +1215,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       ycurve <- function(Inf.i, Slope.i) 1 - 1 / (1 + (x / Inf.i)^Slope.i)
       graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, 1.05),
                      main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
+      base_label(resp_base(pars_df, row.i, shape_type))
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(Inf.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
       graphics::lines(x, ycurve(Inf.base, Slope.base), col = 'red',  lwd = 2)
@@ -1204,6 +1233,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       xlim <- xlim + c(-0.1, 0.1) * diff(xlim)
       graphics::plot(NA, xlim = xlim, ylim = c(0, 1.05),
                      main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
+      base_label(resp_base(pars_df, row.i, shape_type))
       trap_pts <- function(mid.adj, w.adj){
         mid.i  <- mid.base  * mid.adj
         pref.i <- pref.base * w.adj
@@ -1241,6 +1271,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       }
       graphics::plot(NA, xlim = range(x), ylim = c(0, Max.base * 1.2),
                      main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
+      base_label(resp_base(pars_df, row.i, shape_type))
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, norm_y(Mean.base * adj1[k],
                                   SDLeft.base * adj2[k],
@@ -1272,6 +1303,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
         if(is.finite(m) && m > 0) Scalar.base * y / m else y }
       graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, Scalar.base * 1.1),
                      main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
+      base_label(resp_base(pars_df, row.i, shape_type))
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(XMid.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
       graphics::lines(x, ycurve(XMid.base, Slope.base), col = 'red', lwd = 2)
