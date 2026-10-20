@@ -1234,7 +1234,12 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       Slope.base  <- pars_df[row.i, 'par5']
       Scalar.base <- pars_df[row.i, 'par6']
       x <- seq(XMin, XMax, length.out = 200)
-      ycurve <- function(XMid.i, Slope.i) Scalar.base / (1 + exp(-Slope.i * (x - XMid.i)))
+      # EwE's cSigmoidShapeFunction rescales the logistic so its maximum over
+      # [XMin, XMax] equals the scalar (cShapeFunction.ScaleData): plot that, not
+      # the raw logistic, or flat curves look far lower than the model uses
+      ycurve <- function(XMid.i, Slope.i){
+        y <- 1 / (1 + exp(-Slope.i * (x - XMid.i))); m <- max(y)
+        if(is.finite(m) && m > 0) Scalar.base * y / m else y }
       graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, Scalar.base * 1.1),
                      main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
       for(k in seq_len(nrow(gapop)))
