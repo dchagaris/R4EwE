@@ -13,7 +13,11 @@ fn.plot_ga_pop_responses(
   redtide_pars = NULL,
   file,
   dims = c(3, 3),
-  highlight_pars = NULL
+  highlight_pars = NULL,
+  group.names = NULL,
+  fleet.names = NULL,
+  lower = NULL,
+  upper = NULL
 )
 }
 \arguments{
@@ -39,6 +43,15 @@ schema, see \code{\link{fn.makeparvec}}). May be \code{NULL}.}
 \code{NULL} (default — initial-pop plot use case), only the red baseline is drawn.
 Pass the min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the
 final-population plot to overlay best-fit on top of the baseline + ensemble.}
+
+\item{group.names, fleet.names}{Names used in the panel titles (vulnerability,
+dispersal and fleet panels). Default: \code{group.names} / \code{fleet.names}
+from the session.}
+
+\item{lower, upper}{Parameter bounds shown on each panel's x-axis label.
+Default: \code{L.bounds} / \code{U.bounds} from the session (set by
+\code{fn.makeparvec}). Env/rt panels are titled with \code{Function.name}
+when \code{env_pars} / \code{redtide_pars} carry that column.}
 }
 \value{
 Invisibly returns \code{file}.

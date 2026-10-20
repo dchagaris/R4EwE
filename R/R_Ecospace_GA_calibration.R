@@ -543,6 +543,16 @@ fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='log-uniform
     Umat <- matrix(rep(U.bounds[env.par.idx], each = N), nrow = N)
     mat[, env.par.idx] <- pmin(pmax(mat[, env.par.idx], Lmat), Umat)
   }
+  # dispersal and mediation are drawn from the normal prior too; without this
+  # their initial values fell outside [L.bounds, U.bounds] (gag 5+ dispersal
+  # 20-73 against [30.3, 70.6]), which mutation never does
+  oth.idx <- c(disp.par.idx, med.par.idx)
+  if(length(oth.idx) > 0L){
+    N    <- nrow(mat)
+    Lmat <- matrix(rep(L.bounds[oth.idx], each = N), nrow = N)
+    Umat <- matrix(rep(U.bounds[oth.idx], each = N), nrow = N)
+    mat[, oth.idx] <- pmin(pmax(mat[, oth.idx], Lmat), Umat)
+  }
 
   # --- Red tide anchor seeding (option D) -------------------------------------
   # Inject explicit corner-case combinations into the first rows so the GA explores
@@ -948,6 +958,13 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0,
 #'   \code{NULL} (default — initial-pop plot use case), only the red baseline is drawn.
 #'   Pass the min-LL individual (e.g. \code{gapop[which.min(fitness), ]}) for the
 #'   final-population plot to overlay best-fit on top of the baseline + ensemble.
+#' @param group.names,fleet.names Names used in the panel titles (vulnerability,
+#'   dispersal and fleet panels). Default: \code{group.names} / \code{fleet.names}
+#'   from the session.
+#' @param lower,upper Parameter bounds shown on each panel's x-axis label.
+#'   Default: \code{L.bounds} / \code{U.bounds} from the session (set by
+#'   \code{fn.makeparvec}). Env/rt panels are titled with \code{Function.name}
+#'   when \code{env_pars} / \code{redtide_pars} carry that column.
 #' @section Markers:
 #'   RED: \code{est_par_vec} — baseline / starting values; on env/rt panels the red
 #'   curve uses adj = 1 (i.e. the natural EwE curve).
@@ -957,9 +974,41 @@ fn.parvec2cmd <- function(par_vec=est_par_vec, g=0, idx=0,
 fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
                                      env_pars = NULL, redtide_pars = NULL,
                                      file, dims = c(3, 3),
-                                     highlight_pars = NULL){
+                                     highlight_pars = NULL,
+                                     group.names = NULL, fleet.names = NULL,
+                                     lower = NULL, upper = NULL){
   if(!is.null(env_pars))     env_pars     <- .normalize_env_pars(env_pars)
   if(!is.null(redtide_pars)) redtide_pars <- .normalize_env_pars(redtide_pars)
+
+  # names and bounds for the panel titles: taken from the session (as fn.GA's
+  # other inputs are) when not supplied
+  .g <- function(nm) if(exists(nm, envir = .GlobalEnv)) get(nm, envir = .GlobalEnv) else NULL
+  if(is.null(group.names)) group.names <- .g("group.names")
+  if(is.null(fleet.names)) fleet.names <- .g("fleet.names")
+  if(is.null(lower))       lower       <- .g("L.bounds")
+  if(is.null(upper))       upper       <- .g("U.bounds")
+  if(length(lower) != ncol(gapop) || length(upper) != ncol(gapop)) lower <- upper <- NULL
+  gname <- function(i){ i <- suppressWarnings(as.integer(i))
+    if(is.na(i)) return("all prey")
+    if(!is.null(group.names) && i >= 1 && i <= length(group.names)) gsub("_", " ", group.names[i]) else paste("group", i) }
+  fname <- function(i){ i <- as.integer(i)
+    if(!is.null(fleet.names) && i >= 1 && i <= length(fleet.names)) paste(i, fleet.names[i]) else paste("fleet", i) }
+  shape_name <- c("6" = "normal", "9" = "trapezoid", "10" = "sigmoid", "11" = "logistic")
+  par_title <- function(lab){
+    p <- strsplit(lab, "_")[[1]]
+    switch(p[1],
+      vul  = paste0("vulnerability: ", gname(p[2]), if(length(p) > 2 && p[3] != "NA") paste(" on", gname(p[3])) else " (all prey)"),
+      disp = paste0("dispersal: ", gname(p[2])),
+      flt  = paste0(if(isTRUE(p[3] == "pow")) "effective power: " else "effort multiplier: ", fname(p[2])),
+      lab)
+  }
+  bnd <- function(j) if(is.null(lower)) "" else sprintf("  [%s, %s]", signif(lower[j], 3), signif(upper[j], 3))
+  resp_title <- function(grp, pars_df, row.i, shape_type){
+    nm <- if("Function.name" %in% names(pars_df)) pars_df$Function.name[row.i] else NA
+    paste0(grp, if(!is.na(nm)) paste0(": ", nm), " (", shape_name[as.character(shape_type)], ")")
+  }
+  resp_xlab <- function(col_idx) paste(vapply(col_idx, function(j)
+    paste0(sub("^[a-z]+[0-9]+_type[0-9]+_", "", par.labels[j]), bnd(j)), ""), collapse = ";  ")
 
   # Defensive coercion: callers may pass highlight_pars / est_par_vec as a 1-row
   # data.frame (e.g. gapop.final[which.min(fitness), ] when gapop.final is a
@@ -1009,7 +1058,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
 
   draw_hists <- function(col_idx){
     for(j in col_idx){
-      graphics::hist(gapop[, j], breaks = 50, main = par.labels[j], xlab = 'value')
+      graphics::hist(gapop[, j], breaks = 50, main = par_title(par.labels[j]), xlab = paste0(par.labels[j], bnd(j)), cex.main = 0.9)
       graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
       if(show_blue)
         graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
@@ -1049,7 +1098,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       x <- seq(XMin, XMax, length.out = 200)
       ycurve <- function(Inf.i, Slope.i) 1 - 1 / (1 + (x / Inf.i)^Slope.i)
       graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, 1.05),
-                     main = grp, xlab = "x", ylab = "response")
+                     main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(Inf.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
       graphics::lines(x, ycurve(Inf.base, Slope.base), col = 'red',  lwd = 2)
@@ -1066,7 +1115,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       xlim <- range(c(LB, LT, RT, RB), na.rm = TRUE)
       xlim <- xlim + c(-0.1, 0.1) * diff(xlim)
       graphics::plot(NA, xlim = xlim, ylim = c(0, 1.05),
-                     main = grp, xlab = "x", ylab = "response")
+                     main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
       trap_pts <- function(mid.adj, w.adj){
         mid.i  <- mid.base  * mid.adj
         pref.i <- pref.base * w.adj
@@ -1091,8 +1140,11 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       SDRight.base <- pars_df[row.i, 'par3']
       Mean.base    <- pars_df[row.i, 'par4']
       Max.base     <- pars_df[row.i, 'par5']
-      DataWidth.base <- 5 * SDLeft.base + 5 * SDRight.base
-      x <- seq(Mean.base - DataWidth.base/2, Mean.base + DataWidth.base/2, length.out = 200)
+      # x range covers every member's curve (mean shifted by adj1, width by adj2),
+      # not just the baseline, so shifted optima are not drawn off the panel
+      w2 <- max(adj2, 1, na.rm = TRUE)
+      x <- seq(min(Mean.base * c(adj1, 1), na.rm = TRUE) - 2.5 * SDLeft.base  * w2,
+               max(Mean.base * c(adj1, 1), na.rm = TRUE) + 2.5 * SDRight.base * w2, length.out = 400)
       norm_y <- function(Mean.i, SDL, SDR, Mx){
         y <- numeric(length(x)); lf <- x < Mean.i
         y[lf]  <- Mx * exp(-0.5 * ((x[lf]  - Mean.i) / SDL)^2)
@@ -1100,7 +1152,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
         y
       }
       graphics::plot(NA, xlim = range(x), ylim = c(0, Max.base * 1.2),
-                     main = grp, xlab = "x", ylab = "response")
+                     main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, norm_y(Mean.base * adj1[k],
                                   SDLeft.base * adj2[k],
@@ -1126,7 +1178,7 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
       x <- seq(XMin, XMax, length.out = 200)
       ycurve <- function(XMid.i, Slope.i) Scalar.base / (1 + exp(-Slope.i * (x - XMid.i)))
       graphics::plot(NA, xlim = c(XMin, XMax), ylim = c(0, Scalar.base * 1.1),
-                     main = grp, xlab = "x", ylab = "response")
+                     main = resp_title(grp, pars_df, row.i, shape_type), xlab = resp_xlab(col_idx), ylab = "response", cex.main = 0.85, cex.lab = 0.8)
       for(k in seq_len(nrow(gapop)))
         graphics::lines(x, ycurve(XMid.base * adj1[k], Slope.base * adj2[k]), col = alpha_col)
       graphics::lines(x, ycurve(XMid.base, Slope.base), col = 'red', lwd = 2)
