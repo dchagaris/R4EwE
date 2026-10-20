@@ -72,14 +72,16 @@ vul parameter, ignoring \code{base.val} and \code{vul.cv}).}
 
 \item{env.loc.sd}{If not NULL, a number k: the LOCATION multiplier of each
 env response (normal mean, sigmoid xmid, trapezoid mid, logistic
-inflection) is bounded so the curve moves at most k curve-widths, then
-capped by \code{[env.min, env.max]}. Width = the SD on each side (normal),
-the logistic SD \eqn{\pi/(\sqrt{3}|slope|)} (sigmoid), a quarter of the
-base width (trapezoid), or the log-scale SD \eqn{\pi/(\sqrt{3}\,slope)}
-applied multiplicatively (logistic4params). The initial-population SD of a
-bounded location is shrunk to a quarter of its bound range. Width/slope
-multipliers keep \code{[env.min, env.max]}. NULL (default): every env
-multiplier uses \code{[env.min, env.max]}.}
+inflection) is bounded so the curve moves at most k curve-widths, in place
+of \code{[env.min, env.max]}. Width = the SD on each side (normal), the
+logistic SD \eqn{\pi/(\sqrt{3}|slope|)} (sigmoid), a quarter of the base
+width (trapezoid), or the log-scale SD \eqn{\pi/(\sqrt{3}\,slope)}
+applied multiplicatively (logistic4params). The lower bound is floored at
+0.01 so locations stay positive, and sigmoid / logistic locations are kept
+inside the curve's x-axis range (par1-par2). \code{fn.GApop} draws these
+locations from a normal truncated to the bounds, SD a quarter of the bound
+range. Width/slope multipliers keep \code{[env.min, env.max]}. NULL
+(default): every env multiplier uses \code{[env.min, env.max]}.}
 
 \item{do.disp}{Logical; include dispersal parameters.}
 

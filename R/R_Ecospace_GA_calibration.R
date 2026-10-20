@@ -5,20 +5,25 @@
 # in which case the caller keeps [env.min, env.max].
 #' @keywords internal
 #' @noRd
-.env_loc_bounds <- function(env_pars, resp_id, shape, k){
+.env_loc_bounds <- function(env_pars, resp_id, shape, k, floor = 0.01){
   r <- which(.env_resp_idx(env_pars) == resp_id)[1]
   if(is.na(r)) return(NULL)
   p <- function(n) as.numeric(env_pars[r, paste0("par", n)])
+  # keep a location inside the curve's own x-axis range [XMin, XMax] (par1, par2)
+  in_x <- function(b, m){ lo <- p(1) / m; hi <- p(2) / m
+    if(is.finite(lo) && is.finite(hi) && hi > lo) c(max(b[1], lo), min(b[2], hi)) else b }
   b <- switch(as.character(shape),
     "6"  = { m <- p(4); if(is.finite(m) && m > 0) c(1 - k * p(1) / m, 1 + k * p(3) / m) },   # normal: SDL, SDR, mean
     "10" = { m <- p(3); s <- abs(p(5)); w <- pi / (sqrt(3) * s)                             # sigmoid: xmid, slope
-             if(is.finite(m) && m > 0 && is.finite(w)) c(1 - k * w / m, 1 + k * w / m) },
+             if(is.finite(m) && m > 0 && is.finite(w)) in_x(c(1 - k * w / m, 1 + k * w / m), m) },
     "9"  = { m <- (p(2) + p(3)) / 2; w <- (p(4) - p(1)) / 4                                # trapezoid: LB, LT, RT, RB
              if(is.finite(m) && m > 0 && is.finite(w) && w > 0) c(1 - k * w / m, 1 + k * w / m) },
-    "11" = { s <- p(4); w <- pi / (sqrt(3) * s)                                          # log-logistic: slope
-             if(is.finite(w) && w > 0) exp(c(-k, k) * w) },
+    "11" = { m <- p(3); s <- p(4); w <- pi / (sqrt(3) * s)                               # log-logistic: inflection, slope
+             if(is.finite(w) && w > 0) in_x(exp(c(-k, k) * w), m) },
     NULL)
   if(is.null(b) || any(!is.finite(b))) return(NULL)
+  b[1] <- max(b[1], floor)                       # locations stay positive
+  if(b[2] <= b[1]) return(NULL)
   b
 }
 
@@ -46,14 +51,16 @@
 #' @param env.cv Coefficient of variation for environmental parameters.
 #' @param env.loc.sd If not NULL, a number k: the LOCATION multiplier of each
 #'   env response (normal mean, sigmoid xmid, trapezoid mid, logistic
-#'   inflection) is bounded so the curve moves at most k curve-widths, then
-#'   capped by \code{[env.min, env.max]}. Width = the SD on each side (normal),
-#'   the logistic SD \eqn{\pi/(\sqrt{3}|slope|)} (sigmoid), a quarter of the
-#'   base width (trapezoid), or the log-scale SD \eqn{\pi/(\sqrt{3}\,slope)}
-#'   applied multiplicatively (logistic4params). The initial-population SD of a
-#'   bounded location is shrunk to a quarter of its bound range. Width/slope
-#'   multipliers keep \code{[env.min, env.max]}. NULL (default): every env
-#'   multiplier uses \code{[env.min, env.max]}.
+#'   inflection) is bounded so the curve moves at most k curve-widths, in place
+#'   of \code{[env.min, env.max]}. Width = the SD on each side (normal), the
+#'   logistic SD \eqn{\pi/(\sqrt{3}|slope|)} (sigmoid), a quarter of the base
+#'   width (trapezoid), or the log-scale SD \eqn{\pi/(\sqrt{3}\,slope)}
+#'   applied multiplicatively (logistic4params). The lower bound is floored at
+#'   0.01 so locations stay positive, and sigmoid / logistic locations are kept
+#'   inside the curve's x-axis range (par1-par2). \code{fn.GApop} draws these
+#'   locations from a normal truncated to the bounds, SD a quarter of the bound
+#'   range. Width/slope multipliers keep \code{[env.min, env.max]}. NULL
+#'   (default): every env multiplier uses \code{[env.min, env.max]}.
 #' @param do.disp Logical; include dispersal parameters.
 #' @param disp_pars Data frame of dispersal parameters.
 #' @param disp.min Minimum dispersal (unused placeholder).
@@ -341,8 +348,11 @@ fn.makeparvec <- function(
       if(!is.null(env.loc.sd) && is.loc){
         b <- .env_loc_bounds(env_pars, resp_id = as.numeric(sub("^env", "", parts.i[1])),
                              shape = type.i, k = env.loc.sd)
+        # width-based bounds replace [env.min, env.max] for locations: capping
+        # them there froze locations that are small relative to their width
+        # (small pelagics depth optimum 5.7 m, SDs 89 / 19 m)
         if(!is.null(b)){
-          lower.i <- max(env.min, b[1]); upper.i <- min(env.max, b[2])
+          lower.i <- b[1]; upper.i <- b[2]
           env.loc.idx <- c(env.loc.idx, i)
         }
       }
@@ -444,13 +454,17 @@ fn.makeparvec <- function(
   par_cv_vec <- est_par_vec
   par_cv_vec[vul.par.idx]     <- vul.cv
   par_cv_vec[env.par.idx]     <- env.cv
-  # width-bounded locations: shrink the initial-population SD to a quarter of
-  # the bound range, so the normal prior fits inside the bounds instead of
-  # piling up on them after clipping (multiplier baseline is 1, so cv = sd)
+  # width-bounded locations: initial-population SD = a quarter of the bound
+  # range, i.e. about +/-2 SD spans the +/-k widths the bounds allow -- not
+  # env.cv, which would leave a location that is small relative to its width
+  # frozen near its baseline (multiplier baseline is 1, so cv = sd)
   if(length(env.loc.idx)){
     j <- env.par.idx[env.loc.idx]
-    par_cv_vec[j] <- pmin(env.cv, (upper.env[env.loc.idx] - lower.env[env.loc.idx]) / 4)
+    par_cv_vec[j] <- (upper.env[env.loc.idx] - lower.env[env.loc.idx]) / 4
   }
+  # columns fn.GApop draws from a normal TRUNCATED to their (often asymmetric)
+  # width-based bounds, instead of clipping draws onto the bounds
+  env.loc.par.idx <<- if(length(env.loc.idx)) env.par.idx[env.loc.idx] else integer()
   par_cv_vec[redtide.par.idx] <- redtide.cv
   par_cv_vec[disp.par.idx]    <- disp.cv
   par_cv_vec[med.par.idx]     <- med.cv
@@ -582,6 +596,19 @@ fn.GApop = function(run_config=myconfig, pardist='uniform', vuldist='log-uniform
 
   integer.idx <- grep("xbase",par.labels)
   if(length(integer.idx)>0) mat[,integer.idx] <- round(mat[,integer.idx])
+  # Width-bounded env locations (fn.makeparvec env.loc.sd): normal around the
+  # baseline TRUNCATED to [L, U] by inverse CDF, so asymmetric bounds such as
+  # [0.01, 4.4] do not pile clipped draws onto the floor
+  # Dispersal and mediation get the same treatment: clipping their normal draws
+  # piled ~5% of the population onto each bound.
+  loc.idx <- c(if(exists("env.loc.par.idx")) env.loc.par.idx, disp.par.idx, med.par.idx)
+  if(pardist == 'normal' && length(loc.idx)){
+    for(j in loc.idx){
+      sdj <- max(par_cv_vec[j] * abs(est_par_vec[j]), 1e-6)
+      pl <- stats::pnorm(L.bounds[j], est_par_vec[j], sdj); pu <- stats::pnorm(U.bounds[j], est_par_vec[j], sdj)
+      mat[, j] <- stats::qnorm(stats::runif(nrow(mat), pl, pu), est_par_vec[j], sdj)
+    }
+  }
   # Clip fleet and env draws to their declared per-parameter bounds. Naively
   # passing a length-k bounds vector to pmin/pmax(matrix, vec) silently recycles
   # element-wise through the column-major matrix (so cell (r, c) gets bounds at
@@ -1095,19 +1122,15 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
     kind <- match.arg(kind)
     lty  <- if(kind == "hist") 2   else 1
     lwd  <- if(kind == "hist") 1.5 else 2
-    if(show_blue){
-      graphics::legend(where,
-                       legend = c("baseline (est_par_vec)", "best-fit"),
-                       col = c("red", "blue"), lty = lty, lwd = lwd,
-                       bty = "o", box.col = "gray70", bg = "white",
-                       cex = 0.65, inset = 0.01)
-    } else {
-      graphics::legend(where,
-                       legend = "baseline (est_par_vec)",
-                       col = "red", lty = lty, lwd = lwd,
-                       bty = "o", box.col = "gray70", bg = "white",
-                       cex = 0.65, inset = 0.01)
+    leg  <- c("baseline (est_par_vec)", if(show_blue) "best-fit")
+    col  <- c("red", if(show_blue) "blue")
+    ltys <- rep(lty, length(leg)); lwds <- rep(lwd, length(leg))
+    if(kind == "hist"){                          # histograms also carry the density curve
+      leg <- c(leg, "density"); col <- c(col, "darkorange"); ltys <- c(ltys, 1); lwds <- c(lwds, 2)
     }
+    graphics::legend(where, legend = leg, col = col, lty = ltys, lwd = lwds,
+                     bty = "o", box.col = "gray70", bg = "white",
+                     cex = 0.65, inset = 0.01)
   }
 
   grDevices::pdf(file, onefile = TRUE)
@@ -1116,7 +1139,14 @@ fn.plot_ga_pop_responses <- function(gapop, est_par_vec, par.groups, par.labels,
 
   draw_hists <- function(col_idx){
     for(j in col_idx){
-      graphics::hist(gapop[, j], breaks = 50, main = par_title(par.labels[j]), xlab = paste0(par.labels[j], bnd(j)), cex.main = 0.9)
+      h <- graphics::hist(gapop[, j], breaks = 50, main = par_title(par.labels[j]), xlab = paste0(par.labels[j], bnd(j)), cex.main = 0.9)
+      # kernel density on the count scale, kept within the parameter's bounds
+      v <- gapop[is.finite(gapop[, j]), j]
+      if(length(unique(v)) > 1){
+        rng <- if(!is.null(lower)) c(lower[j], upper[j]) else range(v)
+        d <- stats::density(v, from = max(rng[1], min(v)), to = min(rng[2], max(v)))
+        graphics::lines(d$x, d$y * length(v) * diff(h$breaks[1:2]), col = "darkorange", lwd = 2)
+      }
       graphics::abline(v = est_par_vec[j], col = 'red',  lty = 2, lwd = 1.5)
       if(show_blue)
         graphics::abline(v = hl[j],        col = 'blue', lty = 2, lwd = 1.5)
