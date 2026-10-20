@@ -1,4 +1,27 @@
 
+# Internal: location-multiplier bounds c(lower, upper) that move an env response
+# at most k curve-widths (see fn.makeparvec, env.loc.sd). env_pars is the
+# normalized schema (par1..par6); NULL when the width or location is unusable,
+# in which case the caller keeps [env.min, env.max].
+#' @keywords internal
+#' @noRd
+.env_loc_bounds <- function(env_pars, resp_id, shape, k){
+  r <- which(.env_resp_idx(env_pars) == resp_id)[1]
+  if(is.na(r)) return(NULL)
+  p <- function(n) as.numeric(env_pars[r, paste0("par", n)])
+  b <- switch(as.character(shape),
+    "6"  = { m <- p(4); if(is.finite(m) && m > 0) c(1 - k * p(1) / m, 1 + k * p(3) / m) },   # normal: SDL, SDR, mean
+    "10" = { m <- p(3); s <- abs(p(5)); w <- pi / (sqrt(3) * s)                             # sigmoid: xmid, slope
+             if(is.finite(m) && m > 0 && is.finite(w)) c(1 - k * w / m, 1 + k * w / m) },
+    "9"  = { m <- (p(2) + p(3)) / 2; w <- (p(4) - p(1)) / 4                                # trapezoid: LB, LT, RT, RB
+             if(is.finite(m) && m > 0 && is.finite(w) && w > 0) c(1 - k * w / m, 1 + k * w / m) },
+    "11" = { s <- p(4); w <- pi / (sqrt(3) * s)                                          # log-logistic: slope
+             if(is.finite(w) && w > 0) exp(c(-k, k) * w) },
+    NULL)
+  if(is.null(b) || any(!is.finite(b))) return(NULL)
+  b
+}
+
 #prepare parameter vector----
 #' @title Construct parameter vectors and bounds for model estimation
 #' @description Builds the parameter vector and related metadata (labels, groups, bounds, CVs) for 
@@ -21,6 +44,16 @@
 #' @param env.min Minimum environmental value.
 #' @param env.max Maximum environmental value.
 #' @param env.cv Coefficient of variation for environmental parameters.
+#' @param env.loc.sd If not NULL, a number k: the LOCATION multiplier of each
+#'   env response (normal mean, sigmoid xmid, trapezoid mid, logistic
+#'   inflection) is bounded so the curve moves at most k curve-widths, then
+#'   capped by \code{[env.min, env.max]}. Width = the SD on each side (normal),
+#'   the logistic SD \eqn{\pi/(\sqrt{3}|slope|)} (sigmoid), a quarter of the
+#'   base width (trapezoid), or the log-scale SD \eqn{\pi/(\sqrt{3}\,slope)}
+#'   applied multiplicatively (logistic4params). The initial-population SD of a
+#'   bounded location is shrunk to a quarter of its bound range. Width/slope
+#'   multipliers keep \code{[env.min, env.max]}. NULL (default): every env
+#'   multiplier uses \code{[env.min, env.max]}.
 #' @param do.disp Logical; include dispersal parameters.
 #' @param disp_pars Data frame of dispersal parameters.
 #' @param disp.min Minimum dispersal (unused placeholder).
@@ -67,6 +100,7 @@ fn.makeparvec <- function(
   env.min=0.25,
   env.max=2,
   env.cv=0.2,
+  env.loc.sd=NULL,
   
   do.disp = TRUE,
   disp_pars = disp_pars,
@@ -281,19 +315,36 @@ fn.makeparvec <- function(
     }
     lower.vuls <- pmax(lower.vuls, 1.01)
   }
-  ##environmental shapes — all supported shapes use uniform [env.min, env.max] multiplier bounds
+  ##environmental shapes — uniform [env.min, env.max] multiplier bounds, except
+  ## that with env.loc.sd = k the LOCATION multiplier (mean / xmid / mid /
+  ## inflection) is bounded so the curve moves at most k curve-widths, capped by
+  ## [env.min, env.max]. A plain multiplier on the location moves a curve by an
+  ## amount that scales with location/width: a 26 C temperature optimum with SD
+  ## 3.5 C moved +/-4-7 SDs under [0.5, 2], while depth optima with SDs larger
+  ## than their means barely moved.
   lower.env <- upper.env <- numeric()
+  env.loc.idx <- integer()                       # positions in env_vec of bounded locations
   if(do.env){
   if(n_env>0){
     for(i in 1:length(env_vec)){
       label.i <- par.labels[env.par.idx[i]]
-      type.i  <- as.numeric(gsub('type','', unlist(strsplit(label.i, "_"))[2]))
+      parts.i <- unlist(strsplit(label.i, "_"))
+      type.i  <- as.numeric(gsub('type','', parts.i[2]))
       if(type.i %in% c(6, 9, 10, 11)){
         lower.i <- env.min
         upper.i <- env.max
       } else {
         stop("Unsupported env response shape.idx: ", type.i,
              " (supported: 6 normal, 9 trapezoid, 10 sigmoid, 11 logistic4params).")
+      }
+      is.loc <- grepl("^(mean|xmid|mid|inflection)\\.adj$", parts.i[length(parts.i)])
+      if(!is.null(env.loc.sd) && is.loc){
+        b <- .env_loc_bounds(env_pars, resp_id = as.numeric(sub("^env", "", parts.i[1])),
+                             shape = type.i, k = env.loc.sd)
+        if(!is.null(b)){
+          lower.i <- max(env.min, b[1]); upper.i <- min(env.max, b[2])
+          env.loc.idx <- c(env.loc.idx, i)
+        }
       }
       lower.env <- c(lower.env, lower.i)
       upper.env <- c(upper.env, upper.i)
@@ -393,6 +444,13 @@ fn.makeparvec <- function(
   par_cv_vec <- est_par_vec
   par_cv_vec[vul.par.idx]     <- vul.cv
   par_cv_vec[env.par.idx]     <- env.cv
+  # width-bounded locations: shrink the initial-population SD to a quarter of
+  # the bound range, so the normal prior fits inside the bounds instead of
+  # piling up on them after clipping (multiplier baseline is 1, so cv = sd)
+  if(length(env.loc.idx)){
+    j <- env.par.idx[env.loc.idx]
+    par_cv_vec[j] <- pmin(env.cv, (upper.env[env.loc.idx] - lower.env[env.loc.idx]) / 4)
+  }
   par_cv_vec[redtide.par.idx] <- redtide.cv
   par_cv_vec[disp.par.idx]    <- disp.cv
   par_cv_vec[med.par.idx]     <- med.cv
