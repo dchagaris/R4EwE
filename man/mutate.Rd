@@ -14,17 +14,19 @@ Mutated population matrix (same dimensions as \code{population}).
 }
 \description{
 For each gene of each individual, with probability \code{mutation_rate} redraw
-the value within parameter-specific bounds. The vulnerability bounds adapt to
-the current population mean (so the search drifts up or down with the population)
+the value within parameter-specific bounds. The vulnerability upper bound adapts
+to the current population geometric mean (never above \code{U.bounds}); the lower
+bound stays at \code{L.bounds} so low values remain reachable
 and vul and red tide draws are log-uniform to match the initial-population
 sampling philosophy. All other parameters use fixed \code{L.bounds}/\code{U.bounds}
 with linear-uniform draws.
 }
 \details{
-Adaptive vul bounds: \code{Gamma(shape=2, mean=pop_mean)}; bounds are the 1\\% and
-99\\% quantiles, clipped to \code{[1.01, 1e6]}. So as selection pulls the population
-mean upward (or downward), so does the mutation search window. Vul draws inside
-those bounds are log-uniform.
+Adaptive vul upper bound: the 99\\% quantile of \code{Gamma(shape=2, mean=pop_gmean)}
+(~3.3 x pop_gmean), where pop_gmean is the population geometric mean (so one very
+large value cannot drag the window up), clipped to \code{U.bounds}. The lower bound
+is fixed at \code{L.bounds}. Vul draws in \code{[L.bounds, upper]} are log-uniform,
+so low values keep being explored however high the population mean creeps.
 
 Red tide draws are log-uniform over the fixed \code{[L.bounds, U.bounds]} for
 \code{redtide.par.idx} (symmetric around the baseline of 1 in log space, matching

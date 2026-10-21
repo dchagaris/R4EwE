@@ -1653,8 +1653,9 @@ crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, 
 #' @title Mutate population with parameter-wise random resets
 #' @description
 #' For each gene of each individual, with probability \code{mutation_rate} redraw
-#' the value within parameter-specific bounds. The vulnerability bounds adapt to
-#' the current population mean (so the search drifts up or down with the population)
+#' the value within parameter-specific bounds. The vulnerability upper bound adapts
+#' to the current population geometric mean (never above \code{U.bounds}); the lower
+#' bound stays at \code{L.bounds} so low values remain reachable
 #' and vul and red tide draws are log-uniform to match the initial-population
 #' sampling philosophy. All other parameters use fixed \code{L.bounds}/\code{U.bounds}
 #' with linear-uniform draws.
@@ -1662,10 +1663,11 @@ crossover_uniform <- function(parents, group_id=1:ncol(parents), p_cross = 0.8, 
 #' @param population Matrix of individuals (rows = individuals, columns = parameters).
 #'
 #' @details
-#' Adaptive vul bounds: \code{Gamma(shape=2, mean=pop_mean)}; bounds are the 1\% and
-#' 99\% quantiles, clipped to \code{[1.01, 1e6]}. So as selection pulls the population
-#' mean upward (or downward), so does the mutation search window. Vul draws inside
-#' those bounds are log-uniform.
+#' Adaptive vul upper bound: the 99\% quantile of \code{Gamma(shape=2, mean=pop_gmean)}
+#' (~3.3 x pop_gmean), where pop_gmean is the population geometric mean (so one very
+#' large value cannot drag the window up), clipped to \code{U.bounds}. The lower bound
+#' is fixed at \code{L.bounds}. Vul draws in \code{[L.bounds, upper]} are log-uniform,
+#' so low values keep being explored however high the population mean creeps.
 #'
 #' Red tide draws are log-uniform over the fixed \code{[L.bounds, U.bounds]} for
 #' \code{redtide.par.idx} (symmetric around the baseline of 1 in log space, matching
@@ -1681,14 +1683,16 @@ mutate <- function(population) {
   upp <- U.bounds
 
   # --- Adaptive vul bounds (drift with population mean) ----------------------
-  # Gamma(shape=2, rate=2/avg) has mean=avg and a right-skewed shape with a wide
-  # 1%-99% range (~avg/40 to ~avg*3.3). Clipped to [1.01, 1e6] for safety.
+  # Only the UPPER bound adapts: the 99% quantile of Gamma(shape=2, rate=2/avg)
+  # (~avg*3.3), clipped to U.bounds. avg is the geometric mean (vuls span 1-1000, so
+  # the arithmetic mean is dragged up by a few large values). The lower bound stays
+  # at L.bounds so low values remain reachable when the population mean creeps up
+  # (an adaptive lower bound, ~avg/13, cut vul_19 off below ~60 by gaq03 gen 10).
+  # Unclipped, the upper bound ratcheted past U.bounds (gaq03: vul_19 reached 2213).
   if(length(vul.par.idx) > 0L){
-    avg <- colMeans(population)
-    low[vul.par.idx] <- qgamma(0.01, shape = 2, rate = 2/avg[vul.par.idx])
-    upp[vul.par.idx] <- qgamma(0.99, shape = 2, rate = 2/avg[vul.par.idx])
-    low[vul.par.idx] <- pmax(low[vul.par.idx], 1.01)
-    upp[vul.par.idx] <- pmin(upp[vul.par.idx], 1e6)
+    avg <- exp(colMeans(log(population[, vul.par.idx, drop = FALSE])))
+    low[vul.par.idx] <- pmax(L.bounds[vul.par.idx], 1.01)
+    upp[vul.par.idx] <- pmin(qgamma(0.99, shape = 2, rate = 2/avg), U.bounds[vul.par.idx])
   }
 
   # --- Per-individual mutation -----------------------------------------------
