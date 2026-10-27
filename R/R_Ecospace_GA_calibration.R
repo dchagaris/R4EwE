@@ -43,7 +43,11 @@
 #' @param vul.bounds.mode Character; either \code{"formula"} (default — bounds
 #'   are log-symmetric around each \code{base.val} using \code{vul.cv}) or
 #'   \code{"override"} (use \code{[vul.min, vul.max]} as the bounds for every
-#'   vul parameter, ignoring \code{base.val} and \code{vul.cv}).
+#'   vul parameter, ignoring \code{base.val} and \code{vul.cv}), or
+#'   \code{"relative"} (per-pair \code{[vul.min, vul.mult * base.val]}, matching
+#'   the sensitivity draws; every base value lies inside its bounds).
+#' @param vul.mult Upper-bound multiplier on \code{base.val} for
+#'   \code{vul.bounds.mode = "relative"} (default 1000, the sensitivity's upper draw).
 #' @param do.env Logical; include environmental parameters.
 #' @param env_pars Data frame of environmental parameters.
 #' @param env.min Minimum environmental value.
@@ -101,7 +105,8 @@ fn.makeparvec <- function(
   vul.max = 1e6,
   vul.cv = 0.4,
   vul.bounds.mode = "formula",
-  
+  vul.mult = 1e3,
+
   do.env = FALSE, 
   env_pars = NULL,
   env.min=0.25,
@@ -311,11 +316,16 @@ fn.makeparvec <- function(
   ##   "override": use [vul.min, vul.max] as the bounds for every vul parameter,
   ##              ignoring base.val and vul.cv. Useful when you want a single wide
   ##              search range (e.g., [1.01, 1e6]) rather than per-base ranges.
+  ##   "relative": per-pair [vul.min, vul.mult*base.val], the sensitivity's range;
+  ##              a scalar vul.max can exclude the base (e.g. base 20000 vs 1e3).
   lower.vuls <- upper.vuls <- numeric()
   if(do.vuls){
     if(identical(vul.bounds.mode, "override")){
       lower.vuls <- rep(vul.min, length(vul_pars$base.val))
       upper.vuls <- rep(vul.max, length(vul_pars$base.val))
+    } else if(identical(vul.bounds.mode, "relative")){
+      lower.vuls <- rep(vul.min, length(vul_pars$base.val))
+      upper.vuls <- vul_pars$base.val * vul.mult
     } else {
       lower.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.05))
       upper.vuls <- exp(log(vul_pars$base.val) + exp(vul.cv)^2 * qnorm(0.95))

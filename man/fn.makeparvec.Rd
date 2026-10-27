@@ -11,6 +11,7 @@ fn.makeparvec(
   vul.max = 1e+06,
   vul.cv = 0.4,
   vul.bounds.mode = "formula",
+  vul.mult = 1000,
   do.env = FALSE,
   env_pars = NULL,
   env.min = 0.25,
@@ -58,7 +59,12 @@ log-scale spread of the formula-derived bounds (effective log-sd =
 \item{vul.bounds.mode}{Character; either \code{"formula"} (default — bounds
 are log-symmetric around each \code{base.val} using \code{vul.cv}) or
 \code{"override"} (use \code{[vul.min, vul.max]} as the bounds for every
-vul parameter, ignoring \code{base.val} and \code{vul.cv}).}
+vul parameter, ignoring \code{base.val} and \code{vul.cv}), or
+\code{"relative"} (per-pair \code{[vul.min, vul.mult * base.val]}, matching
+the sensitivity draws; every base value lies inside its bounds).}
+
+\item{vul.mult}{Upper-bound multiplier on \code{base.val} for
+\code{vul.bounds.mode = "relative"} (default 1000, the sensitivity's upper draw).}
 
 \item{do.env}{Logical; include environmental parameters.}
 
