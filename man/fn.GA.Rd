@@ -10,7 +10,14 @@ fn.GA(myconfig)
 \item{myconfig}{List of GA settings, expected fields:
 \itemize{
 \item popSize: population size
-\item n_gen: number of generations
+\item n_gen: maximum number of generations, a hard cap (default 30)
+\item stop.rtol: relative stopping tolerance (default 0.005). The tolerance in LL
+units is \code{stop.rtol * |best LL|}, recomputed each generation. 0 turns the
+early stop off, so the GA runs all \code{n_gen} generations.
+\item stop.patience: generations over which the best LL must improve by at least
+the tolerance (default 3)
+\item stop.min_gen: earliest generation at which the GA may stop (default 5; raised
+to \code{stop.patience} if smaller)
 \item pmutation: per-gene mutation probability
 \item elitism: number of elites kept each generation
 \item do.penalty: logical, apply penalties for bound violations
@@ -19,7 +26,7 @@ fn.GA(myconfig)
 }}
 }
 \value{
-Invisibly returns NULL. Results (fitness summaries and best parameters)
+Invisibly returns a list with \code{final_gen} and \code{stop_reason}. Results (fitness summaries and best parameters)
 are appended to the CSV and printed to the console. Every evaluated individual
 is appended to \code{ga_evals_<timestamp>.csv} in \code{dir.ga_results}: one row
 per Ecospace run with gen, idx, role (base / base-in-pop / initial / offspring),
@@ -31,6 +38,14 @@ Sets GA controls from \code{myconfig}, writes a results CSV, runs a base model,
 evaluates an initial population, then iterates generations with elitism,
 selection, crossover, mutation, and optional parameter-bound penalties.
 Progress and summary stats are printed each generation.
+
+Stopping rule: from generation \code{stop.min_gen} on, the GA stops when either
+(1) the best LL has improved by less than the tolerance over the last
+\code{stop.patience} generations, or (2) the SD of the population LL is below the
+tolerance (the population has collapsed onto near-clones). Otherwise it stops at
+\code{n_gen}. Either way the final-population files are written for the
+generation it stopped at, and the reason is written to
+\code{ga_stop_<timestamp>.csv}.
 }
 \details{
 Uses helper functions: fn.GApop, fn.parvec2cmd, fn.runEwE.gapop,

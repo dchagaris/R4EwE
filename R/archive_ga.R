@@ -83,6 +83,9 @@ archive_ga <- function(phase,
   gapop_csv <- file.path(dir.results.ga, paste0("final_ga_pop",    timestamp, ".csv"))
   runs_csv  <- file.path(dir.results.ga, paste0("final_ga_runs_",  timestamp, ".csv"))
   ga_csv    <- file.path(dir.results.ga, paste0("ga_results_",     timestamp, ".csv"))
+  stop_csv  <- file.path(dir.results.ga, paste0("ga_stop_",        timestamp, ".csv"))
+  # read now: the results move below would take it out of dir.results.ga
+  ga_stop   <- if(file.exists(stop_csv)) read.csv(stop_csv, stringsAsFactors = FALSE) else NULL
   if(!file.exists(gapop_csv)) stop("Missing: ", gapop_csv)
   if(!file.exists(runs_csv))
     stop("Missing: ", runs_csv,
@@ -239,6 +242,8 @@ archive_ga <- function(phase,
     "## Config",
     sprintf("- Population size:   %s", cfg("popSize")),
     sprintf("- Generations:       %s", cfg("n_gen")),
+    sprintf("- Stopped:           %s", if(is.null(ga_stop)) "?" else
+              sprintf("gen %d, %s", ga_stop$gen, ga_stop$reason)),
     sprintf("- Elitism:           %s", cfg("elitism")),
     sprintf("- Selection:         %s (k=%s)", cfg("selection.method"), cfg("tournament.k")),
     sprintf("- Objective fxn:     %s (fn.ecospace_objfxn)", cfg("obj.fxn")),

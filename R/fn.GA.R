@@ -6,9 +6,24 @@
 #' selection, crossover, mutation, and optional parameter-bound penalties.
 #' Progress and summary stats are printed each generation.
 #'
+#' Stopping rule: from generation \code{stop.min_gen} on, the GA stops when either
+#' (1) the best LL has improved by less than the tolerance over the last
+#' \code{stop.patience} generations, or (2) the SD of the population LL is below the
+#' tolerance (the population has collapsed onto near-clones). Otherwise it stops at
+#' \code{n_gen}. Either way the final-population files are written for the
+#' generation it stopped at, and the reason is written to
+#' \code{ga_stop_<timestamp>.csv}.
+#'
 #' @param myconfig List of GA settings, expected fields:
 #'   - popSize: population size
-#'   - n_gen: number of generations
+#'   - n_gen: maximum number of generations, a hard cap (default 30)
+#'   - stop.rtol: relative stopping tolerance (default 0.005). The tolerance in LL
+#'     units is \code{stop.rtol * |best LL|}, recomputed each generation. 0 turns the
+#'     early stop off, so the GA runs all \code{n_gen} generations.
+#'   - stop.patience: generations over which the best LL must improve by at least
+#'     the tolerance (default 3)
+#'   - stop.min_gen: earliest generation at which the GA may stop (default 5; raised
+#'     to \code{stop.patience} if smaller)
 #'   - pmutation: per-gene mutation probability
 #'   - elitism: number of elites kept each generation
 #'   - do.penalty: logical, apply penalties for bound violations
@@ -24,7 +39,7 @@
 #' Global variables pop_size, n_generations, mutation_rate, elitism, do.penalty,
 #' pen.wt.mult, and gapop.dist are set for use by downstream helpers.
 #'
-#' @return Invisibly returns NULL. Results (fitness summaries and best parameters)
+#' @return Invisibly returns a list with \code{final_gen} and \code{stop_reason}. Results (fitness summaries and best parameters)
 #' are appended to the CSV and printed to the console. Every evaluated individual
 #' is appended to \code{ga_evals_<timestamp>.csv} in \code{dir.ga_results}: one row
 #' per Ecospace run with gen, idx, role (base / base-in-pop / initial / offspring),
@@ -32,7 +47,11 @@
 #' folder and every parameter value.
 #' @export
 fn.GA <- function(myconfig){
-  n_generations <<- myconfig$n_gen
+  n_generations <<- if(is.null(myconfig$n_gen)) 30L else as.integer(myconfig$n_gen)
+  stop.rtol     <- if(is.null(myconfig$stop.rtol))     0.005 else as.numeric(myconfig$stop.rtol)
+  stop.patience <- if(is.null(myconfig$stop.patience)) 3L    else as.integer(myconfig$stop.patience)
+  stop.min_gen  <- if(is.null(myconfig$stop.min_gen))  5L    else as.integer(myconfig$stop.min_gen)
+  stop.min_gen  <- max(stop.min_gen, stop.patience)   # need stop.patience gens of history
   mutation_rate <<- myconfig$pmutation
   elitism <<- myconfig$elitism
   do.penalty <<- myconfig$do.penalty
@@ -164,6 +183,8 @@ fn.GA <- function(myconfig){
   write.table(t(c(g,best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
   cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
   #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
+  best_hist   <- best_fit   # best LL by gen, gen 0 first (elites keep it non-increasing)
+  stop.reason <- NULL
   #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
   
   for (gen in 1:n_generations) {
@@ -290,8 +311,26 @@ fn.GA <- function(myconfig){
       cmd.files <- c(cmd.files, elite.cmd.moved[fill_idx])
     }
     
+    # Stopping rule (see Details): tolerance = stop.rtol x |current best LL|
+    best_now  <- min(fitness, na.rm = TRUE)
+    best_hist <- c(best_hist, best_now)
+    stop.tol  <- stop.rtol * abs(best_now)
+    stop.gain <- best_hist[max(1L, gen + 1L - stop.patience)] - best_now   # best_hist[1] is gen 0
+    stop.sd   <- sd(fitness, na.rm = TRUE)
+    if(stop.rtol > 0 && gen >= stop.min_gen){
+      if(stop.gain < stop.tol){
+        stop.reason <- sprintf("best LL improved %.1f over the last %d gens (< tol %.1f)",
+                               stop.gain, stop.patience, stop.tol)
+      } else if(stop.sd < stop.tol){
+        stop.reason <- sprintf("population LL SD %.1f < tol %.1f", stop.sd, stop.tol)
+      }
+    }
+    if(is.null(stop.reason) && gen == n_generations)
+      stop.reason <- sprintf("reached n_gen = %d", n_generations)
+    is.final <- !is.null(stop.reason)
+
     #plot and save final generation
-    if(gen==n_generations){
+    if(is.final){
       # Posterior plot: highlight the min-LL individual (best fit) in blue rather than
       # the baseline est_par_vec. Histograms get a vline at best-fit values, env/rt
       # panels overlay the best-fit response curve in blue.
@@ -343,7 +382,17 @@ fn.GA <- function(myconfig){
     #message(sprintf("Generation %d: Avg pop LL score = %.4f\n", gen, mean(fitness)))
     #unlink(list.dirs(run_dir, full.names = T, recursive = F), recursive=T)
     rm(parents,offspring,files.cmd);gc()
+    if(is.final){
+      message(sprintf("GA stopped at gen %d: %s", gen, stop.reason))
+      utils::write.csv(data.frame(gen = gen, reason = stop.reason, best_LL = best_now,
+                                  gain = stop.gain, sd_LL = stop.sd, tol = stop.tol,
+                                  stop.rtol = stop.rtol, stop.patience = stop.patience,
+                                  stop.min_gen = stop.min_gen, n_gen = n_generations),
+                       file.path(dir.results, paste0("ga_stop_", timestamp, ".csv")), row.names = FALSE)
+      break
+    }
   }
+  invisible(list(final_gen = gen, stop_reason = stop.reason))
 }#eof
 
 
