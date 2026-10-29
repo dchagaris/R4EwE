@@ -23,7 +23,22 @@ to \code{stop.patience} if smaller)
 \item do.penalty: logical, apply penalties for bound violations
 \item pen.wt.mult: scalar multiplier for penalty weight
 \item gapop.dist: initial population distribution ("unif" or "ln")
-}}
+\item resume.gen: NULL (default) for a fresh run. To continue a run that died, the
+last generation it completed (or TRUE for the last one in \code{ga_evals}).
+The base and gen-0 runs are skipped; see Resume below.
+}
+
+Resume: the population, fitness and best-LL history at the end of
+\code{resume.gen} are rebuilt from \code{ga_evals_<timestamp>.csv} (gen 0, then
+each generation's top \code{elitism} plus its kept offspring) and checked against
+the min / median / SD rows in \code{ga_results_<timestamp>.csv}. Only the elites
+need run dirs; they are found in \code{run_dir/gen<resume.gen+1>/} or
+\code{gen<resume.gen>/}. Run dirs left in \code{gen<resume.gen+1>/} by the crashed
+attempt are deleted (their parameter vectors were never logged). The GA then
+continues from generation \code{resume.gen + 1}, appending to both CSVs. The
+caller must rebuild the same \code{est_par_vec} and bounds (same sensitivity, same
+script), and use the same \code{timestamp}, \code{run_dir}, \code{popSize} and
+\code{elitism}.}
 }
 \value{
 Invisibly returns a list with \code{final_gen} and \code{stop_reason}. Results (fitness summaries and best parameters)

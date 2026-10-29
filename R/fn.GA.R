@@ -29,6 +29,21 @@
 #'   - do.penalty: logical, apply penalties for bound violations
 #'   - pen.wt.mult: scalar multiplier for penalty weight
 #'   - gapop.dist: initial population distribution ("unif" or "ln")
+#'   - resume.gen: NULL (default) for a fresh run. To continue a run that died, the
+#'     last generation it completed (or TRUE for the last one in \code{ga_evals}).
+#'     The base and gen-0 runs are skipped; see Resume below.
+#'
+#' Resume: the population, fitness and best-LL history at the end of
+#' \code{resume.gen} are rebuilt from \code{ga_evals_<timestamp>.csv} (gen 0, then
+#' each generation's top \code{elitism} plus its kept offspring) and checked against
+#' the min / median / SD rows in \code{ga_results_<timestamp>.csv}. Only the elites
+#' need run dirs; they are found in \code{run_dir/gen<resume.gen+1>/} or
+#' \code{gen<resume.gen>/}. Run dirs left in \code{gen<resume.gen+1>/} by the crashed
+#' attempt are deleted (their parameter vectors were never logged). The GA then
+#' continues from generation \code{resume.gen + 1}, appending to both CSVs. The
+#' caller must rebuild the same \code{est_par_vec} and bounds (same sensitivity, same
+#' script), and use the same \code{timestamp}, \code{run_dir}, \code{popSize} and
+#' \code{elitism}.
 #'
 #' @details
 #' Uses helper functions: fn.GApop, fn.parvec2cmd, fn.runEwE.gapop,
@@ -79,115 +94,136 @@ fn.GA <- function(myconfig){
   # `preserve.final.output` is now effectively always TRUE and the flag is
   # retained only for backward compatibility (ignored).
   preserve.final.output <- isTRUE(myconfig$preserve.final.output)
-  
-  #create results file
+
   file.ga.results <- file.path(dir.results, paste0('ga_results_',timestamp,'.csv'))
-  myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
-  write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
-  write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
-  write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],         file.ga.results, row.names=F, col.names=F, append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
-  write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results, row.names=F, col.names=F, append=T, quote=F)
-  write.table(myconfig.string,                                                  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
-  write.table(t(c("gen","min_LL","max_LL","mean_LL","median_LL","sd_LL","NA_count",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
-  
-  #base run -- run the model with cmd_base alone (no appended parameter taglines).
-  # cmd_base already carries the user-tuned baseline tags; appending another set
-  # from est_par_vec would override those with sensitivity-derived base.val
-  # values that may not match the cmd_base baselines, distorting gen=-1.
-  base_run_dir  <- file.path(run_dir, "run_base")
-  if(!dir.exists(base_run_dir)) dir.create(base_run_dir, recursive = TRUE, showWarnings = FALSE)
-  base_out_dir  <- normalizePath(base_run_dir, winslash = "\\", mustWork = FALSE)
-  cmd_base_run  <- cmd_base
-  cmd_base_run[startsWith(cmd_base_run, "<ECOSPACE_OUTPUT_DIR>")] <-
-    sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", base_out_dir)
-  base_cmd_file <- file.path(base_run_dir, "cmd.txt")
-  writeLines(cmd_base_run, base_cmd_file)
+  file.ga.evals   <- file.path(dir.results, paste0('ga_evals_', timestamp, '.csv'))
+  resume.gen <- myconfig$resume.gen
+  if(isTRUE(resume.gen)) resume.gen <- max(utils::read.csv(file.ga.evals, check.names = FALSE)$gen)
 
-  message('Running the base model')
-  # Keep base run on disk for reference/comparison. It lives in run_dir/run_base/
-  # and is never touched by the gen-loop cleanup (which only operates on
-  # run_dir/gen<NN>/ folders).
-  fitness <- fn.runEwE.gapop(base_cmd_file, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=-1)
+  if(!is.null(resume.gen)){
+    # Resume: rebuild the population at the end of resume.gen (see Resume in the docs)
+    if(do.penalty) stop("fn.GA: resume.gen is not supported with do.penalty = TRUE")
+    st <- .ga_resume_state(file.ga.evals, file.ga.results, as.integer(resume.gen), elitism,
+                           myconfig$popSize, run_dir, names(est_par_vec))
+    gapop       <- st$pop
+    fitness     <- st$fit
+    cmd.files   <- st$cmd
+    best_hist   <- st$best_hist
+    stop.reason <- NULL
+    first.gen   <- as.integer(resume.gen) + 1L
+    message(sprintf("Resuming after gen %d: best LL %.2f, %d elite dirs found; continuing at gen %d",
+                    resume.gen, min(fitness, na.rm = TRUE), sum(!is.na(cmd.files)), first.gen))
+  } else {
+    first.gen <- 1L
 
-  #pipe output
-  g=-1
-  best_fit = min(fitness[1], na.rm=T)
-  mean_fit = mean(fitness[1], na.rm=T)
-  sd_fit = sd(fitness[1], na.rm=T)
-  max_fit = max(fitness[1], na.rm=T)
-  median_fit = median(fitness[1], na.rm=T)
-  na_count = sum(is.na(fitness))
-  best_pars = est_par_vec
-  write.table(t(c(g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  # every evaluated individual, one row per Ecospace run (see .ga_log_evals)
-  file.ga.evals <- file.path(dir.results, paste0('ga_evals_', timestamp, '.csv'))
-  if(file.exists(file.ga.evals)) unlink(file.ga.evals)
-  .ga_log_evals(file.ga.evals, gen = -1, pop = matrix(est_par_vec, nrow = 1, dimnames = list(NULL, names(est_par_vec))),
-                fit = fitness[1], cmd = base_cmd_file, kept = TRUE, role = "base")
-  cat(sprintf("%-5s %-10s %-10s %-10s %-10s %-10s %-6s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","NA_count","time end"))
-  cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
+    #create results file
+    myconfig.string <- paste(paste(names(myconfig),unlist(myconfig),sep="="),collapse="; ")
+    write.table('Ecospace GA calibration', file.ga.results,row.names=F, col.names=F,append=F)
+    write.table(Sys.time(), file.ga.results,row.names=F, col.names=F,append=T)
+    write.table(cmd_base[which(startsWith(cmd_base,"<EWE_MODEL_FILE>"))],         file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+    write.table(cmd_base[which(startsWith(cmd_base,"<ECOSIM_SCENARIO_INDEX>"))],  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+    write.table(cmd_base[which(startsWith(cmd_base,"<ECOSPACE_SCENARIO_INDEX>"))],file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+    write.table(myconfig.string,                                                  file.ga.results, row.names=F, col.names=F, append=T, quote=F)
+    write.table(t(c("gen","min_LL","max_LL","mean_LL","median_LL","sd_LL","NA_count",names(est_par_vec))), file.ga.results, sep=",", row.names = F, col.names = F, append=T)
   
-  #initial population.................................
-  #message('Running the initial population')
-  gapop <- fn.GApop(pardist=gapop.pardist, vuldist=gapop.vuldist,
-                    rtdist=gapop.rtdist, fltdist=gapop.fltdist)
-  gapop[1,] <- est_par_vec  #include base run in initial population
-  write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
+    #base run -- run the model with cmd_base alone (no appended parameter taglines).
+    # cmd_base already carries the user-tuned baseline tags; appending another set
+    # from est_par_vec would override those with sensitivity-derived base.val
+    # values that may not match the cmd_base baselines, distorting gen=-1.
+    base_run_dir  <- file.path(run_dir, "run_base")
+    if(!dir.exists(base_run_dir)) dir.create(base_run_dir, recursive = TRUE, showWarnings = FALSE)
+    base_out_dir  <- normalizePath(base_run_dir, winslash = "\\", mustWork = FALSE)
+    cmd_base_run  <- cmd_base
+    cmd_base_run[startsWith(cmd_base_run, "<ECOSPACE_OUTPUT_DIR>")] <-
+      sprintf("<ECOSPACE_OUTPUT_DIR>, %s, System.String, Updated", base_out_dir)
+    base_cmd_file <- file.path(base_run_dir, "cmd.txt")
+    writeLines(cmd_base_run, base_cmd_file)
+
+    message('Running the base model')
+    # Keep base run on disk for reference/comparison. It lives in run_dir/run_base/
+    # and is never touched by the gen-loop cleanup (which only operates on
+    # run_dir/gen<NN>/ folders).
+    fitness <- fn.runEwE.gapop(base_cmd_file, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=-1)
+
+    #pipe output
+    g=-1
+    best_fit = min(fitness[1], na.rm=T)
+    mean_fit = mean(fitness[1], na.rm=T)
+    sd_fit = sd(fitness[1], na.rm=T)
+    max_fit = max(fitness[1], na.rm=T)
+    median_fit = median(fitness[1], na.rm=T)
+    na_count = sum(is.na(fitness))
+    best_pars = est_par_vec
+    write.table(t(c(g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+    # every evaluated individual, one row per Ecospace run (see .ga_log_evals)
+    file.ga.evals <- file.path(dir.results, paste0('ga_evals_', timestamp, '.csv'))
+    if(file.exists(file.ga.evals)) unlink(file.ga.evals)
+    .ga_log_evals(file.ga.evals, gen = -1, pop = matrix(est_par_vec, nrow = 1, dimnames = list(NULL, names(est_par_vec))),
+                  fit = fitness[1], cmd = base_cmd_file, kept = TRUE, role = "base")
+    cat(sprintf("%-5s %-10s %-10s %-10s %-10s %-10s %-6s | %-10s \n", "Gen", "min_LL", "max_LL", "mean_LL","median_LL","sd_LL","NA_count","time end"))
+    cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
+  
+    #initial population.................................
+    #message('Running the initial population')
+    gapop <- fn.GApop(pardist=gapop.pardist, vuldist=gapop.vuldist,
+                      rtdist=gapop.rtdist, fltdist=gapop.fltdist)
+    gapop[1,] <- est_par_vec  #include base run in initial population
+    write.csv(gapop,file.path(dir.results,paste0('init_ga_pop',timestamp,'.csv')))
             
-  fn.plot_ga_pop_responses(gapop, est_par_vec, par.groups, par.labels,
-                           env_pars = env_pars, redtide_pars = redtide_pars,
-                           file = file.path(dir.results,
-                                  paste0('init_ga_pop_distributions_', timestamp, '.pdf')))
+    fn.plot_ga_pop_responses(gapop, est_par_vec, par.groups, par.labels,
+                             env_pars = env_pars, redtide_pars = redtide_pars,
+                             file = file.path(dir.results,
+                                    paste0('init_ga_pop_distributions_', timestamp, '.pdf')))
 
-  # Initial population goes into run_dir/gen00/. Keep on disk (delete.output=F)
-  # so gen-1's elite carry can move the top-`elitism` dirs into run_dir/gen01/.
-  files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i))
-  files.cmd <- unlist(files.cmd, use.names=F)
-  fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=0)
-  # Sync files.cmd + gapop with any retry substitutions (fresh random parvecs
-  # replacing failed originals). Keeps gapop[i,] <-> files.cmd[i] alignment.
-  if(!is.null(attr(fitness, "cmd.files")))
-    files.cmd <- attr(fitness, "cmd.files")
-  subs <- attr(fitness, "substituted")
-  if(!is.null(subs) && length(subs) > 0L){
-    for(idx_str in names(subs))
-      gapop[as.integer(idx_str), ] <- subs[[idx_str]]
-  }
-  # cmd.files tracks each gapop row's cmd path across gens. Rebuilt after every
-  # gen boundary as c(elite.cmd.moved, this-gen's surviving offspring cmds).
-  cmd.files <- files.cmd
-
-  #calculate penalty for parameter bounds violations
-  if(do.penalty){
-    pen.wt = abs(diff(range(fitness)))*pen.wt.mult
-    upp.pen = U.bounds*1.5
-    low.pen = L.bounds*0.5
-    penalties = rep(0,nrow(gapop))
-    for(i in 1:nrow(gapop)){
-      penalties[i] <- sum((pmax(0,gapop[i,]-upp.pen)^2 + pmax(0,low.pen-gapop[i,])^2)*pen.wt)
+    # Initial population goes into run_dir/gen00/. Keep on disk (delete.output=F)
+    # so gen-1's elite carry can move the top-`elitism` dirs into run_dir/gen01/.
+    files.cmd <- lapply(1:nrow(gapop),function(i) fn.parvec2cmd(par_vec=gapop[i,], g=0, idx=i))
+    files.cmd <- unlist(files.cmd, use.names=F)
+    fitness <- fn.runEwE.gapop(files.cmd, obj.fxn=obj.fxn, fit.abs.catch=fit.abs.catch, delete.output=F, gen=0)
+    # Sync files.cmd + gapop with any retry substitutions (fresh random parvecs
+    # replacing failed originals). Keeps gapop[i,] <-> files.cmd[i] alignment.
+    if(!is.null(attr(fitness, "cmd.files")))
+      files.cmd <- attr(fitness, "cmd.files")
+    subs <- attr(fitness, "substituted")
+    if(!is.null(subs) && length(subs) > 0L){
+      for(idx_str in names(subs))
+        gapop[as.integer(idx_str), ] <- subs[[idx_str]]
     }
-    fitness <- fitness+penalties
+    # cmd.files tracks each gapop row's cmd path across gens. Rebuilt after every
+    # gen boundary as c(elite.cmd.moved, this-gen's surviving offspring cmds).
+    cmd.files <- files.cmd
+
+    #calculate penalty for parameter bounds violations
+    if(do.penalty){
+      pen.wt = abs(diff(range(fitness)))*pen.wt.mult
+      upp.pen = U.bounds*1.5
+      low.pen = L.bounds*0.5
+      penalties = rep(0,nrow(gapop))
+      for(i in 1:nrow(gapop)){
+        penalties[i] <- sum((pmax(0,gapop[i,]-upp.pen)^2 + pmax(0,low.pen-gapop[i,])^2)*pen.wt)
+      }
+      fitness <- fitness+penalties
+    }
+    .ga_log_evals(file.ga.evals, gen = 0, pop = gapop, fit = fitness, cmd = unlist(cmd.files),
+                  kept = TRUE, role = ifelse(seq_len(nrow(gapop)) == 1, "base-in-pop", "initial"))
+    #pipe output
+    g=0
+    best_fit = min(fitness, na.rm=T)
+    mean_fit = mean(fitness, na.rm=T)
+    sd_fit = sd(fitness, na.rm=T)
+    max_fit = max(fitness, na.rm=T)
+    median_fit = median(fitness, na.rm=T)
+    na_count = sum(is.na(fitness))
+    best_pars = round(gapop[which.min(fitness),],4)
+    write.table(t(c(g,best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
+    cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
+    #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
+    best_hist   <- best_fit   # best LL by gen, gen 0 first (elites keep it non-increasing)
+    stop.reason <- NULL
+    #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
   }
-  .ga_log_evals(file.ga.evals, gen = 0, pop = gapop, fit = fitness, cmd = unlist(cmd.files),
-                kept = TRUE, role = ifelse(seq_len(nrow(gapop)) == 1, "base-in-pop", "initial"))
-  #pipe output
-  g=0
-  best_fit = min(fitness, na.rm=T)
-  mean_fit = mean(fitness, na.rm=T)
-  sd_fit = sd(fitness, na.rm=T)
-  max_fit = max(fitness, na.rm=T)
-  median_fit = median(fitness, na.rm=T)
-  na_count = sum(is.na(fitness))
-  best_pars = round(gapop[which.min(fitness),],4)
-  write.table(t(c(g,best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count,best_pars)), file.ga.results, sep=",", append=T, row.names=F, col.names=F)
-  cat(sprintf("%-5d %-10.2f %-10.2f %-10.2f %-10.2f %-10.2f %-6d | %s\n", g, best_fit, max_fit, mean_fit, median_fit, sd_fit, na_count, Sys.time()))
-  #message(sprintf("Generation 0: Lowest LL score  = %.4f\n", min(fitness)))
-  best_hist   <- best_fit   # best LL by gen, gen 0 first (elites keep it non-increasing)
-  stop.reason <- NULL
-  #message(sprintf("Generation 0: Avg pop LL score  = %.4f\n", mean(fitness)))
-  
-  for (gen in 1:n_generations) {
+
+  for (gen in first.gen:n_generations) {
     #gen=1
     # NOTE: no blanket unlink here. Gen dirs are managed explicitly below
     # (elites moved forward, dropped offspring deleted after fitness known).
@@ -414,4 +450,72 @@ fn.GA <- function(myconfig){
   first <- !file.exists(file)
   utils::write.table(out, file, sep = ",", row.names = FALSE, col.names = first, append = !first)
   invisible(out)
+}
+
+
+# Internal: rebuild the GA state at the end of generation `resume.gen` from the
+# evaluation log, replaying fn.GA's generation boundary: the new population is the
+# top `elitism` of the previous one (order(), as in fn.GA) followed by that gen's
+# kept offspring, backfilled with elite clones when short. Checks each rebuilt
+# generation against the min / median / SD rows of ga_results, finds the elite
+# dirs on disk, and deletes run dirs that a crashed attempt left in
+# gen<resume.gen+1>/ (their parameters were never logged).
+#' @keywords internal
+#' @noRd
+.ga_resume_state <- function(file.evals, file.results, resume.gen, elitism, popSize, run_dir, par.names){
+  ev <- utils::read.csv(file.evals, check.names = FALSE, stringsAsFactors = FALSE)
+  miss <- setdiff(par.names, names(ev))
+  if(length(miss) || length(setdiff(setdiff(names(ev), c("gen", "idx", "role", "kept", "fitness", "run")), par.names)))
+    stop("resume: est_par_vec does not match the parameters in ", basename(file.evals),
+         if(length(miss)) paste0(" (missing: ", paste(head(miss, 5), collapse = ", "), ")"))
+  if(!resume.gen %in% ev$gen) stop("resume: gen ", resume.gen, " not found in ", basename(file.evals))
+  l  <- readLines(file.results)
+  rs <- utils::read.csv(text = l[grep("^\"?gen", l)[1]:length(l)], check.names = FALSE)
+
+  g0  <- ev[ev$gen == 0, ]; g0 <- g0[order(g0$idx), ]
+  pop <- as.matrix(g0[, par.names]); fit <- g0$fitness; run <- g0$run
+  best_hist <- min(fit, na.rm = TRUE)
+  chk <- function(g){
+    r <- rs[rs$gen == g, ]
+    if(nrow(r) == 0) stop("resume: gen ", g, " has no row in ", basename(file.results))
+    d <- abs(c(min(fit, na.rm = TRUE), stats::median(fit, na.rm = TRUE), stats::sd(fit, na.rm = TRUE)) -
+             c(r$min_LL[1], r$median_LL[1], r$sd_LL[1]))
+    if(any(d > 0.01)) stop(sprintf("resume: rebuilt gen %d does not match %s (min/median/sd off by %s)",
+                                   g, basename(file.results), paste(signif(d, 3), collapse = "/")))
+  }
+  chk(0)
+  for(g in seq_len(resume.gen)){
+    o <- ev[ev$gen == g & ev$role == "offspring", ]; o <- o[order(o$idx), ]
+    k <- as.logical(o$kept)
+    ei  <- order(fit, decreasing = FALSE)[seq_len(elitism)]
+    e.pop <- pop[ei, , drop = FALSE]; e.fit <- fit[ei]; e.run <- run[ei]
+    pop <- rbind(e.pop, as.matrix(o[k, par.names])); fit <- c(e.fit, o$fitness[k]); run <- c(e.run, o$run[k])
+    deficit <- popSize - nrow(pop)
+    if(deficit > 0L){
+      f <- rep(seq_len(elitism), length.out = deficit)
+      pop <- rbind(pop, e.pop[f, , drop = FALSE]); fit <- c(fit, e.fit[f]); run <- c(run, e.run[f])
+    }
+    chk(g)
+    best_hist <- c(best_hist, min(fit, na.rm = TRUE))
+  }
+  rownames(pop) <- NULL
+
+  # elite dirs: moved into gen<resume.gen+1>/ if that gen had started, else still in gen<resume.gen>/
+  nxt <- .gen_dir(run_dir, resume.gen + 1L); cur <- .gen_dir(run_dir, resume.gen)
+  ei  <- order(fit, decreasing = FALSE)[seq_len(elitism)]
+  cmd <- rep(NA_character_, length(run))
+  for(i in ei){
+    f <- c(file.path(nxt, run[i], "cmd.txt"), file.path(cur, run[i], "cmd.txt"))
+    f <- f[file.exists(f)]
+    if(!length(f)) stop("resume: elite run dir not found in ", basename(nxt), " or ", basename(cur), ": ", run[i])
+    cmd[i] <- f[1]
+  }
+  if(dir.exists(nxt)){
+    stale <- setdiff(list.dirs(nxt, full.names = FALSE, recursive = FALSE), run[ei])
+    if(length(stale)){
+      message(sprintf("resume: deleting %d run dirs left in %s by the crashed attempt", length(stale), nxt))
+      unlink(file.path(nxt, stale), recursive = TRUE)
+    }
+  }
+  list(pop = pop, fit = fit, cmd = cmd, best_hist = best_hist)
 }

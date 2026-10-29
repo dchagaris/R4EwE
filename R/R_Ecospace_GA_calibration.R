@@ -790,6 +790,10 @@ safe_make_run_dir_tempfile <- function(base_dir,
       next
     }
     new_dir <- file.path(dst_gen_dir, basename(old_dir))
+    if(normalizePath(old_dir, mustWork = FALSE) == normalizePath(new_dir, mustWork = FALSE)){
+      new_paths[k] <- elite_cmd_paths[k]   # already there (fn.GA resume)
+      next
+    }
     if(dir.exists(new_dir)){
       # Same-name dir already in destination — shouldn't happen given the
       # random-hash suffix on run folders, but handle defensively.
