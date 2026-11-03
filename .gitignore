@@ -3,5 +3,6 @@
 .RData
 .Ruserdata
 .positai
-.claude
+.claude/*
+!.claude/skills/
 R4EwE_*.tar.gz
