@@ -558,7 +558,7 @@ fn.ecospace_ascii2stack <- function(dir.out=dir.pred,
   
   #stack and return----
   #out.stack <- stack(ascii.df.sub$file)
-  out.stack <- rast(ascii.df.sub$file)
+  out.stack <- terra::rast(ascii.df.sub$file)
   names(out.stack) <- ascii.df.sub$label
   return(out.stack)
 }

@@ -2,7 +2,7 @@
 % Please edit documentation in R/fn.STdriver_gif.R
 \name{fn.STdriver_gif}
 \alias{fn.STdriver_gif}
-\title{Make ST driver gifs}
+\title{Make ST driver gifs (deprecated)}
 \usage{
 fn.STdriver_gif(
   dir.stdriver = dir.stdriver,
@@ -13,19 +13,37 @@ fn.STdriver_gif(
 \arguments{
 \item{dir.stdriver}{Full directory path to the ST driver folder.}
 
-\item{do.files}{A numeric vector indexing which of the ascii files in dir.stdriver to plot.
-The default NULL plots all files in the folder.}
+\item{do.files}{A numeric vector indexing which ascii files in dir.stdriver to plot.
+The default NULL plots all of them. Forwarded as \code{do.steps}, so it now indexes
+the dated grids in date order rather than whatever \code{list.files()} returned;
+an explicit index may therefore select different frames than it used to.}
 
-\item{datestamps}{Optional character vector of timesteps for each file.  Setting to NULL
-(default) will pull the timestep from the ascii file suffix that is ...YYYYMM.asc.}
+\item{datestamps}{Optional character vector of timesteps for each file. Setting to
+NULL (default) pulls the timestep from the ascii file name.}
 }
 \value{
-Place a gif file in a folder one level up from dri.stdriver
+Invisibly, the gif file written, in a 'gifs' folder one level up from
+dir.stdriver. (This function previously returned nothing.)
 }
 \description{
-Creates a movie (gif) file from ST driver ascii rasters.
+Deprecated. Use \code{\link{fn.ecospace_gif}}, which animates ST driver
+folders along with Ecospace output and fixes two defects in this function: frames
+were dated by a fixed character offset, which misreads the \code{_YYYY_MM} names of
+a monthly climatology and silently interleaves it with the real-dated series, and
+the legend label was drawn on top of the legend's tick labels. This wrapper is kept
+so existing scripts keep working; it forwards to \code{fn.ecospace_gif()} with
+\code{source = 'stdriver'}.
 }
 \examples{
-#example code:
-\dontrun{fn.STdriver_gif(dir.stdriver="./ST drivers/30min/wc_vert_int_npp_cefi", do.files=NULL, datestamps=NULL)}
+# example code:
+\dontrun{
+# deprecated:
+fn.STdriver_gif(dir.stdriver = "./ST drivers/30min/wc_vert_int_npp_cefi")
+# use instead:
+fn.ecospace_gif(dir.out = "./ST drivers/30min/wc_vert_int_npp_cefi",
+                inset = TRUE)
+}
+}
+\seealso{
+\code{\link{fn.ecospace_gif}}
 }
