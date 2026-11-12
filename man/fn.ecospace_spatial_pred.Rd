@@ -7,37 +7,45 @@
 fn.ecospace_spatial_pred(
   dir.pred,
   pool_codes,
-  group.names,
+  group.names = NULL,
   styear = 2015,
   endyear = 2024,
-  model_styear = 1985,
+  model_styear = NULL,
   variable = "Biomass",
-  nrows = 66L,
-  ncols = 78L
+  nrows = NULL,
+  ncols = NULL
 )
 }
 \arguments{
 \item{dir.pred}{Path to an Ecospace output folder (parent of the
 \code{csv/} subdir).}
 
-\item{pool_codes}{Integer vector of WFS MICE pool codes to read.}
+\item{pool_codes}{Groups to read, given EITHER as an integer vector of pool
+codes (resolved to species names via \code{group.names}) OR as a character
+vector of group names used directly. Group names may use underscores or
+spaces (underscores are converted to the spaces Ecospace writes in the
+filename).}
 
-\item{group.names}{Character vector indexed by pool code.}
+\item{group.names}{Character vector indexed by pool code. Required only when
+\code{pool_codes} is numeric; ignored when \code{pool_codes} is already a
+character vector of group names.}
 
 \item{styear, endyear}{Calendar year window (inclusive) to average over.
 Converted to model-relative years via \code{model_styear}: model years
 run from \code{model_styear} at Ecospace step 1.}
 
 \item{model_styear}{Calendar year corresponding to Ecospace step 1.
-Default 1985 (WFS MICE convention).}
+\code{NULL} (default) reads \code{StartYear} from the map csv header.}
 
 \item{variable}{Character; part of the filename (default \code{"Biomass"}).}
 
-\item{nrows, ncols}{Grid dimensions. Defaults 66 x 78.}
+\item{nrows, ncols}{Grid dimensions. \code{NULL} (default) reads
+\code{MapRows}/\code{MapCols} from the map csv header.}
 }
 \value{
-Named list of numeric matrices (one per pool code); NA cells are
-NODATA. NULL entry for any pool code whose file was not found.
+Named list of numeric matrices, one per requested group (named by
+pool code when \code{pool_codes} is numeric, otherwise by group name); NA
+cells are NODATA. NULL entry for any group whose file was not found.
 }
 \description{
 For each requested pool code, locates the matching

@@ -604,37 +604,67 @@ fn.load_mdat_biomass <- function(mdat_dir    = NULL,
 #'   year window, and averages the corresponding grids.
 #' @param dir.pred Path to an Ecospace output folder (parent of the
 #'   \code{csv/} subdir).
-#' @param pool_codes Integer vector of WFS MICE pool codes to read.
-#' @param group.names Character vector indexed by pool code.
+#' @param pool_codes Groups to read, given EITHER as an integer vector of pool
+#'   codes (resolved to species names via \code{group.names}) OR as a character
+#'   vector of group names used directly. Group names may use underscores or
+#'   spaces (underscores are converted to the spaces Ecospace writes in the
+#'   filename).
+#' @param group.names Character vector indexed by pool code. Required only when
+#'   \code{pool_codes} is numeric; ignored when \code{pool_codes} is already a
+#'   character vector of group names.
 #' @param styear,endyear Calendar year window (inclusive) to average over.
 #'   Converted to model-relative years via \code{model_styear}: model years
 #'   run from \code{model_styear} at Ecospace step 1.
 #' @param model_styear Calendar year corresponding to Ecospace step 1.
-#'   Default 1985 (WFS MICE convention).
+#'   \code{NULL} (default) reads \code{StartYear} from the map csv header.
 #' @param variable Character; part of the filename (default \code{"Biomass"}).
-#' @param nrows,ncols Grid dimensions. Defaults 66 x 78.
-#' @return Named list of numeric matrices (one per pool code); NA cells are
-#'   NODATA. NULL entry for any pool code whose file was not found.
+#' @param nrows,ncols Grid dimensions. \code{NULL} (default) reads
+#'   \code{MapRows}/\code{MapCols} from the map csv header.
+#' @return Named list of numeric matrices, one per requested group (named by
+#'   pool code when \code{pool_codes} is numeric, otherwise by group name); NA
+#'   cells are NODATA. NULL entry for any group whose file was not found.
 #' @export
-fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
+fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names = NULL,
                                      styear       = 2015,
                                      endyear      = 2024,
-                                     model_styear = 1985,
+                                     model_styear = NULL,
                                      variable     = "Biomass",
-                                     nrows        = 66L,
-                                     ncols        = 78L){
+                                     nrows        = NULL,
+                                     ncols        = NULL){
   # GUI-run outputs put per-species map CSVs in a csv/ subfolder;
   # CLI-run (EcoSpace Console) writes them at the top level of dir.pred.
   # Support both.
   csv_dir <- if(dir.exists(file.path(dir.pred, "csv"))) file.path(dir.pred, "csv") else dir.pred
-  if(length(list.files(csv_dir, pattern = "^EcospaceMap.*\\.csv$")) == 0)
+  map_files <- list.files(csv_dir, pattern = "^EcospaceMap.*\\.csv$", full.names = TRUE)
+  if(length(map_files) == 0)
     stop("No EcospaceMap<Var>-<species>.csv files found in ", csv_dir,
          " (nor a csv/ subfolder under ", dir.pred, ")")
+
+  # model_styear, nrows, ncols default to the values in the map csv header
+  # (StartYear, MapRows, MapCols); any supplied explicitly override the header.
+  if(is.null(model_styear) || is.null(nrows) || is.null(ncols)){
+    hdr <- .ecospace_map_header(map_files[1])
+    if(is.null(model_styear)) model_styear <- hdr$StartYear
+    if(is.null(nrows))        nrows        <- hdr$MapRows
+    if(is.null(ncols))        ncols        <- hdr$MapCols
+    if(is.null(model_styear) || is.na(model_styear))
+      stop("model_styear not supplied and StartYear missing from header of ", map_files[1])
+    if(is.null(nrows) || is.na(nrows) || is.null(ncols) || is.na(ncols))
+      stop("nrows/ncols not supplied and MapRows/MapCols missing from header of ", map_files[1])
+  }
+  nrows <- as.integer(nrows)
+  ncols <- as.integer(ncols)
 
   # convert target calendar years -> model fractional-year window.
   # Ecospace's CSV Year field is fractional years from model start (step*dt).
   yr_min <- styear   - model_styear
   yr_max <- endyear  - model_styear + 1  # inclusive of endyear months
+
+  # pool_codes may be integer pool codes (resolved via group.names) or a
+  # character vector of group names used directly.
+  by_name <- is.character(pool_codes)
+  if(!by_name && is.null(group.names))
+    stop("group.names is required when pool_codes are numeric pool codes.")
 
   out <- vector("list", length(pool_codes))
   names(out) <- as.character(pool_codes)
@@ -642,19 +672,27 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
   all_csv <- list.files(csv_dir, pattern = "\\.csv$", full.names = TRUE)
 
   for(i in seq_along(pool_codes)){
-    pc <- pool_codes[i]
-    if(is.na(pc) || pc < 1 || pc > length(group.names)) next
+    g <- pool_codes[i]
+    if(by_name){
+      if(is.na(g) || !nzchar(g)) next
+      species <- g
+      label   <- g
+    } else {
+      if(is.na(g) || g < 1 || g > length(group.names)) next
+      species <- group.names[g]
+      label   <- g
+    }
     # Ecospace writes group names to the CSV filename with SPACES; R4EwE
     # group.names is stored with UNDERSCORES. Convert on the fly.
-    species <- gsub("_", " ", group.names[pc])
+    species <- gsub("_", " ", species)
 
     pat <- paste0("^EcospaceMap", variable, "-",
                   gsub("\\+", "\\\\+", species),
                   "\\.csv$")
     hits <- grep(pat, basename(all_csv))
     if(length(hits) == 0){
-      warning(sprintf("No spatial CSV for pool code %d (%s) in %s",
-                      pc, species, csv_dir))
+      warning(sprintf("No spatial CSV for %s (%s) in %s",
+                      label, species, csv_dir))
       next
     }
     arr3 <- .parse_ecospace_map_csv(all_csv[hits[1]],
@@ -662,8 +700,8 @@ fn.ecospace_spatial_pred <- function(dir.pred, pool_codes, group.names,
     yrs  <- attr(arr3, "year")
     keep <- which(yrs >= yr_min & yrs <= yr_max)
     if(length(keep) == 0){
-      warning(sprintf("No timesteps in year window [%g, %g] for pool code %d",
-                      yr_min, yr_max, pc))
+      warning(sprintf("No timesteps in year window [%g, %g] for %s",
+                      yr_min, yr_max, label))
       next
     }
     m <- apply(arr3[, , keep, drop = FALSE], c(1, 2), mean, na.rm = TRUE)

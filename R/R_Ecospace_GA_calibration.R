@@ -1779,7 +1779,7 @@ cluster_is_ok <- function() {
     # spatial LL package helpers (phase 2 task 7c) - always needed for the
     # worker to be able to run the spatial component
     "fn.spatial_LL", "fn.ecospace_spatial_pred",
-    ".parse_ecospace_map_csv", ".read_asc", ".normalise_map",
+    ".parse_ecospace_map_csv", ".ecospace_map_header", ".read_asc", ".normalise_map",
     # data the objective functions need
     "obs.ts", "group.names", "fleet.names", "df.names",
     # model years and run context
