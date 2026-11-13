@@ -563,6 +563,37 @@ fn.ecospace_ascii2stack <- function(dir.out=dir.pred,
   return(out.stack)
 }
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' @title Read an Ecospace map csv into a georeferenced raster stack.
+#' @description Exported wrapper around the per-file map reader: reads a single
+#'   \code{EcospaceMap<Variable>-<group>.csv} into a \code{terra} SpatRaster with one
+#'   layer per timestep, taking the grid dimensions and georeferencing from the file's
+#'   own header. NODATA cells (\code{-9999}) become \code{NA}; layer order follows the
+#'   Step blocks in the file. Unlike \code{\link{fn.ecospace_ascii2stack}} (which reads
+#'   the per-timestep \code{.asc} grids), this reads the stacked per-group map csvs.
+#' @details Layers are named \code{step_<N>}, and the SpatRaster carries \code{step},
+#'   \code{year} (model-relative) and \code{time} (calendar) vectors plus the parsed
+#'   \code{header} as attributes. Load the \pkg{terra} package first so its S4 methods
+#'   are available, then subset layers with \code{terra::subset(r, i)} or \code{r[[i]]}
+#'   and plot with \code{terra::plot(r, i)}.
+#' @param path Path to a single \code{EcospaceMap<Variable>-<group>.csv} file.
+#' @param model_styear Calendar year corresponding to model year 0. \code{NULL}
+#'   (default) reads \code{StartYear} from the header.
+#' @return A \code{terra} SpatRaster with one layer per timestep, carrying \code{step},
+#'   \code{year} (model-relative), \code{time} (calendar) and \code{header} attributes.
+#' @examples
+#' \dontrun{
+#' library(terra)
+#' csv <- file.path(dir.pred, "csv", "EcospaceMapCatch-big fish adult.csv")
+#' r <- fn.ecospace_csv2stack(csv)
+#' plot(r, 1:12)            # first 12 timesteps as panels
+#' plot(subset(r, 1))       # a single layer
+#' }
+#' @export
+fn.ecospace_csv2stack <- function(path, model_styear = NULL){
+  .ecospace_map_stack(path, model_styear = model_styear)
+}
+
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #Ecospace per-region prediction readers------------------------------------------
